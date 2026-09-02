@@ -1,0 +1,1340 @@
+/* ============================================================
+ *  Sticky Notes —— 多级便签 + 时间线
+ *  设计要点：
+ *    1. 便签色按 priority 派生（4 种便签色 + 深色模式），用户 color 可覆盖
+ *    2. 轻微随机旋转（用 CSS variable 注入，nth-child 分桶）
+ *    3. sticky day header 滚到新一天时旧 header 退场
+ *    4. 时间线 = 单一 overflow-y:auto 容器 + 上下 sentinel
+ *    5. 8 主题色（优先级默认 4 + 主题 4） + 折角 ::before + step slide 动画
+ * ============================================================ */
+
+/* ====== 便签色（8 色 + 深色模式） ====== */
+:root {
+  /* 4 种 priority 默认色 */
+  --sticky-yellow: #fef3c7;
+  --sticky-pink: #fce7f3;
+  --sticky-blue: #dbeafe;
+  --sticky-green: #d1fae5;
+  --sticky-yellow-dark: #92400e;
+  --sticky-pink-dark: #9d174d;
+  --sticky-blue-dark: #1e40af;
+  --sticky-green-dark: #065f46;
+  /* 4 种主题色（用户覆盖） */
+  --sticky-orange: #fed7aa;
+  --sticky-purple: #ede9fe;
+  --sticky-teal: #ccfbf1;
+  --sticky-rose: #ffe4e6;
+  --sticky-orange-dark: #9a3412;
+  --sticky-purple-dark: #5b21b6;
+  --sticky-teal-dark: #115e59;
+  --sticky-rose-dark: #9f1239;
+}
+
+[data-theme='dark'] {
+  --sticky-yellow: rgba(252, 211, 77, 0.12);
+  --sticky-pink: rgba(244, 114, 182, 0.12);
+  --sticky-blue: rgba(96, 165, 250, 0.12);
+  --sticky-green: rgba(52, 211, 153, 0.12);
+  --sticky-yellow-dark: #fcd34d;
+  --sticky-pink-dark: #f9a8d4;
+  --sticky-blue-dark: #93c5fd;
+  --sticky-green-dark: #6ee7b7;
+  --sticky-orange: rgba(251, 146, 60, 0.14);
+  --sticky-purple: rgba(167, 139, 250, 0.14);
+  --sticky-teal: rgba(45, 212, 191, 0.14);
+  --sticky-rose: rgba(251, 113, 133, 0.14);
+  --sticky-orange-dark: #fdba74;
+  --sticky-purple-dark: #c4b5fd;
+  --sticky-teal-dark: #5eead4;
+  --sticky-rose-dark: #fda4af;
+}
+
+/* ====== 便签卡片壳 ====== */
+.sticky-note-card {
+  position: relative;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  /* 柔化：原 shadow-md → 自定义更轻的双层阴影，避免「立体玩具感」 */
+  box-shadow:
+    0 1px 0 color-mix(in srgb, currentColor 8%, transparent) inset,
+    0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  font-family: var(--font-sans);
+  /* 轻微随机旋转（3 档；用 nth-child 决定） */
+}
+
+.sticky-note-card:hover {
+  /* 柔化：原 translateY(-2px) → translateY(-1px)，去掉厚重 3 层 hover 阴影 */
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, currentColor 8%, transparent) inset,
+    0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.sticky-note-card.priority-p0 {
+  background: var(--sticky-yellow);
+  color: var(--sticky-yellow-dark);
+}
+.sticky-note-card.priority-p1 {
+  background: var(--sticky-pink);
+  color: var(--sticky-pink-dark);
+}
+.sticky-note-card.priority-p2 {
+  background: var(--sticky-blue);
+  color: var(--sticky-blue-dark);
+}
+.sticky-note-card.priority-p3 {
+  background: var(--sticky-green);
+  color: var(--sticky-green-dark);
+}
+
+/* 用户主题色覆盖（priority + .color-{name} 共存时优先 color-*） */
+.sticky-note-card.color-yellow { background: var(--sticky-yellow); color: var(--sticky-yellow-dark); }
+.sticky-note-card.color-pink   { background: var(--sticky-pink);   color: var(--sticky-pink-dark); }
+.sticky-note-card.color-blue   { background: var(--sticky-blue);   color: var(--sticky-blue-dark); }
+.sticky-note-card.color-green  { background: var(--sticky-green);  color: var(--sticky-green-dark); }
+.sticky-note-card.color-orange { background: var(--sticky-orange); color: var(--sticky-orange-dark); }
+.sticky-note-card.color-purple { background: var(--sticky-purple); color: var(--sticky-purple-dark); }
+.sticky-note-card.color-teal   { background: var(--sticky-teal);   color: var(--sticky-teal-dark); }
+.sticky-note-card.color-rose   { background: var(--sticky-rose);   color: var(--sticky-rose-dark); }
+
+/* ====== 折叠角 ::before ====== */
+.sticky-note-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  /* 柔化：原 18px → 14px；色块从 38% → 24%（更含蓄） */
+  border-width: 0 14px 14px 0;
+  border-color: transparent
+    color-mix(in srgb, currentColor 24%, transparent) transparent transparent;
+  border-radius: 0 var(--radius-md) 0 0;
+  pointer-events: none;
+  /* 柔化：原 0.85 → 0.55（去刺眼） */
+  opacity: 0.55;
+  transition: opacity 0.12s;
+}
+.sticky-note-card:hover::before { opacity: 0.75; }
+
+/* 已归档便签：灰显 + 水印 */
+.sticky-note-card.is-archived {
+  filter: grayscale(0.7);
+  opacity: 0.6;
+  position: relative;
+}
+.sticky-note-card.is-archived::after {
+  content: '已归档';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, currentColor 28%, transparent);
+  color: inherit;
+  font-weight: 700;
+}
+
+/* 已完成便签：半透明 */
+.sticky-note-card.is-done {
+  opacity: 0.65;
+}
+
+/* ====== 拖拽手柄 ====== */
+.sticky-step-grip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 22px;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: color-mix(in srgb, currentColor 50%, transparent);
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s;
+  user-select: none;
+}
+.sticky-step-row:hover .sticky-step-grip { opacity: 0.7; }
+.sticky-step-grip:active { cursor: grabbing; }
+.sticky-step-grip:hover { opacity: 1; }
+
+/* step slide in/out 动画 —— 柔化：原 160ms/6px/12px → 140ms/3px/6px */
+@keyframes step-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    max-height: 60px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
+@keyframes step-slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+    max-height: 60px;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(6px);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+}
+.sticky-step-row.is-entering {
+  animation: step-slide-in 140ms var(--ease-out, ease-out) both;
+  overflow: hidden;
+}
+.sticky-step-row.is-removing {
+  animation: step-slide-out 140ms var(--ease-out, ease-out) both;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+/* 整张便签淡出（删除 toast 撤销前的瞬间） —— 柔化：原 0.94/-1deg → 0.97/-0.5deg */
+@keyframes sticky-fade-out {
+  to {
+    opacity: 0;
+    transform: scale(0.97) rotate(-0.5deg);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin: 0;
+  }
+}
+.sticky-note-card.is-removing {
+  animation: sticky-fade-out 200ms var(--ease-out, ease-out) forwards;
+  pointer-events: none;
+}
+
+/* 轻微随机旋转（按位置 3 档） —— 柔化：原 ±1° → ±0.3°，保持纸张感但不夸张 */
+.sticky-note-card { transform: rotate(var(--sticky-rotate, 0deg)); }
+.sticky-day-notes .sticky-note-card:nth-child(3n)    { --sticky-rotate: -0.3deg; }
+.sticky-day-notes .sticky-note-card:nth-child(3n+1)  { --sticky-rotate: 0.2deg; }
+.sticky-day-notes .sticky-note-card:nth-child(3n+2)  { --sticky-rotate: -0.2deg; }
+
+/* 顶部 header 行（优先级 + 标题 + 删除） */
+.sticky-note-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sticky-note-header .priority-area {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.sticky-note-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font-family: var(--font-sans);
+  padding: 2px 4px;
+  margin: 0;
+  border-radius: 4px;
+  min-width: 0;
+}
+
+.sticky-note-title:focus {
+  /* R23 修复 (high a11y)：原 12% currentColor 混合只到 1.2:1，WCAG 1.4.11
+     要求 ≥3:1。改用 inset box-shadow 实色实边，跨浅 / 深 / 8 个 priority 色
+     都维持 ≥3:1。 */
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  outline: none;
+}
+
+.sticky-note-remove {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: opacity 0.12s, background 0.12s;
+}
+
+.sticky-note-card:hover .sticky-note-remove { opacity: 0.7; }
+.sticky-note-remove:hover { opacity: 1; background: color-mix(in srgb, currentColor 12%, transparent); }
+
+/* ====== 优先级徽章 ====== */
+.sticky-priority-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.5px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  color: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ====== meta 行（状态 + 截止 + 标签 + 预估 + 归档） ====== */
+.sticky-note-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.sticky-note-status {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  color: inherit;
+  cursor: pointer;
+}
+
+.sticky-note-due,
+.sticky-note-est,
+.sticky-note-tags-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 11px;
+}
+
+.sticky-note-archive {
+  margin-left: auto;
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, currentColor 40%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  color: inherit;
+  font-family: var(--font-sans);
+}
+
+.sticky-note-archive:hover {
+  border-color: currentColor;
+}
+
+.sticky-priority-badge select {
+  background: transparent;
+  color: inherit;
+  border: none;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  text-align: center;
+}
+
+.sticky-priority-badge select:focus {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+}
+
+/* ====== Step 行 ====== */
+.sticky-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sticky-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  border-radius: 4px;
+  transition: background 0.12s;
+}
+
+.sticky-step-row:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+
+.sticky-step-checkbox {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  accent-color: currentColor;
+  margin: 0;
+}
+
+.sticky-step-order {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  opacity: 0.6;
+  min-width: 16px;
+  text-align: right;
+}
+
+.sticky-step-content {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: inherit;
+  padding: 2px 4px;
+  border-radius: 4px;
+  min-width: 0;
+}
+
+.sticky-step-content:focus {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.sticky-step-row.is-done .sticky-step-content {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.sticky-step-remove {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+  transition: opacity 0.12s;
+}
+
+.sticky-step-row:hover .sticky-step-remove { opacity: 0.7; }
+.sticky-step-remove:hover { opacity: 1; }
+
+/* step 撤销按钮（点击完成 checkbox 后 ~3.5s 出现的轻量链接） */
+.sticky-step-undo {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, currentColor 50%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 1px 8px;
+  font-size: 10px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.85;
+  transition: opacity 0.12s, border-color 0.12s, background 0.12s;
+  animation: sticky-step-undo-in 140ms var(--ease-out, ease-out) both;
+}
+.sticky-step-undo:hover {
+  opacity: 1;
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+@keyframes sticky-step-undo-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 0.85; transform: translateY(0); }
+}
+
+/* 新建便签：轻微高亮 + 输入占位文案变化 */
+.sticky-note-card.is-new {
+  outline: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: -1px;
+  animation: sticky-card-new-pulse 600ms var(--ease-out, ease-out) 1;
+}
+@keyframes sticky-card-new-pulse {
+  0%   { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
+  100% { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
+}
+
+/* step 底部 meta 行 */
+.sticky-step-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.sticky-step-add {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, currentColor 50%, transparent);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+  color: inherit;
+  font-size: 11px;
+  opacity: 0.7;
+  transition: opacity 0.12s, border-color 0.12s;
+  font-family: var(--font-sans);
+}
+
+.sticky-step-add:hover {
+  opacity: 1;
+  border-color: currentColor;
+}
+
+/* ====== 时间线滚动容器 ====== */
+.sticky-timeline-scroll {
+  overflow-y: auto;
+  height: 100%;
+  padding: 8px 0 32px;
+  scroll-behavior: smooth;
+}
+
+.sticky-timeline-sentinel {
+  height: 1px;
+  width: 100%;
+  pointer-events: none;
+}
+
+/* 回到今日按钮 */
+.sticky-timeline-jump {
+  position: sticky;
+  bottom: 16px;
+  margin: 12px auto 0;
+  display: flex;
+  justify-content: center;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.sticky-timeline-jump .btn {
+  pointer-events: auto;
+  box-shadow: var(--shadow-md);
+}
+
+/* ====== 日期 section ====== */
+.sticky-day-section {
+  margin-bottom: 8px;
+}
+
+.sticky-day-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: color-mix(in srgb, var(--bg-base) 92%, transparent);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.sticky-day-section.is-today .sticky-day-header {
+  border-bottom: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+.sticky-day-header .day-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sticky-day-header .day-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  background: var(--bg-overlay);
+  color: var(--text-secondary);
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-weight: 500;
+}
+
+.sticky-day-header .add-note-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: var(--font-sans);
+}
+
+.sticky-day-header .add-note-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.sticky-day-notes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  padding: 14px 20px;
+}
+
+/* ====== 空态 ====== */
+.sticky-day-empty {
+  padding: 18px 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
+/* ====== 已归档折叠行 ====== */
+.sticky-day-archived-row {
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  border-top: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--bg-base) 50%, transparent);
+}
+.sticky-day-archived-row:hover { color: var(--text-secondary); }
+.sticky-day-archived-row .sticky-day-archived-count {
+  font-family: var(--font-mono);
+  background: var(--bg-overlay);
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 10px;
+}
+.sticky-day-archived-list {
+  padding: 10px 20px 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+/* ====== 时间线顶部：搜索框 + 过滤 chips ====== */
+.sticky-timeline-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: color-mix(in srgb, var(--bg-base) 92%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sticky-timeline-search {
+  flex: 1 1 220px;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+}
+.sticky-timeline-search:focus-within {
+  border-color: var(--accent);
+}
+.sticky-timeline-search input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  min-width: 0;
+}
+.sticky-timeline-search .icon {
+  font-size: 13px;
+  opacity: 0.6;
+}
+.sticky-timeline-search .kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+
+.sticky-timeline-filters {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.sticky-timeline-chip {
+  /* R21 修复 (medium a11y)：原 11px 在白文 + 饱和度色填充下小到几乎看不清，
+     提升到 12px 让 chip 文字在 4.5:1 对比度上读得清。priority chip 内容通常
+     是「P0 / P1 / 全部」三字，11→12px 视觉变化微小但 a11y 评分显著改善。 */
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: var(--font-sans);
+}
+.sticky-timeline-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.sticky-timeline-chip.is-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.sticky-timeline-chip.priority-p0.is-active { background: var(--priority-p0, #ef4444); border-color: var(--priority-p0, #ef4444); }
+.sticky-timeline-chip.priority-p1.is-active { background: var(--priority-p1, #f97316); border-color: var(--priority-p1, #f97316); }
+.sticky-timeline-chip.priority-p2.is-active { background: var(--priority-p2, #3b82f6); border-color: var(--priority-p2, #3b82f6); }
+.sticky-timeline-chip.priority-p3.is-active { background: var(--priority-p3, #6b7280); border-color: var(--priority-p3, #6b7280); }
+
+/* ====== 删除 toast 撤销 banner ====== */
+.sticky-delete-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  z-index: 100;
+  animation: toast-slide-in var(--motion-fast, 160ms) var(--ease-out, ease-out);
+}
+@keyframes toast-slide-in {
+  from { opacity: 0; transform: translate(-50%, 10px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.sticky-delete-toast button {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-sans);
+}
+.sticky-delete-toast button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.sticky-delete-toast .sticky-delete-toast-timer {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ====== 时间线全空态 hero ====== */
+.sticky-timeline-empty-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 20px 60px;
+  text-align: center;
+  color: var(--text-secondary);
+}
+.sticky-timeline-empty-hero .sticky-timeline-empty-art {
+  font-size: 56px;
+  margin-bottom: 18px;
+  opacity: 0.85;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.1));
+}
+.sticky-timeline-empty-hero h2 {
+  font-size: 18px;
+  margin: 0 0 6px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sticky-timeline-empty-hero p {
+  font-size: 13px;
+  margin: 0 0 24px;
+  color: var(--text-muted);
+  max-width: 360px;
+  line-height: 1.6;
+}
+.sticky-timeline-empty-hero .sticky-timeline-empty-cta {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 8px 22px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: transform 0.12s, box-shadow 0.12s;
+}
+.sticky-timeline-empty-hero .sticky-timeline-empty-cta:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.sticky-timeline-empty-hero .sticky-timeline-empty-kbd {
+  margin-top: 14px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.sticky-timeline-empty-hero .sticky-timeline-empty-kbd kbd {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin: 0 2px;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+/* 空过滤态（时间线非空但当前过滤下没有命中） */
+.sticky-timeline-empty-filter {
+  padding: 40px 20px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ====== 便签编辑器（新建/编辑表单） ====== */
+.sticky-note-editor {
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sticky-note-editor-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sticky-note-editor-title {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid transparent;
+  outline: none;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  min-width: 0;
+}
+
+.sticky-note-editor-title:focus {
+  border-color: var(--accent);
+  background: var(--bg-base);
+}
+
+.sticky-note-editor-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sticky-note-editor-meta label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sticky-note-editor-meta select,
+.sticky-note-editor-meta input[type='date'] {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+.sticky-note-editor-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.sticky-note-editor-actions .btn {
+  font-size: 12px;
+  padding: 4px 12px;
+}
+
+.sticky-note-editor-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+/* ====== Dashboard 今日便签 widget ====== */
+.sticky-notes-widget {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px 18px;
+}
+
+.sticky-notes-widget .widget-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.sticky-notes-widget .widget-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sticky-notes-widget .widget-sub {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sticky-notes-widget-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sticky-notes-widget-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.sticky-notes-widget-item:hover {
+  background: color-mix(in srgb, var(--bg-overlay) 80%, var(--accent));
+  border-color: var(--accent);
+}
+
+.sticky-notes-widget-item .priority-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.sticky-notes-widget-item .priority-dot.priority-p0 { background: var(--priority-p0); }
+.sticky-notes-widget-item .priority-dot.priority-p1 { background: var(--priority-p1); }
+.sticky-notes-widget-item .priority-dot.priority-p2 { background: var(--priority-p2); }
+.sticky-notes-widget-item .priority-dot.priority-p3 { background: var(--priority-p3); }
+
+.sticky-notes-widget-item .widget-item-title {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.sticky-notes-widget-item .widget-item-progress {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.sticky-notes-widget-empty {
+  padding: 20px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--bg-overlay);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.sticky-notes-widget .widget-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.sticky-notes-widget .widget-link:hover {
+  text-decoration: underline;
+}
+
+/* ============================================================
+ *  动画增强（高/中优先级）
+ *  设计：全部用设计令牌 + prefers-reduced-motion 守护
+ * 触发：CSS 自身（hover / nth-child / 关键帧）；tick 通过 React key bump
+ * ============================================================ */
+
+/* (1) STICKY CARD HOVER LIFT —— 柔化：原 translateY(-2px)/3 层阴影 → translateY(-1px)/单层阴影 */
+.sticky-note-card {
+  transition:
+    transform var(--motion-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--motion-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.sticky-note-card:hover {
+  /* 柔化：去掉 3 层厚重阴影 + 当前色 25% 暖光晕，仅保留柔和 1px 抬升 */
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, currentColor 8%, transparent) inset,
+    0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+/* (2) STICKY CARD MOUNT —— 柔化：原 10px/280ms/12 阶 stagger → 4px/200ms/无 stagger */
+@keyframes sticky-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px) rotate(var(--sticky-rotate, 0deg));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) rotate(var(--sticky-rotate, 0deg));
+  }
+}
+.sticky-note-card.sticky-card-enter {
+  animation: sticky-card-enter 200ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+/* 错峰移除 —— 12 阶 stagger 在长 timeline 滚动时容易引起视觉疲劳 */
+
+/* (3) STICKY DAY SECTION ENTER —— 日期分组入场（60ms 错峰） */
+@keyframes sticky-day-section-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.sticky-day-section.sticky-day-section-enter {
+  animation: sticky-day-section-enter 260ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+.sticky-day-section.sticky-day-section-enter:nth-child(1)  { animation-delay:   0ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(2)  { animation-delay:  60ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(3)  { animation-delay: 120ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(4)  { animation-delay: 180ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(5)  { animation-delay: 240ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(6)  { animation-delay: 300ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(7)  { animation-delay: 360ms; }
+.sticky-day-section.sticky-day-section-enter:nth-child(8)  { animation-delay: 420ms; }
+
+/* (4) STICKY TOOLBAR SLIDE DOWN —— 顶部工具栏挂载滑入 */
+@keyframes sticky-toolbar-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.sticky-timeline-toolbar.sticky-toolbar-slide-down {
+  animation: sticky-toolbar-slide-down 260ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* (6) STICKY JUMP POP —— 回到今日按钮弹出 */
+@keyframes sticky-jump-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.9);
+    box-shadow: var(--shadow-md);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04);
+    box-shadow:
+      0 6px 20px color-mix(in srgb, var(--accent) 35%, transparent),
+      var(--shadow-md);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: var(--shadow-md);
+  }
+}
+.sticky-timeline-jump .btn.sticky-jump-pop {
+  animation: sticky-jump-pop 360ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* (7) STICKY CHIP PRESS —— 过滤 chip 按下反馈 */
+.sticky-timeline-chip:active {
+  transform: scale(0.94);
+}
+
+/* (8) STICKY TOAST TIMER —— 倒计时数字（无 key bump 触发的 scale 弹跳，删除） */
+
+/* (9) STICKY TOAST LOW-TIME —— 剩余 ≤ 2s 时红色脉动 */
+@keyframes sticky-toast-low-time-pulse {
+  0%, 100% {
+    box-shadow:
+      var(--shadow-lg),
+      0 0 0 0 color-mix(in srgb, var(--danger) 0%, transparent);
+    border-color: var(--danger);
+  }
+  50% {
+    box-shadow:
+      var(--shadow-lg),
+      0 0 0 4px color-mix(in srgb, var(--danger) 28%, transparent),
+      0 0 22px color-mix(in srgb, var(--danger) 45%, transparent);
+    border-color: color-mix(in srgb, var(--danger) 80%, var(--border));
+  }
+}
+.sticky-delete-toast.sticky-toast-low-time {
+  animation: sticky-toast-low-time-pulse 1.2s ease-in-out infinite;
+}
+
+/* (10) STICKY EMPTY FILTER FADE —— 空过滤淡入 + 微缩放 */
+@keyframes sticky-empty-filter-fade {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.sticky-timeline-empty-filter.sticky-empty-filter-fade {
+  animation: sticky-empty-filter-fade 260ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* (11) STICKY STEP CHECKBOX TICK —— 勾选时缩放爆点（由 React key bump 触发） */
+@keyframes sticky-step-checkbox-tick {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+.sticky-step-checkbox.tick {
+  animation: sticky-step-checkbox-tick 240ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* (12) STICKY STEP DROP GLOW —— 柔化：原 14px glow + translateY → 6px glow + 无位移 */
+.sticky-step-row.is-drop-target {
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    0 0 6px color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* (13) STICKY STEP GRIP SCALE —— 拖拽手柄 hover 放大 */
+.sticky-step-grip {
+  transition:
+    opacity 0.12s,
+    transform var(--motion-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.sticky-step-grip:hover {
+  transform: scale(1.15);
+}
+
+/* (14) STICKY STEP ADD PRESS —— 添加 step 按下反馈 */
+.sticky-step-add:active {
+  transform: scale(0.94);
+}
+
+/* (15) STICKY EDITOR EXPAND —— 编辑器展开入场 */
+@keyframes sticky-editor-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scaleY(0.96);
+    transform-origin: top center;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+    transform-origin: top center;
+  }
+}
+.sticky-note-editor.sticky-editor-expand {
+  animation: sticky-editor-expand 240ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* (16) STICKY EMPTY ART —— 柔化：原 3s pulse → 静态单层 drop-shadow（去掉持续脉动） */
+.sticky-timeline-empty-hero .sticky-timeline-empty-art {
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.08));
+}
+
+/* (17) STICKY TODAY HEADER —— 今日 header 静态强调（柔化：原 3s pulse → 静态边框） */
+.sticky-day-section.is-today .sticky-day-header {
+  /* 原 box-shadow pulse + text-shadow pulse 太刺眼，改为静态下边框 */
+  border-bottom: 2px solid var(--accent);
+}
+
+/* (18) STICKY WIDGET MOUNT —— Dashboard 便签 widget 入场 */
+@keyframes sticky-widget-mount {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.sticky-notes-widget.sticky-widget-mount {
+  animation: sticky-widget-mount 260ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* (19) STICKY WIDGET ITEM LIFT —— 柔化：原 translateY(-2px)/6px shadow → translateY(-1px)/4px */
+.sticky-notes-widget-item {
+  transition:
+    background var(--motion-base, 180ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
+    border-color var(--motion-base, 180ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.sticky-notes-widget-item.sticky-widget-item-lift:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+/* (20) STICKY WIDGET ITEM STAGGER —— 柔化：原 8px/220ms/6 阶 → 4px/180ms/无 stagger */
+@keyframes sticky-widget-item-stagger {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.sticky-notes-widget-item.sticky-widget-item-stagger {
+  animation: sticky-widget-item-stagger 180ms var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+/* (21) STICKY BADGE HOVER —— 柔化：原 scale(1.05) + 8px drop-shadow → 仅 opacity */
+.sticky-priority-badge {
+  transition: opacity var(--motion-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.sticky-priority-badge.sticky-badge-hover-scale:hover {
+  opacity: 0.85;
+}
+
+/* (22) STICKY NOTE REMOVE BTN —— 柔化：原 scale(1.1) → 无 scale */
+.sticky-note-remove {
+  transition:
+    opacity 0.12s,
+    background 0.12s;
+}
+.sticky-note-remove:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+/* ====== Round 5：自定义滚动条（替代系统默认滚动条） ====== */
+/* 与 ai.css 保持一致的圆角胶囊样式；浅色/深色主题都能识别 */
+.sticky-timeline-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 28%, transparent) transparent;
+}
+
+.sticky-timeline-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+
+.sticky-timeline-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background var(--motion-fast, 120ms) var(--ease-out, ease);
+}
+
+.sticky-timeline-scroll:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  background-clip: padding-box;
+}
+
+.sticky-timeline-scroll:hover::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.sticky-timeline-scroll::-webkit-scrollbar-thumb:active {
+  background: var(--accent);
+}
+
+/* ====== prefers-reduced-motion 守护 ====== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

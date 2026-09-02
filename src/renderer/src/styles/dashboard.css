@@ -1,0 +1,2652 @@
+/**
+ * Dashboard 页面样式（Phase 6+ · 三栏布局 · 深色专注风格）
+ *
+ * 结构（Round 6）：
+ *   .dashboard-page
+ *     .dashboard-topbar           ← 固定顶部栏：greeting · quick actions · 编辑按钮
+ *       .dashboard-topbar-greeting   ← GreetingCard（问候+时钟）
+ *       .dashboard-topbar-actions    ← QuickActions（三个一行按钮）
+ *       .dashboard-topbar-edit       ← 编辑按钮（最右）
+ *     .dashboard-edit-toolbar     ← 仅编辑态：预设 / 添加列 / 取消 / 保存
+ *     .dashboard-cols              ← 多栏 widget 主体
+ *
+ * 设计原则：
+ *   - 深紫灰渐变背景（与专注场景契合）
+ *   - 卡片：圆角 12px、1px 边框、hover 描边变深
+ *   - 中心列最宽（用户目光焦点）
+ *   - 右侧列内每个 widget 高度尽量一致
+ *   - 中部日历：大字公历 + 灰色农历 + 节气高亮 + 今日青/蓝圆形
+ *   - 顶部栏三个区块：greeting 紧凑固定宽度 ｜ actions 弹性占满 ｜ 编辑按钮 紧凑靠右
+ */
+
+/* ================ 页面骨架 ================ */
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-base);
+  width: 100%;
+  box-sizing: border-box;
+  /* 统一四向 padding —— 之前 28/36/60 的不对称让底部出现大段空白，
+     同时让顶部栏内边距与下方卡片列对齐失败。改成 24/32 的对称节奏。 */
+  padding: 24px 32px 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.dashboard-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+}
+
+.dashboard-edit-btn:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+}
+
+/* ================ 固定顶部栏（Round 6 新增，Round 6.1 调优） ================ */
+/* Round 6.1 调优：
+ *   - 三段从 stretch 改为 center，让每个子元素保持自身高度，便于混排
+ *   - greeting-card 收紧 padding + 缩小 clock，去掉视觉重量，贴近按钮高度
+ *   - quick-action-btn 改为 ghost 样式（与编辑按钮一致），不再占用整宽
+ *   - actions 容器右对齐，三按钮聚拢到 edit 按钮附近
+ *   - 整体外缘与下方 dashboard-cols 共享父级 36px 水平内边距，左右对齐
+ *
+ * Round 6.4 调优：
+ *   - greeting-card 改为 flex:1，让其向右侧按钮方向延伸（占满 actions + edit 之外的全部可用宽度）
+ *   - 同步把 actions 容器改为 flex:0 0 auto（content-sized，不再争抢空间）
+ *   - 严守 padding 4px 12px 不动 —— 高度靠内容驱动（~36px），不会挤压下方 widget 面板
+ */
+.dashboard-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.dashboard-topbar-greeting {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+.dashboard-topbar-actions {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.dashboard-topbar-edit {
+  flex: 0 0 auto;
+  margin-left: var(--space-2);
+  display: flex;
+  align-items: center;
+}
+
+.dashboard-topbar-editing-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  color: var(--accent);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+/* 顶部栏内的 greeting-card：收紧 padding + 缩小 clock，贴近按钮高度。
+   Round 6.5：vertical padding 从 4px 提到 10px —— 与下方 widget card-header
+   的 padding 节奏（10px var(--space-3)）一致，让顶部栏三块（greeting/
+   actions/edit）与下方 widget 卡片的视觉基线水平对齐。 */
+.dashboard-topbar .greeting-card {
+  flex: 1 1 auto;
+  padding: 10px var(--space-3);
+  gap: var(--space-2);
+  /* 去掉 ::before 的 radial glow —— 顶部栏场景不需要装饰 */
+}
+
+.dashboard-topbar .greeting-card::before {
+  display: none;
+}
+
+.dashboard-topbar .greeting-left {
+  gap: var(--space-2);
+}
+
+.dashboard-topbar .greeting-icon {
+  font-size: 18px;
+}
+
+.dashboard-topbar .greeting-title {
+  font-size: var(--fs-base);
+}
+
+.dashboard-topbar .greeting-date {
+  font-size: 11px;
+}
+
+.dashboard-topbar .greeting-clock-time {
+  font-size: 20px;
+}
+
+/* 顶部栏内的 quick-actions：横排，三个按钮聚拢右侧
+ * 重要：必须显式重置 border-radius + overflow —— 基础 .quick-actions 是
+ * 卡片基类的一员，带有 border-radius: var(--radius-lg) (10px) + overflow: hidden，
+ * 否则 wrapper 的大圆角会切掉最左按钮的左边缘和最右按钮的右边缘
+ * （hover 时 accent 边线在圆角处会被「咬掉」一截）
+ */
+.dashboard-topbar .quick-actions {
+  flex: 0 1 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  justify-content: flex-end;
+}
+
+/* 顶部栏内的 quick-action-btn：
+ *   - 基础样式完全复用 .btn.ghost（padding 6px 16px / transparent bg+border / 13px / cursor pointer）
+ *   - 这里只补 flex 布局（让 icon + label 横向居中）和与编辑按钮同款 hover 提示
+ *   - 不再覆盖 padding / border / background，与编辑按钮严格一致
+ *   - 圆角从 .btn 默认的 var(--radius-md)（6px）改为 var(--radius-sm)（4px）：
+ *     按钮高度 ~26px，6px 圆角占比 23% 偏大，hover 时 1px accent 边线在圆角处
+ *     容易被「吃掉」一截看起来像被截断；4px 让边框线条保持完整
+ */
+.dashboard-topbar .quick-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-topbar .quick-action-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+  color: var(--accent);
+}
+
+.dashboard-topbar .quick-action-btn svg {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-topbar .quick-action-btn:hover:not(:disabled) svg {
+  color: var(--accent);
+}
+
+.dashboard-topbar .quick-action-label {
+  flex: 0 0 auto;
+  text-align: left;
+  white-space: nowrap;
+}
+
+
+/* ================ 多栏主体（动态列数 · --col-count 由 JS 注入）=============== */
+.dashboard-cols {
+  display: grid;
+  grid-template-columns: repeat(var(--col-count, 3), minmax(0, 1fr));
+  gap: var(--space-3);
+  align-items: stretch;
+}
+
+.dashboard-col-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: 0;
+}
+
+.dashboard-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Round 6.5：cell 在 column 内均分高度 —— 之前没有 flex 简写值导致 cell
+     只取自然高度，stretch 列内 cell 上下参差不齐、空隙大；现在 cell
+     主动 stretch，配合 grid align-items: stretch，列内所有 widget 卡片
+     顶对齐底也齐，视觉网格对齐稳定。 */
+  flex: 1 1 0;
+}
+
+.dashboard-cell-pomodoroCalendar {
+  flex: 2 1 0;
+}
+
+/* Round 4 v3 + 6.5：计时 widget cell 不被强制 stretch —— 内部 panel 是
+   flex:0 0 auto，让 cell 高度跟随内容（避免被空填成大卡）。但仍保留
+   flex 简写使 cell 与其他 cell 顶对齐。 */
+.dashboard-cell-pomodoroTimer {
+  flex: 0 0 auto;
+}
+
+.dashboard-loading {
+  text-align: center;
+  padding: var(--space-2);
+  font-size: var(--fs-sm);
+}
+
+/* ================ 通用卡片（共性基类） ================ */
+.dashboard-page .card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  min-height: 34px;
+}
+
+.dashboard-page .card-header h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.card-header-action {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+.card-header-action:hover {
+  color: var(--text-primary);
+  background: var(--bg-overlay);
+}
+
+.muted {
+  color: var(--text-secondary);
+}
+.small {
+  font-size: var(--fs-sm);
+}
+
+/* 卡片共用：背景 / 边框 / 圆角 / flex 拉伸 */
+.greeting-card,
+.today-summary,
+.stats-cards,
+.pomodoro-calendar-panel.is-embedded,
+.pomodoro-timer-panel.is-embedded,
+.quick-actions,
+.dashboard-heatmap-widget,
+.upcoming-tasks,
+.recent-notes {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.greeting-card:hover,
+.today-summary:hover,
+.stats-cards:hover,
+.pomodoro-calendar-panel.is-embedded:hover,
+.pomodoro-timer-panel.is-embedded:hover,
+.quick-actions:hover,
+.dashboard-heatmap-widget:hover,
+.upcoming-tasks:hover,
+.recent-notes:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 14%, var(--border));
+}
+
+/* ================ 今日摘要 ================ */
+.today-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: var(--space-3);
+  flex: 1;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: center;
+  padding: var(--space-1) 0;
+}
+
+.summary-num {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.summary-num.success {
+  color: var(--success);
+}
+
+.summary-num.danger {
+  color: var(--danger);
+}
+
+.summary-label {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-item.has-warning .summary-num {
+  color: var(--danger);
+}
+
+.today-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  background: var(--bg-overlay);
+}
+
+.progress-track {
+  flex: 1;
+  height: 4px;
+  background: color-mix(in srgb, var(--text-secondary) 18%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, var(--success)));
+  border-radius: 2px;
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.progress-text {
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+/* ================ 统计卡片（三栏 · v2 · 精致版） ================ */
+.stats-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: var(--space-3);
+  flex: 1;
+  align-items: stretch;
+}
+
+/* 单卡：accent 色带 + 提升浮起 + 阴影 + 内部渐变背景 */
+.stats-card {
+  position: relative;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--card-accent, var(--accent)) 8%, var(--bg-overlay)) 0%,
+      var(--bg-overlay) 60%
+    );
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  transition:
+    border-color var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
+}
+
+/* 顶部 accent 色带 —— 一眼区分指标类型 */
+.stats-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--card-accent, var(--accent)) 0%,
+    color-mix(in srgb, var(--card-accent, var(--accent)) 50%, transparent) 100%
+  );
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.stats-card:hover {
+  border-color: color-mix(in srgb, var(--card-accent, var(--accent)) 50%, var(--border));
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--card-accent, var(--accent)) 12%, transparent);
+}
+
+/* 三种指标的 accent 色（用 CSS 自定义属性驱动 ::before 渐变 + 数字色） */
+.stats-card.is-sticky { --card-accent: var(--accent); }
+.stats-card.is-pomodoro { --card-accent: var(--success); }
+.stats-card.is-tokens { --card-accent: var(--accent-purple, #a855f7); }
+
+.stats-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stats-card-head-icon {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--card-accent, var(--accent));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--card-accent, var(--accent)) 60%, transparent);
+  flex-shrink: 0;
+}
+
+.stats-num {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin-top: 2px;
+}
+
+.stats-subtitle {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  margin-top: -2px;
+}
+
+/* 状态堆叠条 —— 圆角首尾 + gap 间隔，hover 时整条浮起 */
+.stats-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  height: 8px;
+  margin-top: var(--space-2);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  border-radius: 999px;
+  padding: 1px;
+  overflow: hidden;
+}
+
+.stats-bar-seg {
+  height: 100%;
+  min-width: 2px;
+  border-radius: 999px;
+  transition: flex-grow var(--motion-base) var(--ease-out);
+}
+
+.stats-bar-seg.is-todo { background: var(--text-secondary); }
+.stats-bar-seg.is-in-progress {
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 60%, white));
+}
+.stats-bar-seg.is-done { background: var(--success); }
+
+/* Legend —— 与堆叠条颜色 + 数字呼应 */
+.stats-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.stats-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stats-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.stats-legend-dot.is-todo { background: var(--text-secondary); }
+.stats-legend-dot.is-in-progress { background: var(--accent); }
+.stats-legend-dot.is-done { background: var(--success); }
+
+.stats-legend-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-right: 2px;
+}
+
+/* Token 卡 —— 输入/输出迷你对比条 */
+.stats-tokens {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: auto;
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+}
+
+.stats-tokens-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.stats-tokens-label {
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stats-tokens-track {
+  height: 4px;
+  background: color-mix(in srgb, var(--text-secondary) 14%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.stats-tokens-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent-purple, #a855f7) 70%, transparent),
+    var(--accent-purple, #a855f7));
+  border-radius: 2px;
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.stats-tokens-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* ================ 时钟问候卡片（美化版） ================ */
+.greeting-card {
+  position: relative;
+  padding: var(--space-3) var(--space-4);
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 14%, var(--bg-elevated)) 0%,
+      var(--bg-elevated) 100%
+    );
+  overflow: hidden;
+}
+
+.greeting-card::before {
+  content: '';
+  position: absolute;
+  inset: -40% -20% auto auto;
+  width: 220px;
+  height: 220px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 22%, transparent) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  filter: blur(8px);
+}
+
+.greeting-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+}
+
+.greeting-icon {
+  font-size: 26px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px color-mix(in srgb, var(--accent) 24%, transparent));
+}
+
+.greeting-info {
+  min-width: 0;
+}
+
+.greeting-title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.greeting-date {
+  margin-top: 1px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.greeting-clock {
+  position: relative;
+  z-index: 1;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.greeting-clock-time {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.greeting-clock-colon {
+  margin: 0 1px;
+  opacity: 0.5;
+}
+
+/* ============================================================
+ * 中栏核心：番茄钟面板（垂直堆叠 + 深色卡片）
+ * 旧 .pomodoro-panel-vertical / -top / -calendar / -timer 块已移除
+ * —— 等价规则见下方「番茄钟拆分后」新块（直接编辑即可）
+ * ============================================================ */
+
+/* ============================================================
+ * FocusDateHeader —— 大字日期 + 农历 + ▼ 下拉
+ * ============================================================ */
+.focus-date-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0;
+}
+
+.focus-date-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.focus-date-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.focus-date-md {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-date-weekday {
+  font-size: var(--fs-md);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.focus-date-row2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.focus-date-lunar {
+  font-size: var(--fs-sm);
+  color: color-mix(in srgb, var(--accent-purple, var(--accent)) 90%, var(--text-primary));
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.focus-date-toggle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.focus-date-toggle:hover {
+  background: var(--bg-base);
+  border-color: var(--accent);
+}
+
+.focus-date-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  box-shadow: var(--shadow-lg);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 200px;
+}
+
+.focus-date-popover-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.focus-date-input {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 4px 6px;
+  font-size: var(--fs-sm);
+  font-family: inherit;
+  color-scheme: dark;
+}
+
+.focus-date-today {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.focus-date-today:hover {
+  background: var(--accent-hover, color-mix(in srgb, var(--accent) 80%, white));
+}
+
+/* ============================================================
+ * FocusCalendar —— 月历 7×6 网格（深色卡片风）
+ * ============================================================ */
+.focus-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.focus-calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+  margin-bottom: 2px;
+}
+
+.focus-calendar-nav {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.focus-calendar-nav:hover {
+  background: var(--bg-overlay);
+  border-color: var(--accent);
+}
+
+.focus-calendar-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex: 1;
+  justify-content: center;
+}
+
+.focus-calendar-month {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+
+.focus-calendar-monthstat {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.focus-calendar-monthstat strong {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-calendar-today {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  font-weight: 500;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.focus-calendar-today:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.focus-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+  padding: 0 var(--space-1);
+}
+
+.focus-calendar-weekday {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  text-align: center;
+  font-weight: 500;
+  padding: 2px 0;
+}
+
+.focus-calendar-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.focus-calendar-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+
+.focus-calendar-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+  min-height: 38px;
+}
+
+.focus-calendar-cell:hover:not(.out-month):not(.is-today) {
+  background: var(--bg-overlay);
+  border-color: var(--border);
+}
+
+.focus-calendar-solar {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.focus-calendar-lunar {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1;
+}
+
+.focus-calendar-cell.out-month .focus-calendar-solar {
+  opacity: 0.3;
+  font-weight: 500;
+}
+
+.focus-calendar-cell.out-month .focus-calendar-lunar {
+  opacity: 0.2;
+}
+
+/* 今日 —— 青色/蓝色圆形高亮 */
+.focus-calendar-cell.is-today {
+  background: color-mix(in srgb, var(--accent-cyan, #22d3ee) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent-cyan, #22d3ee) 50%, transparent);
+}
+
+.focus-calendar-cell.is-today .focus-calendar-solar {
+  color: var(--accent-cyan, #22d3ee);
+  font-weight: 700;
+}
+
+.focus-calendar-cell.is-today::before {
+  /* 圆形高亮背景 */
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent-cyan, #22d3ee) 22%, transparent);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.focus-calendar-cell.is-selected:not(.is-today) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* 节气 / 闰月 —— 醒目的 accent 色 */
+.focus-calendar-cell.has-term .focus-calendar-lunar {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.focus-calendar-cell.is-leap .focus-calendar-lunar {
+  color: var(--accent-purple, var(--accent));
+}
+
+/* StickyNoteSelector / TaskSelector / 番茄 dot 标记已下线 —— 不再有任何 .task-selector*
+ * FocusCalendar v3 已切换为便签截止 dot（has-due / focus-calendar-due-dot）
+ * 真正的样式在 pomodoro.css，这里仅保留标记。 */
+
+.focus-calendar-tooltip {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: var(--fs-xs);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+.focus-calendar-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.focus-calendar-tooltip-stat {
+  color: var(--text-secondary);
+  margin-right: var(--space-2);
+}
+
+.focus-calendar-tooltip-stat strong {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+ * TimerDisplay —— 计时圆环
+ * ============================================================ */
+.timer-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.timer-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.timer-mode {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.timer-time {
+  font-size: 38px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  margin-top: 4px;
+}
+
+.timer-cycle {
+  font-size: 10px;
+  margin-top: 6px;
+}
+
+/* ============================================================
+ * FocusControls —— -/+ 分钟 + 主按钮
+ * ============================================================ */
+.focus-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.focus-duration {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px;
+}
+
+.focus-duration-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.focus-duration-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  transform: none;
+}
+
+.focus-duration-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.focus-duration-display {
+  background: transparent;
+  border: 0;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 4px var(--space-2);
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-family: inherit;
+}
+
+.focus-duration-display:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.focus-duration-num {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.focus-duration-unit {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.focus-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.focus-start:hover:not(:disabled) {
+  background: var(--accent-hover, color-mix(in srgb, var(--accent) 80%, white));
+}
+
+.focus-start:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.focus-start.is-running {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.focus-start-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* ============================================================
+ * DailyGoalRing —— 目标环
+ * ============================================================ */
+.daily-goal-ring {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.daily-goal-svg {
+  flex-shrink: 0;
+}
+
+.daily-goal-track {
+  stroke: var(--border);
+}
+
+.daily-goal-progress {
+  stroke: var(--accent);
+  transition: stroke-dashoffset var(--motion-base) var(--ease-out);
+}
+
+.daily-goal-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.daily-goal-count {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.daily-goal-count strong {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.daily-goal-sep {
+  color: var(--text-secondary);
+  margin: 0 2px;
+}
+
+.daily-goal-target {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.daily-goal-emoji {
+  margin-left: 4px;
+  font-size: 14px;
+}
+
+.daily-goal-text {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.daily-goal-ring.is-done .daily-goal-progress {
+  stroke: var(--success);
+}
+
+/* ============================================================
+ * TodayPomodoros —— 今日番茄完成列表
+ * ============================================================ */
+.today-pomodoros {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.today-pomodoros h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.today-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.today-item {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 4px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--fs-sm);
+}
+
+.today-item:hover {
+  background: var(--bg-elevated);
+}
+
+.today-time {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+}
+
+.today-pomodoro-title {
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.today-duration {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+}
+
+/* Round 6.5：把 .today-summary 限定到 .today-pomodoros 内嵌的今日番茄摘要
+   元素。dashboard.css 与 pomodoro.css 各自都有一段无父级限定的
+   .today-summary 样式（沿用旧的「今日番茄完成数 / 计划数」摘要的视觉），
+   会覆盖到 dashboard TodaySummary widget 根类 → 出现 margin-top、
+   padding-top、border-top、font-size 全部错位 → widget 顶上产生 8px
+   空白 + 虚线边框 + 字号变小。
+   用 :where() 限定到 .today-pomodoros 子元素，dashboard widget 不受影响。 */
+:where(.today-pomodoros) .today-summary {
+  font-size: var(--fs-xs);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
+}
+
+:where(.today-pomodoros) .today-summary strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+ * StickyNoteSelector / TaskSelector 已下线 —— 不再有任何 .task-selector*
+ * ============================================================ */
+
+/* ============================================================
+ * Row 4 —— 快捷操作 / 热力图 / 即将到期 / 最近笔记
+ * ============================================================ */
+
+/* QuickActions */
+.quick-actions {
+  padding: var(--space-2);
+  gap: 6px;
+}
+
+.quick-action-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.quick-action-btn:hover:not(:disabled) {
+  background: var(--bg-overlay);
+  border-color: var(--border);
+  color: var(--accent);
+}
+
+.quick-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--text-secondary);
+}
+
+.quick-action-btn svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.quick-action-btn:hover:not(:disabled) svg {
+  color: var(--accent);
+}
+
+.quick-action-label {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* HeatmapWidget */
+.dashboard-heatmap-period-row {
+  padding: 2px var(--space-3) 4px;
+}
+
+.dashboard-heatmap-period {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.dashboard-heatmap-sub {
+  padding: 2px var(--space-3) 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-heatmap-sources {
+  display: flex;
+  gap: 4px;
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.dashboard-heatmap-source {
+  font-size: var(--fs-xs);
+  padding: 3px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 500;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.dashboard-heatmap-source:hover {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+}
+.dashboard-heatmap-source.is-on {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* 单月视图：cell 放大，weekday 列完整 7 行 */
+.dashboard-heatmap-body {
+  display: flex;
+  gap: 4px;
+  padding: 4px var(--space-3) var(--space-2);
+  overflow-x: auto;
+}
+
+/* Round 4：右侧 wrapper（month labels + cells 网格），垂直堆叠 */
+.dashboard-heatmap-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Round 4：月份标签行（cells 网格上方）—— 列宽 18px + gap 3px 与 cells 对齐 */
+.dashboard-heatmap-month-labels {
+  display: grid;
+  grid-template-columns: repeat(var(--heatmap-weeks, 13), 18px);
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  /* 视觉下边线弱化分隔（让月份标签与 cells 分层但不刺眼） */
+  padding-bottom: 1px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+}
+.dashboard-heatmap-month-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  line-height: 1;
+}
+/* 非月份首周的列占位：透明，保留列宽对齐 */
+.dashboard-heatmap-month-label.is-spacer {
+  visibility: hidden;
+}
+
+.dashboard-heatmap-weekday-col {
+  display: grid;
+  grid-template-rows: repeat(7, 18px);
+  gap: 3px;
+  width: 22px;
+  flex-shrink: 0;
+}
+
+.dashboard-heatmap-weekday-cell {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboard-heatmap-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 18px;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard-heatmap-col {
+  display: grid;
+  grid-template-rows: repeat(7, 18px);
+  gap: 3px;
+}
+
+.dashboard-heatmap-cell {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--bg-overlay);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-heatmap-cell:hover {
+  transform: scale(1.4);
+  z-index: 2;
+}
+
+.dashboard-heatmap-cell.out-of-range {
+  opacity: 0.25;
+}
+
+.dashboard-heatmap-cell.is-today {
+  outline: 1.5px solid var(--accent);
+  outline-offset: 0;
+}
+
+.dashboard-heatmap-cell.level-0 { background: color-mix(in srgb, var(--success) 8%, var(--bg-overlay)); }
+.dashboard-heatmap-cell.level-1 { background: color-mix(in srgb, var(--success) 28%, var(--bg-overlay)); }
+.dashboard-heatmap-cell.level-2 { background: color-mix(in srgb, var(--success) 50%, var(--bg-overlay)); }
+.dashboard-heatmap-cell.level-3 { background: color-mix(in srgb, var(--success) 70%, var(--bg-overlay)); }
+.dashboard-heatmap-cell.level-4 { background: var(--success); }
+
+.dashboard-heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-1) var(--space-3) 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.dashboard-heatmap-legend-cells {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.dashboard-heatmap-legend-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.dashboard-heatmap-legend-cell.level-0 { background: color-mix(in srgb, var(--success) 8%, var(--bg-overlay)); }
+.dashboard-heatmap-legend-cell.level-1 { background: color-mix(in srgb, var(--success) 28%, var(--bg-overlay)); }
+.dashboard-heatmap-legend-cell.level-2 { background: color-mix(in srgb, var(--success) 50%, var(--bg-overlay)); }
+.dashboard-heatmap-legend-cell.level-3 { background: color-mix(in srgb, var(--success) 70%, var(--bg-overlay)); }
+.dashboard-heatmap-legend-cell.level-4 { background: var(--success); }
+
+/* UpcomingStickies */
+.upcoming-list {
+  list-style: none;
+  /* Round 6.5：padding 从 var(--space-2) (8px) 提到 var(--space-3) (12px)，
+     与 stats-cards / today-summary-grid 内部节奏一致，让 widget 卡片
+     边缘到内容间距在不同 widget 间对齐。 */
+  padding: var(--space-3);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  overflow-y: auto;
+}
+
+.upcoming-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.upcoming-item:hover {
+  background: var(--bg-overlay);
+}
+
+.upcoming-sticky-wrap {
+  cursor: pointer;
+}
+
+.upcoming-open-btn {
+  align-self: flex-end;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.upcoming-open-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.upcoming-when {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.empty-mini {
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+}
+
+/* RecentNotes */
+.recent-notes-list {
+  list-style: none;
+  /* Round 6.5：padding 从 6px 提到 var(--space-3) (12px) —— 与
+     stats-cards / upcoming-list 内部节奏统一，widget 卡片边缘对齐。 */
+  padding: var(--space-3);
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.recent-note-item {
+  display: block;
+}
+
+.recent-note-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-2);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: var(--fs-sm);
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.recent-note-btn:hover {
+  background: var(--bg-overlay);
+}
+
+.recent-note-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.recent-note-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-note-pin {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.recent-note-mtime {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-xs);
+}
+
+/* ============================================================
+ * Editor Modal
+ * ============================================================ */
+.dashboard-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  backdrop-filter: blur(2px);
+  animation: dashboard-fade-in var(--motion-base) var(--ease-out);
+}
+
+@keyframes dashboard-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.dashboard-editor-modal {
+  width: min(420px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  animation: dashboard-modal-in var(--motion-base) var(--ease-out);
+}
+
+@keyframes dashboard-modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.dashboard-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.dashboard-editor-header h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.dashboard-editor-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-editor-close:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.dashboard-editor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.dashboard-editor-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-2) 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-editor-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px var(--space-3);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: grab;
+  user-select: none;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-editor-item:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.dashboard-editor-item:active {
+  cursor: grabbing;
+}
+
+.dashboard-editor-item.is-dragging {
+  opacity: 0.5;
+}
+
+.dashboard-editor-item.is-hidden .dashboard-editor-label {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+
+.dashboard-editor-grip {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.dashboard-editor-label {
+  flex: 1;
+  font-size: var(--fs-sm);
+}
+
+.dashboard-editor-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-secondary);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  transition: color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-editor-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.dashboard-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.dashboard-editor-footer-right {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ============================================================
+ * 多栏编辑器（presets + 多列拖动 + 删除列）
+ * ============================================================ */
+.dashboard-editor-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-overlay);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+
+.dashboard-editor-preset {
+  font-size: var(--fs-sm);
+  padding: 4px 10px;
+}
+
+.dashboard-editor-add-col {
+  margin-left: auto;
+  font-size: var(--fs-sm);
+  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dashboard-editor-add-col:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dashboard-editor-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.dashboard-editor-col {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  min-height: 120px;
+}
+
+.dashboard-editor-col-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 4px 6px;
+  margin-bottom: 4px;
+}
+
+.dashboard-editor-col-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-editor-empty {
+  padding: var(--space-3) var(--space-2);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  margin: 4px 0;
+}
+
+.dashboard-editor-remove-col {
+  margin-top: var(--space-2);
+  font-size: var(--fs-xs);
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  align-self: flex-start;
+}
+
+.dashboard-editor-remove-col:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.dashboard-editor-item.is-drop-target {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+  position: relative;
+}
+
+.dashboard-editor-item.is-drop-target::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.dashboard-editor-hidden-section {
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.dashboard-editor-hidden-section summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.dashboard-editor-list.is-hidden-list {
+  margin-top: var(--space-2);
+}
+
+.dashboard-editor-hint {
+  margin-top: var(--space-3);
+  font-style: italic;
+}
+
+/* ============================================================
+ * 直接拖动编辑（替代 Modal）
+ *
+ * Round 6.5：编辑工具栏 + 隐藏 widget 列表从 sticky/in-flow 改为 fixed
+ * 浮层 —— 进入编辑态时不再把 dashboard-cols 整体下推挤压；原位置 widget
+ * 卡片原地保留（同时挂上 .is-editable 虚线边框 + 拖拽手柄 / 隐藏眼睛），
+ * 工具栏浮在 viewport 底部中央，隐藏列表浮在底部右侧（在工具栏上方
+ * 一段距离避免遮挡）。
+ * ============================================================ */
+.dashboard-edit-toolbar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  max-width: calc(100vw - 48px);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  /* backdrop-filter 在 Electron 渲染进程可正常生效，让浮层半透明
+     露出下方 widget 卡片边缘 —— 强化"原位编辑"的视觉直觉。 */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  /* 进入编辑态浮层滑入，避免硬切 */
+  animation: dashboard-edit-toolbar-in var(--motion-base) var(--ease-out);
+}
+
+@keyframes dashboard-edit-toolbar-in {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.dashboard-edit-toolbar-presets {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.dashboard-edit-toolbar-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.dashboard-edit-preset,
+.dashboard-edit-add-col {
+  font-size: var(--fs-sm);
+  padding: 4px 10px;
+}
+
+.dashboard-edit-add-col {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: var(--space-1);
+}
+
+.dashboard-edit-add-col:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 编辑态下 cell 整体作为拖拽容器 */
+.dashboard-cell.is-editable {
+  position: relative;
+  cursor: grab;
+  border: 1px dashed color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-cell.is-editable:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.dashboard-cell.is-editable:active {
+  cursor: grabbing;
+}
+
+.dashboard-cell.is-dragging {
+  opacity: 0.5;
+}
+
+.dashboard-cell.is-drop-target {
+  border-color: var(--accent);
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  position: relative;
+}
+
+.dashboard-cell.is-drop-target::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.dashboard-cell-handle {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elevated));
+  color: var(--text-primary);
+  cursor: grab;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.dashboard-cell-handle:active {
+  cursor: grabbing;
+}
+
+.dashboard-cell-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-elevated));
+  color: var(--text-primary);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.dashboard-cell-toggle:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+.dashboard-cell-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.dashboard-col-stack-remove-col {
+  margin-top: var(--space-1);
+  align-self: stretch;
+  font-size: var(--fs-xs);
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  border-style: dashed;
+}
+
+.dashboard-col-stack-remove-col:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* 隐藏 widget 列表（编辑态右下浮层 —— 与底部中央的 .dashboard-edit-toolbar
+   错开 80px 高度，避免遮挡 + 让两者有视觉层级） */
+.dashboard-edit-hidden-tray {
+  position: fixed;
+  bottom: 96px;
+  right: 24px;
+  z-index: 99;
+  max-width: 360px;
+  max-height: 50vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: dashboard-edit-toolbar-in var(--motion-base) var(--ease-out);
+}
+
+.dashboard-edit-hidden-tray summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.dashboard-edit-hidden-list {
+  list-style: none;
+  padding: var(--space-2) 0 0 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.dashboard-edit-hidden-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+
+.dashboard-edit-hidden-item .dashboard-cell-toggle {
+  position: static;
+  width: 20px;
+  height: 20px;
+}
+
+/* ============================================================
+ * 番茄钟拆分后：日历 widget + 计时 widget
+ * ============================================================ */
+.pomodoro-calendar-panel,
+.pomodoro-timer-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.pomodoro-calendar-panel:hover,
+.pomodoro-timer-panel:hover {
+  border-color: color-mix(in srgb, var(--text-primary) 14%, var(--border));
+}
+
+.pomodoro-calendar-panel.is-embedded,
+.pomodoro-timer-panel.is-embedded {
+  padding: var(--space-3);
+  gap: var(--space-3);
+}
+
+/* Round 4 v2：嵌入式计时 widget 内容紧凑，不要被 flex:1 拉伸成空卡 */
+.pomodoro-timer-panel.is-embedded {
+  flex: 0 0 auto;
+}
+
+/* 仅日历 widget 保留顶部 accent 渐变（避免双层 glow 叠在一起） */
+.pomodoro-calendar-panel.is-embedded {
+  background:
+    radial-gradient(
+      ellipse at top right,
+      color-mix(in srgb, var(--accent) 8%, var(--bg-elevated)) 0%,
+      var(--bg-elevated) 70%
+    );
+}
+
+/* 日历 widget 内部布局 */
+.pomodoro-calendar-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.pomodoro-calendar-top .focus-date-header {
+  padding: 0;
+  border-bottom: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+/* 取消 pomodoro.css 给 .daily-goal-ring 自带的边框/背景/内边距（嵌入态下裸示） */
+.pomodoro-calendar-top .daily-goal-ring {
+  flex-shrink: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.pomodoro-calendar-grid {
+  display: flex;
+  justify-content: center;
+}
+
+.pomodoro-calendar-grid .focus-calendar {
+  width: 100%;
+  max-width: 520px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+/* 计时 widget 内部布局（v3 · 左右两列）
+   用户需求：时钟表侧边放置，时长设置 + 开始专注按钮横向并列在侧边，
+   跳过 / 终止 / mode pill 在第二行；今日番茄列表 + 本月统计在下方。 */
+
+.pomodoro-timer-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) 0;
+  flex-wrap: wrap; /* 极窄列下回退到上下两行（clock 一行 + controls 一行） */
+  min-width: 0;
+}
+
+.pomodoro-timer-display-col {
+  flex: 0 1 auto; /* 允许在 160px 以下收缩，避免推挤 controls */
+  min-width: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pomodoro-timer-controls-col {
+  flex: 1 1 200px; /* 给 controls 至少 200px，剩余空间让 clock 填 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0; /* 防止 flex 子元素溢出 */
+}
+
+/* FocusControls 在嵌入面板里：去掉顶部分隔线（与外层 gap 自然分隔）、锁等高 */
+.pomodoro-timer-panel .focus-controls {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-3);
+  border-top: 0;
+  padding: 0;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+/* Round 4：嵌入式面板使用列朝向 —— duration 在上、start 在下，都满宽 */
+.pomodoro-timer-panel .focus-controls.orientation-col {
+  flex-direction: column;
+  align-items: stretch;
+}
+.pomodoro-timer-panel .focus-controls.orientation-col .focus-duration {
+  width: 100%;
+  justify-content: center;
+}
+.pomodoro-timer-panel .focus-controls.orientation-col .focus-start {
+  width: 100%;
+  justify-content: center;
+}
+
+/* .focus-duration 内部 [-] [N 分钟] [+] 三件套：让高度撑满行高，与主按钮对齐。
+   flex-shrink:0 强制保留内在宽度（不被挤压后隐藏 "N 分钟" 数字） */
+.pomodoro-timer-panel .focus-duration {
+  align-items: center;
+  height: 36px;
+  padding: 0 4px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  gap: 6px;
+  flex-shrink: 0;
+}
+.pomodoro-timer-panel .focus-duration-btn {
+  /* 嵌入态：保持与主按钮同高（36px），但视觉直径更收敛 */
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+}
+.pomodoro-timer-panel .focus-duration-btn:active:not(:disabled) {
+  /* 杀 pomodoro.css 给的 scale 0.95 变形，避免与主按钮的视觉冲突 */
+  transform: none;
+}
+.pomodoro-timer-panel .focus-duration-display {
+  /* 让中央数字 + 分钟 单位 垂直居中。父 .focus-duration 已 align-items:center，
+     这里再撑满高度让内部 baseline 对齐生效，无需 align-self。 */
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0 8px;
+  height: 100%;
+  flex-shrink: 0;
+}
+.pomodoro-timer-panel .focus-duration-num { font-size: 18px; }
+.pomodoro-timer-panel .focus-duration-unit { font-size: 11px; }
+
+/* 主按钮在嵌入面板里：锁 36px 高，与 duration pill 等高。
+   flex-shrink:1 允许窄列下缩短 padding 但不丢文字 */
+.pomodoro-timer-panel .focus-start {
+  height: 36px;
+  line-height: 1;
+  padding: 0 18px;
+  flex-shrink: 1;
+  white-space: nowrap;
+}
+
+/* 跳过 / 重置 / mode pill 一行：左侧次级按钮，右侧 mode pill 自动推开。
+   极窄时允许换行避免溢出。 */
+.pomodoro-secondary-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.pomodoro-secondary-btn {
+  height: 32px;
+  padding: 0 14px;
+  font-size: var(--fs-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pomodoro-mode-pill {
+  margin-left: auto;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-overlay);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+/* 今日番茄钟列表：透明背景 + 顶部分隔线，与控制区清晰分开 */
+.pomodoro-timer-panel .today-pomodoros {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border);
+  padding: var(--space-2) 0 0;
+  margin-top: var(--space-2);
+}
+
+/* 修复 ISSUE 2：.today-summary 与 dashboard TodaySummary widget 的根类同名，
+   之前会被卡片基类挂上 border/background，渲染成多余的嵌套卡片 */
+.pomodoro-timer-panel .today-pomodoros .today-summary {
+  background: transparent;
+  border: 0;
+  border-top: 1px dashed var(--border);
+  border-radius: 0;
+  overflow: visible;
+  flex: none;
+}
+
+/* ============================================================
+ * Pomodoro 快捷设置（Tier 1 内嵌 + Tier 2 齿轮 popover）
+ *
+ * 取代之前的独立 settings widget —— 把高频设置直接放在 timer panel 底部。
+ * ============================================================ */
+.pomodoro-quick-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  position: relative;
+}
+
+.pomodoro-quick-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.pomodoro-quick-label {
+  padding: 0 4px 0 4px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.pomodoro-quick-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+.pomodoro-quick-step:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.pomodoro-quick-step:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pomodoro-quick-step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.pomodoro-quick-value {
+  min-width: 18px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pomodoro-quick-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.pomodoro-quick-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.pomodoro-quick-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pomodoro-quick-toggle.is-active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--accent);
+}
+
+.pomodoro-quick-gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+.pomodoro-quick-gear:hover,
+.pomodoro-quick-gear.is-open {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-overlay));
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+.pomodoro-quick-gear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pomodoro-settings-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  min-width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.pomodoro-quick-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+.pomodoro-quick-select {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 6px;
+  font-size: var(--fs-xs);
+  font-family: inherit;
+  color: var(--text-primary);
+  color-scheme: dark;
+}
+.pomodoro-quick-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+ * 响应式：动态列数自适应
+ * ============================================================ */
+@media (max-width: 1200px) {
+  /* 列数 ≥ 4 时强制回到 3 列；保持 widget 在列内自然堆叠 */
+  .dashboard-cols {
+    grid-template-columns: repeat(min(var(--col-count, 3), 3), minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) {
+  .dashboard-page {
+    padding: var(--space-3);
+  }
+  /* 任何列数都退回单列 */
+  .dashboard-cols {
+    grid-template-columns: 1fr;
+  }
+  /* 编辑工具栏在窄屏下保持可读 */
+  .dashboard-edit-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  /* Round 6.1：窄屏下顶部栏三段改成纵向堆叠，避免挤一行 */
+  .dashboard-topbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-2);
+  }
+  .dashboard-topbar-greeting,
+  .dashboard-topbar-actions,
+  .dashboard-topbar-edit {
+    width: 100%;
+  }
+  .dashboard-topbar-actions {
+    justify-content: flex-start;
+  }
+  .dashboard-topbar-edit {
+    margin-left: 0;
+    justify-content: flex-end;
+  }
+}
+
+/* ============================================================
+ * prefers-reduced-motion
+ * ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

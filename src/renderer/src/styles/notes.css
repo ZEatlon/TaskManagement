@@ -1,0 +1,2279 @@
+/**
+ * 笔记模块样式
+ */
+
+/* ====== 状态徽章 ====== */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  /* 给行内对齐一个稳定的 baseline：固定 line-height 与 dot 一致 */
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.status-badge.compact {
+  /* 紧凑态用于笔记列表行尾，只显示 dot；
+     把高度做到与 .del-btn (22px) 一致，便于视觉对齐 */
+  padding: 0 7px;
+  min-width: 22px;
+  height: 22px;
+  justify-content: center;
+}
+
+.status-badge .dot {
+  font-size: 14px;
+  line-height: 1;
+  /* dot glyph 在大多数字体里偏上，inline-flex 父级会居中即可 */
+}
+
+.status-badge.state-clean .dot {
+  color: var(--success);
+}
+
+.status-badge.state-modified {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.status-badge.state-modified .dot {
+  color: var(--warning);
+}
+
+.status-badge.state-conflict {
+  border-color: var(--danger);
+  color: var(--danger);
+  /* R12 修复 (medium)：使用 token 而非硬编码 rgba，浅色主题下由 [data-theme='light']
+     把 --color-conflict-bg 加深到 0.22 以保证可见。 */
+  background: var(--color-conflict-bg);
+}
+
+.status-badge.state-conflict .dot {
+  color: var(--danger);
+}
+
+/* ====== 笔记主页布局 ====== */
+.notes-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* Round 5：去掉顶部 padding（不再有 page-header，24px 顶部空白是冗余）；
+     保持左右 0（Round 4 已收紧到贴边），底部 0。 */
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* 笔记页头部 padding 由 .page-header 提供 */
+
+/* ====== 笔记页头部操作区（折叠按钮） —— 已废弃，保留选择器以避免旧 class 残留 */
+.notes-page-actions,
+.notes-page-toggle {
+  display: none;
+}
+
+.notes-layout {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 280px 1fr 280px;
+  gap: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* 列宽过渡：折叠/展开时平滑滑出 */
+  transition: grid-template-columns 0.22s ease;
+}
+
+/* ============ 左右侧栏独立折叠 ============ */
+/* 折叠后保留 36px 窄图标条，里面仍可见再展开按钮 */
+.notes-layout.left-collapsed {
+  grid-template-columns: 36px 1fr 280px;
+}
+.notes-layout.right-collapsed {
+  grid-template-columns: 280px 1fr 36px;
+}
+.notes-layout.left-collapsed.right-collapsed {
+  grid-template-columns: 36px 1fr 36px;
+}
+
+/* 折叠态：隐藏子内容，只显示 .notes-rail-handle 按钮 */
+.notes-sidebar.collapsed > *:not(.notes-rail-handle),
+.notes-aside.collapsed > *:not(.notes-rail-handle) {
+  display: none;
+}
+
+.notes-sidebar.collapsed,
+.notes-aside.collapsed {
+  overflow: hidden;
+  /* 窄条本身不再有边框，仅保留居中按钮 */
+  border-right: 1px solid transparent;
+}
+
+/* ===== 笔记栏垂直折叠条（VSCode 风格） ===== */
+.notes-rail-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: pointer;
+  z-index: 5;
+  background: transparent;
+  border: none;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.notes-rail-handle::before {
+  content: '';
+  width: 2px;
+  height: 24px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-out),
+    height var(--motion-base) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.notes-rail-handle:hover::before,
+.notes-rail-handle:focus-visible::before {
+  opacity: 1;
+  height: 36px;
+  background: var(--accent);
+}
+
+.notes-rail-handle:focus-visible {
+  outline: none;
+}
+
+.notes-sidebar .notes-rail-handle {
+  right: -3px; /* 贴在左侧栏的右侧边 */
+}
+
+.notes-aside .notes-rail-handle {
+  left: -3px;  /* 贴在右侧栏的左侧边 */
+}
+
+/* 折叠时把手样式微调（保持可见但更柔和） */
+.notes-sidebar.collapsed .notes-rail-handle::before,
+.notes-aside.collapsed .notes-rail-handle::before {
+  opacity: 0.4;
+  height: 16px;
+}
+
+.notes-sidebar.collapsed .notes-rail-handle:hover::before,
+.notes-aside.collapsed .notes-rail-handle:hover::before {
+  opacity: 1;
+  height: 36px;
+}
+
+/* ====== 侧栏：笔记列表 ====== */
+.notes-sidebar {
+  position: relative;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.notes-tree {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.notes-tree .tree-header {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notes-tree .search-input {
+  flex: 1;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.notes-tree .search-input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+
+.notes-tree .create-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+}
+
+.notes-tree .filter-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 8px 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notes-tree .filter-tabs .tab {
+  flex: 1;
+  background: transparent;
+  border: none;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.notes-tree .filter-tabs .tab:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.notes-tree .filter-tabs .tab.active {
+  background: var(--bg-overlay);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.notes-tree .tag-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.notes-tree .tag-chip {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.notes-tree .tag-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.notes-tree .tag-chip.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.notes-tree .tag-chip.xs {
+  padding: 1px 6px;
+  font-size: 10px;
+}
+
+.notes-tree .note-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.notes-tree .note-list .empty {
+  padding: 40px 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.note-list-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 12px;
+}
+
+.note-skeleton-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notes-tree .note-item {
+  position: relative;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.notes-tree .note-item:hover {
+  background: var(--bg-overlay);
+  border-color: var(--border);
+}
+
+.notes-tree .note-item.selected {
+  background: var(--bg-overlay);
+  border-color: var(--accent);
+}
+
+.notes-tree .note-item .title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  /* 始终预留右侧空间（容纳同步徽章 22px 高 + 8px gap + 删除按钮 22px 宽），
+     避免 hover 时 del-btn 淡入造成的"挤压/抖动" */
+  padding-right: 28px;
+}
+
+.notes-tree .note-item .title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* 在多元素并排时让标题占满主轴可用空间并正确触发省略 */
+  flex: 1;
+  min-width: 0;
+}
+
+.notes-tree .note-item .meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.notes-tree .note-item .tags {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.notes-tree .note-item .tag-more {
+  font-size: 10px;
+}
+
+.notes-tree .note-item .del-btn {
+  /* 不再 absolute；进入文档流，与徽章并排 */
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  /* × 在大多数字体里 x-height 偏小，且 line-height:1 会让 × 视觉上偏上；
+     用 flex 居中 + 略大的字号 + 略小的行高，让 × 在方框里真正居中 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+
+.notes-tree .note-item:hover .del-btn,
+.notes-tree .note-item:focus-within .del-btn {
+  opacity: 1;
+}
+
+.notes-tree .note-item .del-btn:hover {
+  background: var(--danger);
+  color: white;
+}
+
+/* ====== 中间：编辑器 ====== */
+.notes-main {
+  background: var(--bg-base);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.note-editor.empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.note-editor .empty-tip {
+  text-align: center;
+  padding: 32px;
+}
+
+.note-editor .editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+}
+
+.note-editor .editor-toolbar-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.note-editor .editor-note-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.1px;
+}
+
+.note-editor .editor-note-path {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-editor .toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+/* 布局切换（仅编辑 / 分屏 / 仅预览） */
+.note-editor .layout-toggle {
+  display: inline-flex;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 2px;
+  gap: 2px;
+}
+
+.note-editor .layout-btn {
+  background: transparent;
+  border: none;
+  padding: 4px 10px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.note-editor .layout-btn:hover {
+  background: color-mix(in srgb, var(--bg-overlay) 80%, var(--accent-soft, transparent));
+  color: var(--text-primary);
+}
+
+.note-editor .layout-btn.active {
+  background: var(--bg-elevated);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 分屏方向切换（编辑在左 ↔ 编辑在右） */
+.note-editor .split-direction-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  color: var(--accent);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.note-editor .split-direction-btn:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+
+.note-editor .save-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.note-editor .save-status.dirty {
+  color: var(--warning);
+}
+
+.note-editor .save-status.saved {
+  color: var(--success);
+}
+
+.note-editor .save-status.draft {
+  color: var(--accent, #4a90e2);
+  border: 1px solid var(--accent, #4a90e2);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-weight: 500;
+}
+
+/* 模块 7：草稿恢复横幅 */
+.note-editor .draft-restore-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  margin: 8px 12px 0;
+  border-radius: 6px;
+  background: var(--focus-ring-bg);
+  border: 1px solid var(--focus-ring);
+  gap: 12px;
+}
+
+.note-editor .draft-restore-text {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-editor .draft-restore-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.note-editor .draft-restore-actions .btn {
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.note-editor .draft-restore-actions .btn.ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.note-editor .draft-restore-actions .btn.ghost:hover {
+  background: var(--bg-hover);
+}
+
+.note-editor .editor-markdown-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.note-editor .editor-markdown-toolbar .md-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-width: 28px;
+}
+
+.note-editor .editor-markdown-toolbar .md-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.note-editor .editor-markdown-toolbar .sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.note-editor .editor-body {
+  flex: 1;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.note-editor.is-empty .editor-body {
+  grid-template-columns: 1fr;
+}
+
+/* 单栏布局（仅编辑 / 仅预览） */
+.note-editor .editor-body.layout-edit-only,
+.note-editor .editor-body.layout-preview-only {
+  grid-template-columns: 1fr;
+}
+
+/* 分屏布局：默认 1fr 1fr，方向由子元素的 order 决定 */
+.note-editor .editor-body.layout-split {
+  grid-template-columns: 1fr 1fr;
+}
+
+/* 当 split 时，根据 .edit-pane / .preview-pane 的 order 决定左右位置
+   （用户在 NoteEditor 中通过 setSplitDir 调整） */
+.note-editor .editor-pane {
+  min-height: 0;
+  overflow: auto;
+  /* 默认 order：edit-pane 在前，preview-pane 在后；split-direction 通过内联 style 覆盖 */
+}
+
+.note-editor .editor-body.layout-split .edit-pane {
+  border-right: 1px solid var(--border);
+}
+
+.note-editor .editor-body.layout-split .preview-pane {
+  /* 让 preview 自带 padding，编辑区交给 TipTap 自身 */
+  background: var(--bg-base);
+}
+
+.note-editor .editor-body.layout-edit-only .preview-pane,
+.note-editor .editor-body.layout-preview-only .edit-pane {
+  display: none;
+}
+
+/* 让 TipTap 编辑器在 edit-pane 中占满 */
+.note-editor .edit-pane > .tiptap-editor,
+.note-editor .edit-pane > [class*='editor'] {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.note-editor .editor-pane.empty-pane {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: none;
+}
+
+.note-editor .empty-pane .empty-tip {
+  text-align: center;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.note-editor .empty-pane .empty-icon {
+  font-size: 40px;
+  line-height: 1;
+  opacity: 0.5;
+}
+
+.note-editor.is-empty .editor-toolbar {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.note-editor .markdown-textarea {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-base);
+  border: none;
+  outline: none;
+  padding: 16px 24px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  resize: none;
+}
+
+/* ====== 预览 ====== */
+.note-preview.markdown-body {
+  padding: 16px 24px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.4em 0 0.6em;
+  line-height: 1.25;
+  font-weight: 700;
+}
+
+.markdown-body h1 {
+  font-size: 22px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.markdown-body h2 {
+  font-size: 18px;
+}
+
+.markdown-body h3 {
+  font-size: 15px;
+}
+
+.markdown-body p {
+  margin: 0.6em 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.4em;
+  margin: 0.4em 0;
+}
+
+.markdown-body li {
+  margin: 0.2em 0;
+}
+
+.markdown-body blockquote {
+  margin: 0.8em 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
+}
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-overlay);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.markdown-body pre {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+.markdown-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  width: 100%;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.markdown-body th {
+  background: var(--bg-overlay);
+  font-weight: 600;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+
+.markdown-body del {
+  color: var(--text-muted);
+}
+
+.markdown-body input[type='checkbox'] {
+  margin-right: 6px;
+}
+
+/* ====== 右侧：元数据面板 ====== */
+.notes-aside {
+  position: relative;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elevated);
+  overflow-y: auto;
+}
+
+.notes-aside .aside-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.note-meta-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+.note-meta-panel .meta-section h3 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.note-meta-panel .title-input {
+  width: 100%;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.note-meta-panel .check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.note-meta-panel .tag-input-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.note-meta-panel .tag-input-row input {
+  flex: 1;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.note-meta-panel .tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.note-meta-panel .tag-list .tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.note-meta-panel .tag-list .tag-chip .remove {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.note-meta-panel .tag-list .tag-chip .remove:hover {
+  color: var(--danger);
+}
+
+.note-meta-panel .path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  word-break: break-all;
+  background: var(--bg-overlay);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  margin: 0;
+}
+
+.note-meta-panel .small {
+  font-size: 11px;
+  margin: 2px 0;
+}
+
+/* ====== 冲突对话框 ====== */
+.conflict-dialog {
+  width: 720px;
+  max-width: 90vw;
+  max-height: 86vh;
+}
+
+.conflict-dialog .conflict-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.conflict-dialog .conflict-tabs .tab {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.conflict-dialog .conflict-tabs .tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.conflict-dialog .conflict-content {
+  min-height: 280px;
+  max-height: 50vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+}
+
+.conflict-dialog .diff {
+  margin: 0;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.conflict-dialog .diff.local {
+  background: rgba(63, 185, 80, 0.06);
+}
+
+.conflict-dialog .diff.remote {
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.conflict-dialog .merge-textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 280px;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  resize: none;
+}
+
+/* ====== 响应式 ====== */
+@media (max-width: 1100px) {
+  .notes-layout,
+  .notes-layout.left-collapsed,
+  .notes-layout.right-collapsed,
+  .notes-layout.left-collapsed.right-collapsed {
+    grid-template-columns: 240px 1fr;
+  }
+  .notes-aside,
+  .notes-aside.collapsed {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .notes-layout,
+  .notes-layout.left-collapsed,
+  .notes-layout.right-collapsed,
+  .notes-layout.left-collapsed.right-collapsed {
+    grid-template-columns: 1fr;
+  }
+  .notes-sidebar,
+  .notes-sidebar.collapsed {
+    display: none;
+  }
+}
+
+/* ============================================================
+   动画增强（30 项 high+medium）
+   ============================================================ */
+
+/* 1. 笔记页头部 + 布局进入 —— 装饰性入场动画已移除（产品化静态基线） */
+.notes-page > .page-header,
+.notes-page > .notes-layout {
+  /* 取消 notes-enter-up 280ms —— 留作瞬时显示 */
+}
+
+/* 2. 笔记项 hover 抬升 + 左侧 accent 高亮条 */
+.notes-tree .note-item {
+  overflow: hidden;
+  transition: transform var(--motion-base) var(--ease-out),
+              background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
+}
+
+.notes-tree .note-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform var(--motion-base) var(--ease-out);
+  pointer-events: none;
+}
+
+.notes-tree .note-item:hover {
+  transform: translateY(-1px);
+}
+
+.notes-tree .note-item:hover::before,
+.notes-tree .note-item.selected::before {
+  transform: scaleY(1);
+}
+
+/* 3. 笔记项进入：nth-child 1..8 错落出现 */
+/* 装饰性 note-item staggered 入场已删除 —— 笔记列表瞬时显示 */
+
+/* 4. 搜索框聚焦光晕 */
+.notes-tree .search-input {
+  transition: border-color var(--motion-fast) var(--ease-out),
+              box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.notes-tree .search-input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-bg);
+}
+
+/* 5. 新建按钮 hover 抬升 + shimmer 扫光 */
+.notes-tree .create-btn {
+  position: relative;
+  overflow: hidden;
+  transition: transform var(--motion-base) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out);
+}
+
+.notes-tree .create-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.22) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 0.6s var(--ease-out);
+  pointer-events: none;
+}
+
+.notes-tree .create-btn:hover {
+  transform: translateY(-1px);
+}
+
+.notes-tree .create-btn:hover::after {
+  transform: translateX(100%);
+}
+
+/* 6. 过滤 Tab 激活下划线指示器 */
+.notes-tree .filter-tabs .tab {
+  position: relative;
+  transition: color var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out);
+}
+
+.notes-tree .filter-tabs .tab::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 2px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 2px;
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.notes-tree .filter-tabs .tab.active::after {
+  transform: scaleX(1);
+}
+
+/* 7. 标签筛选 chip hover 抬升 + accent 边 */
+.notes-tree .tag-filter-row .tag-chip {
+  transition: transform var(--motion-base) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.notes-tree .tag-filter-row .tag-chip:hover {
+  transform: translateY(-1px);
+  border-color: var(--accent);
+}
+
+/* 8. 删除按钮按下反馈 */
+.notes-tree .note-item .del-btn:active {
+  transform: scale(0.88);
+}
+
+/* 9. 编辑/预览面板进入 —— 装饰性 editor-pane-enter 已删除 */
+
+/* 装饰性 editor-pane-enter / save-status-tick 已删除 —— 编辑面板瞬时显示，✓ 静态呈现 */
+
+.note-editor .editor-pane,
+.note-editor .preview-pane {
+  /* 取消 editor-pane-enter 200ms —— 编辑面板瞬时显示 */
+}
+
+.note-editor .save-status.saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.note-editor .save-status.saved::before {
+  content: '✓';
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* 11. 保存状态 dirty（● 圆点，静态） —— 原 1.4s infinite 呼吸已删除 */
+.note-editor .save-status.dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.note-editor .save-status.dirty::before {
+  content: '●';
+  display: inline-block;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--warning);
+}
+
+/* 12. 布局切换按钮激活态：内阴影 + 外光环 */
+.note-editor .layout-btn {
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out),
+              box-shadow var(--motion-base) var(--ease-out);
+}
+
+.note-editor .layout-btn.active {
+  background: var(--bg-elevated);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent),
+              0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* 13. 保存主按钮 shimmer */
+.note-editor .toolbar-actions .btn.primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.note-editor .toolbar-actions .btn.primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.22) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 0.6s var(--ease-out);
+  pointer-events: none;
+}
+
+.note-editor .toolbar-actions .btn.primary:hover::after {
+  transform: translateX(100%);
+}
+
+/* 14. 草稿恢复横幅 —— 原 draft-banner-enter 280ms 入场动画已删除 */
+
+/* 15. TipTap 编辑区聚焦内嵌光圈 —— 已删除（原版用 inset box-shadow 画 2px 内嵌框，
+   浅色主题下渲染成深色框线，影响编辑视觉。文本光标本身已是充分焦点指示。） */
+.note-editor .edit-pane > .tiptap-editor .ProseMirror {
+  /* 无装饰：保留默认 outline 由浏览器 / TipTap 自身管理 */
+}
+
+.note-editor .edit-pane > .tiptap-editor .ProseMirror:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+/* 16. 分屏方向切换按钮 hover 旋转 */
+.note-editor .split-direction-btn {
+  transition: background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
+}
+
+/* 17. 空态图标 —— 删除：原版 3.6s 漂浮动画，已去掉 */
+
+/* 18. 预览内容淡入 */
+@keyframes preview-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.note-preview.markdown-body {
+  animation: preview-fade-in 180ms var(--ease-out) both;
+}
+
+/* 19. 预览链接下划线从左生长 */
+.markdown-body a {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  transition: background-size var(--motion-base) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.markdown-body a:hover {
+  background-size: 100% 1px;
+  text-decoration: none;
+}
+
+/* 20. 预览代码块 hover 抬升 + accent 边 */
+.markdown-body pre {
+  transition: border-color var(--motion-base) var(--ease-out),
+              box-shadow var(--motion-base) var(--ease-out),
+              transform var(--motion-base) var(--ease-out);
+}
+
+.markdown-body pre:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.10);
+  transform: translateY(-1px);
+}
+
+/* 21. 预览图片 —— 自适应宽度 + 圆角 + hover 抬升放大 */
+.markdown-body img.md-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-overlay);
+  cursor: zoom-in;
+  transition: transform var(--motion-base) var(--ease-out),
+              box-shadow var(--motion-base) var(--ease-out),
+              border-color var(--motion-base) var(--ease-out);
+}
+
+.markdown-body img.md-image:hover {
+  transform: translateY(-1px) scale(1.01);
+  border-color: var(--accent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+
+/* 加载骨架 —— 相对路径通过 IPC 解析期间显示 */
+.markdown-body .md-image-skeleton {
+  display: block;
+  width: 100%;
+  min-height: 120px;
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-md);
+  border: 1px dashed var(--border);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--text-secondary) 6%, transparent) 0%,
+      color-mix(in srgb, var(--text-secondary) 12%, transparent) 50%,
+      color-mix(in srgb, var(--text-secondary) 6%, transparent) 100%
+    );
+  background-size: 200% 100%;
+  animation: md-image-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes md-image-skeleton-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* 拒绝 / 解析失败的图片占位 */
+.markdown-body .md-image-blocked {
+  display: inline-block;
+  margin: var(--space-2) 0;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-overlay));
+  border: 1px dashed color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  font-style: italic;
+}
+
+/* 21. 元数据面板标签 chip —— 原 220ms 入场 + hover 抬升已删除 */
+.note-meta-panel .tag-list .tag-chip {
+  transition: border-color var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.note-meta-panel .tag-list .tag-chip:hover {
+  border-color: var(--accent);
+}
+
+/* 22. 元数据标题输入聚焦光圈 */
+.note-meta-panel .title-input {
+  transition: border-color var(--motion-fast) var(--ease-out),
+              box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.note-meta-panel .title-input:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 3px var(--focus-ring-bg);
+}
+
+/* 23. 元数据勾选状态 —— 原 meta-star-pop 320ms 已删除，颜色静态切换 */
+/* 24. 元数据分区错落淡入 —— 原 meta-section-enter 240ms 已删除 */
+
+/* 25. 元数据路径 hover：accent 边 + 着色底 */
+.note-meta-panel .path {
+  border: 1px solid transparent;
+  transition: border-color var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out);
+}
+
+.note-meta-panel .path:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-overlay));
+}
+
+/* 26. modified 状态点 —— 原 status-modified-pulse 1.4s infinite 已删除 */
+/* 27. conflict 状态环 —— 原 status-conflict-pulse 1.8s infinite 已删除 */
+/* 28. 冲突弹窗内容 —— 原 conflict-content-enter 200ms 已删除 */
+
+/* 29. 冲突弹窗 Tab 激活态：文字光晕 + 内嵌下划线 */
+.conflict-dialog .conflict-tabs .tab {
+  position: relative;
+  transition: color var(--motion-fast) var(--ease-out),
+              text-shadow var(--motion-base) var(--ease-out),
+              box-shadow var(--motion-base) var(--ease-out);
+}
+
+.conflict-dialog .conflict-tabs .tab.active {
+  color: var(--accent);
+  border-bottom-color: transparent;
+  text-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+
+/* 30. 冲突弹窗合并按钮 shimmer */
+.conflict-dialog .modal-footer .btn.primary {
+  position: relative;
+  overflow: hidden;
+}
+
+.conflict-dialog .modal-footer .btn.primary::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 30%, rgba(255, 255, 255, 0.22) 50%, transparent 70%);
+  transform: translateX(-100%);
+  transition: transform 0.6s var(--ease-out);
+  pointer-events: none;
+}
+
+.conflict-dialog .modal-footer .btn.primary:hover::after {
+  transform: translateX(100%);
+}
+
+/* ==========================================================================
+   文件夹侧栏 (.note-folders-sidebar)
+   Round 5：删除底部 border；改为内部 flex 滚动（见下方的 .folder-list 覆盖）。
+   ========================================================================== */
+.note-folders-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  /* 去掉 border-bottom —— 现在它是左侧栏的最后一个子元素，与 .notes-tree 共用滚动容器 */
+  border-bottom: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+.note-folders-sidebar .folders-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.note-folders-sidebar .folders-title {
+  font-weight: 600;
+}
+
+.note-folders-sidebar .folder-action-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast, 120ms) var(--ease-out),
+    border-color var(--motion-fast, 120ms) var(--ease-out);
+}
+
+.note-folders-sidebar .folder-action-btn:hover {
+  background: var(--bg-overlay);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.note-folders-sidebar .folder-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.note-folders-sidebar .folder-name-input {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.note-folders-sidebar .folder-color-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.note-folders-sidebar .folder-color-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--motion-fast, 120ms) var(--ease-out);
+}
+
+.note-folders-sidebar .folder-color-dot:hover {
+  transform: scale(1.15);
+}
+
+.note-folders-sidebar .folder-color-dot.selected {
+  border-color: var(--text-primary);
+  transform: scale(1.15);
+}
+
+.note-folders-sidebar .folder-form-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.note-folders-sidebar .folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* BUG-4-fix：侧栏内容超过可视区时可滚动，
+   * 避免把搜索框 / 过滤 chips 挤出可视区。max-height 与 .notes-tree 的 note-list 一致。 */
+  max-height: min(40vh, 240px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.note-folders-sidebar .folder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--motion-fast, 120ms) var(--ease-out),
+    color var(--motion-fast, 120ms) var(--ease-out);
+}
+
+.note-folders-sidebar .folder-row:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.note-folders-sidebar .folder-row.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.note-folders-sidebar .folder-row.is-drop-target {
+  background: var(--focus-ring-bg);
+  outline: 1.5px dashed var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.note-folders-sidebar .folder-icon {
+  width: 14px;
+  text-align: center;
+  font-size: 12px;
+  flex-shrink: 0;
+  /* BUG-6-fix：folder-color-dot 的彩色小圆点会通过 className 注入 color-<name>，
+   * 这里给所有 color-* 子类提供默认色，避免 bullet 渲染为灰色。 */
+}
+
+/* 用户文件夹的 8 色 bullet —— 与 .folder-color-dot 共享同一组变量 */
+.note-folders-sidebar .folder-icon.color-yellow { color: #f5c518; }
+.note-folders-sidebar .folder-icon.color-pink   { color: #ec4899; }
+.note-folders-sidebar .folder-icon.color-blue   { color: #3b82f6; }
+.note-folders-sidebar .folder-icon.color-green  { color: #10b981; }
+.note-folders-sidebar .folder-icon.color-orange { color: #f97316; }
+.note-folders-sidebar .folder-icon.color-purple { color: #8b5cf6; }
+.note-folders-sidebar .folder-icon.color-teal   { color: #14b8a6; }
+.note-folders-sidebar .folder-icon.color-rose   { color: #f43f5e; }
+
+.note-folders-sidebar .folder-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-folders-sidebar .folder-actions {
+  display: none;
+  gap: 2px;
+}
+
+/* ====== Phase 5：2 级文件夹树 ====== */
+.note-folders-sidebar .folder-chevron {
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  /* 硬切 —— 无 transition，符合「产品化静态基线」 */
+}
+.note-folders-sidebar .folder-chevron.is-expanded {
+  transform: rotate(90deg);
+  color: var(--text-primary);
+}
+.note-folders-sidebar .folder-chevron:hover {
+  color: var(--text-primary);
+}
+
+.note-folders-sidebar .folder-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+.note-folders-sidebar .folder-with-notes.is-expanded > .folder-row {
+  font-weight: 500;
+}
+
+.note-folders-sidebar .folder-children {
+  list-style: none;
+  margin: 0;
+  /* 文件夹标题行 padding-left 16px → 二级笔记行从 24px 起，缩进对齐 chevron 后 */
+  padding: 2px 4px 4px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 1px dashed var(--border);
+  margin-left: 14px;
+}
+
+.note-folders-sidebar .folder-children-empty,
+.note-folders-sidebar .folder-children-more {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.note-folders-sidebar .folder-child-row {
+  display: block;
+}
+
+.note-folders-sidebar .folder-child-btn {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+.note-folders-sidebar .folder-child-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.note-folders-sidebar .folder-child-row.active .folder-child-btn {
+  background: var(--focus-ring-bg);
+  color: var(--text-primary);
+}
+.note-folders-sidebar .folder-child-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.note-folders-sidebar .folder-child-time {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-folders-sidebar .folder-row:hover .folder-actions,
+.note-folders-sidebar .folder-row.active .folder-actions {
+  display: inline-flex;
+}
+
+.note-folders-sidebar .folder-action-btn.small {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+}
+
+.note-folders-sidebar .folder-action-btn.small.danger:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 60%, var(--border));
+}
+
+.note-folders-sidebar .folder-rename-input {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+/* 8 色便签 palette —— 与 sticky-notes.css 共用语义 */
+.folder-color-dot.color-yellow { background: var(--sticky-yellow, #fde68a); }
+.folder-color-dot.color-pink   { background: var(--sticky-pink,   #fbcfe8); }
+.folder-color-dot.color-blue   { background: var(--sticky-blue,   #bfdbfe); }
+.folder-color-dot.color-green  { background: var(--sticky-green,  #bbf7d0); }
+.folder-color-dot.color-orange { background: var(--sticky-orange, #fed7aa); }
+.folder-color-dot.color-purple { background: var(--sticky-purple, #ddd6fe); }
+.folder-color-dot.color-teal   { background: var(--sticky-teal,   #99f6e4); }
+.folder-color-dot.color-rose   { background: var(--sticky-rose,   #fecdd3); }
+
+/* 元数据面板里的文件夹下拉 */
+.note-meta-panel .folder-select {
+  width: 100%;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.note-meta-panel .folder-select:focus {
+  outline: none;
+  border-color: var(--focus-ring);
+}
+
+/* ==========================================================================
+   拖拽手柄 .note-drag-handle —— 把笔记拖到文件夹
+   ========================================================================== */
+.notes-tree .note-item .note-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--text-muted);
+  cursor: grab;
+  font-size: 10px;
+  letter-spacing: -1px;
+  user-select: none;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fast, 120ms) var(--ease-out),
+    color var(--motion-fast, 120ms) var(--ease-out);
+}
+
+.notes-tree .note-item:hover .note-drag-handle,
+.notes-tree .note-item.selected .note-drag-handle,
+/* UX #6：键盘聚焦时也显示拖拽手柄，让键盘用户知道有这个能力 */
+.notes-tree .note-item:focus-within .note-drag-handle {
+  opacity: 1;
+}
+
+.notes-tree .note-item .note-drag-handle:hover {
+  color: var(--text-primary);
+}
+
+.notes-tree .note-item .note-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* ==========================================================================
+   移动到文件夹 (UX #2)：键盘可达的替代入口
+   BUG-13-fix：默认 width:0 + overflow:hidden，避免在 240px 侧栏里挤掉 title 区域。
+   hover/focus/展开 时再展开为 22px。
+   ========================================================================== */
+.notes-tree .note-item .move-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  width: 0;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  opacity: 0;
+  padding: 0;
+  transition:
+    width var(--motion-fast, 120ms) var(--ease-out),
+    opacity var(--motion-fast, 120ms) var(--ease-out),
+    background var(--motion-fast, 120ms) var(--ease-out),
+    border-color var(--motion-fast, 120ms) var(--ease-out),
+    padding var(--motion-fast, 120ms) var(--ease-out);
+}
+
+.notes-tree .note-item:hover .move-btn,
+.notes-tree .note-item.selected .move-btn,
+.notes-tree .note-item:focus-within .move-btn,
+.notes-tree .note-item .move-btn[aria-expanded="true"] {
+  width: 22px;
+  opacity: 1;
+  padding: 0 4px;
+}
+
+.notes-tree .note-item .move-btn:hover {
+  background: var(--bg-overlay);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+
+.notes-tree .note-item .move-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.notes-tree .note-move-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 6px 22px;
+  padding: 4px 6px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.notes-tree .note-move-row .note-folder-select {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  min-width: 0;
+}
+
+/* ====== Phase 4：TagsSidebar（自定义标签管理侧栏） ====== */
+.tags-sidebar {
+  padding: 4px 8px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+  font-size: 12px;
+}
+.tags-sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 4px 4px;
+}
+.tags-sidebar-title {
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+.tags-sidebar-count {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.tags-sidebar-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
+}
+.tags-sidebar-item:hover {
+  background: var(--bg-overlay);
+}
+.tags-sidebar-item.active {
+  background: var(--focus-ring-bg);
+  border-color: var(--focus-ring);
+  color: var(--text-primary);
+}
+.tags-sidebar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tags-sidebar-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 2px;
+}
+.tags-sidebar-empty {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+.tags-sidebar-rename-input {
+  grid-column: 1 / -1;
+  background: var(--bg-overlay);
+  border: 1px solid var(--focus-ring);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  outline: none;
+}
+.tags-sidebar-icon-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+.tags-sidebar-icon-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.tags-sidebar-icon-btn.danger:hover {
+  color: var(--danger);
+}
+.tags-sidebar-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+.tags-sidebar-add-input {
+  flex: 1;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+.tags-sidebar-add-input:focus {
+  border-color: var(--focus-ring);
+}
+.tags-sidebar-add-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+.tags-sidebar-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.tags-sidebar-add-btn:not(:disabled):hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+/* ====== Round 5：RightTagsPanel（右侧 aside 的标签管理面板） ====== */
+.right-tags-panel {
+  /* 与 .note-meta-panel 同一容器内上下堆叠；顶部加分割线 */
+  border-top: 1px solid var(--border);
+  padding: 12px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-elevated);
+  /* 长标签列表可滚动，避免把元数据面板挤出可视区 */
+  flex-shrink: 0;
+}
+
+.right-tags-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  font-weight: 600;
+  padding-bottom: 4px;
+}
+
+.right-tags-panel-title {
+  flex: 1;
+}
+
+.right-tags-panel-count {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.right-tags-panel-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out);
+}
+
+.right-tags-panel-item:hover {
+  background: var(--bg-overlay);
+}
+
+.right-tags-panel-item.active {
+  background: var(--focus-ring-bg);
+  border-color: var(--focus-ring);
+  color: var(--text-primary);
+}
+
+.right-tags-panel-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 标签多了时可滚动 */
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.right-tags-panel-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.right-tags-panel-empty {
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.right-tags-panel-rename-input {
+  grid-column: 1 / -1;
+  background: var(--bg-overlay);
+  border: 1px solid var(--focus-ring);
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.right-tags-panel-icon-btn {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.right-tags-panel-icon-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.right-tags-panel-icon-btn.danger:hover {
+  color: var(--danger);
+}
+
+.right-tags-panel-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.right-tags-panel-add-input {
+  flex: 1;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.right-tags-panel-add-input:focus {
+  border-color: var(--focus-ring);
+}
+
+.right-tags-panel-add-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.right-tags-panel-add-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.right-tags-panel-add-btn:not(:disabled):hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+/* ====== Round 5：folder-child-row 内置 del 按钮（合并文件列表后的笔记行） ====== */
+.note-folders-sidebar .folder-child-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.note-folders-sidebar .folder-child-del-btn {
+  /* 默认隐藏；hover / 选中态才显示，避免破坏笔记行视觉密度 */
+  opacity: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity var(--motion-fast) var(--ease-out),
+              background var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+
+.note-folders-sidebar .folder-child-row:hover .folder-child-del-btn,
+.note-folders-sidebar .folder-child-row.active .folder-child-del-btn,
+.note-folders-sidebar .folder-child-del-btn:focus-visible {
+  opacity: 1;
+}
+
+.note-folders-sidebar .folder-child-del-btn:hover {
+  background: var(--danger);
+  color: white;
+}
+
+/* ====== Round 5：folder-list 占满剩余高度并可滚动 ====== */
+.note-folders-sidebar {
+  /* 旧 padding 保留；增加 flex 让 folder-list 占据剩余空间并滚动 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.note-folders-sidebar .folder-list {
+  flex: 1;
+  max-height: none; /* 旧 max-height 限制放开，由 .notes-tree 容器滚动 */
+  min-height: 0;
+}
+
+/* ====== Phase 4：TagChipSelector（笔记顶部 chip 选择条） ====== */
+.tag-chip-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-base);
+}
+.tag-chip-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: inherit;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out),
+              border-color var(--motion-fast) var(--ease-out),
+              color var(--motion-fast) var(--ease-out);
+}
+.tag-chip-btn:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+.tag-chip-btn.active {
+  background: var(--focus-ring-bg);
+  border-color: var(--focus-ring);
+  color: var(--text-primary);
+}
+.tag-chip-overflow {
+  align-self: center;
+}
+
+/* ====== 用户偏好：减少动效时全部退化 ====== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,858 @@
+/**
+ * TipTap 编辑器样式
+ *
+ * 包括：
+ * - .tiptap-editor 整体容器
+ * - .editor-toolbar 工具栏与按钮
+ * - .ProseMirror 编辑内容区（标题/列表/表格/引用/任务列表…）
+ * - .math-inline / .math-block KaTeX 容器
+ * - .mermaid-block Mermaid 图表容器
+ * - .code-block 代码高亮（hljs 主题：dark/light 适配）
+ */
+
+/* ===================== 整体容器 ===================== */
+
+.tiptap-editor {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  min-height: 320px;
+}
+
+.editor-content {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 24px;
+  min-height: 240px;
+  max-height: 70vh;
+}
+
+.editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-overlay);
+  font-size: 12px;
+  color: var(--text-secondary);
+  gap: 8px;
+}
+
+.editor-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.editor-stats .dot {
+  color: var(--text-muted);
+}
+
+.editor-stats .over-limit,
+.char-limit.over-limit {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ===================== 工具栏 ===================== */
+
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-toolbar-loading {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 10px 14px;
+}
+
+.editor-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.15s;
+}
+
+.editor-toolbar-btn:hover:not(:disabled) {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.editor-toolbar-btn.is-active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.editor-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.editor-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+/* ===================== ProseMirror 内容区 ===================== */
+
+.ProseMirror {
+  outline: none;
+  min-height: 200px;
+  line-height: 1.7;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.ProseMirror > * + * {
+  margin-top: 0.75em;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--text-muted);
+  pointer-events: none;
+  height: 0;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1em 0 0.4em;
+}
+
+.ProseMirror h1 {
+  font-size: 1.9em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2em;
+}
+.ProseMirror h2 {
+  font-size: 1.5em;
+}
+.ProseMirror h3 {
+  font-size: 1.25em;
+}
+.ProseMirror h4 {
+  font-size: 1.1em;
+}
+.ProseMirror h5 {
+  font-size: 1em;
+}
+.ProseMirror h6 {
+  font-size: 0.9em;
+  color: var(--text-secondary);
+}
+
+.ProseMirror p {
+  margin: 0.4em 0;
+}
+
+.ProseMirror strong {
+  font-weight: 700;
+}
+
+.ProseMirror em {
+  font-style: italic;
+}
+
+.ProseMirror u {
+  text-decoration: underline;
+}
+
+.ProseMirror s {
+  text-decoration: line-through;
+}
+
+.ProseMirror a {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.ProseMirror a:hover {
+  color: var(--accent-hover);
+}
+
+.ProseMirror code {
+  font-family: var(--font-mono);
+  background: var(--bg-overlay);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+
+.ProseMirror blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1em 0;
+  padding: 0.4em 1em;
+  color: var(--text-secondary);
+  background: var(--bg-overlay);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  padding-left: 1.5em;
+  margin: 0.4em 0;
+}
+
+.ProseMirror li {
+  margin: 0.2em 0;
+}
+
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+  display: block;
+  margin: 0.5em auto;
+}
+
+/* 任务列表 */
+.ProseMirror ul[data-type='taskList'] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.ProseMirror ul[data-type='taskList'] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ProseMirror ul[data-type='taskList'] li > label {
+  margin-top: 0.35em;
+  flex-shrink: 0;
+}
+
+.ProseMirror ul[data-type='taskList'] input[type='checkbox'] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.ProseMirror ul[data-type='taskList'] li[data-checked='true'] > div {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+/* 表格 */
+.ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 1em 0;
+  overflow: hidden;
+}
+
+.ProseMirror table td,
+.ProseMirror table th {
+  min-width: 1em;
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  vertical-align: top;
+  position: relative;
+}
+
+.ProseMirror table th {
+  background: var(--bg-overlay);
+  font-weight: 700;
+  text-align: left;
+}
+
+.ProseMirror table .selectedCell:after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(88, 166, 255, 0.18);
+  pointer-events: none;
+}
+
+.ProseMirror table .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.ProseMirror .tableWrapper {
+  overflow-x: auto;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: ew-resize;
+}
+
+/* ===================== 代码块（lowlight 高亮） ===================== */
+
+.ProseMirror pre,
+.ProseMirror .code-block {
+  background: #0d1117;
+  color: #e6edf3;
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.55;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+
+[data-theme='light'] .ProseMirror pre,
+[data-theme='light'] .ProseMirror .code-block {
+  background: #f6f8fa;
+  color: #1f2328;
+}
+
+/* highlight.js github-dark 主题（适配深色） */
+.ProseMirror pre .hljs-comment,
+.ProseMirror pre .hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+.ProseMirror pre .hljs-keyword,
+.ProseMirror pre .hljs-selector-tag,
+.ProseMirror pre .hljs-literal,
+.ProseMirror pre .hljs-section,
+.ProseMirror pre .hljs-link {
+  color: #ff7b72;
+}
+.ProseMirror pre .hljs-function .hljs-keyword {
+  color: #ff7b72;
+}
+.ProseMirror pre .hljs-subst {
+  color: #e6edf3;
+}
+.ProseMirror pre .hljs-string,
+.ProseMirror pre .hljs-attr,
+.ProseMirror pre .hljs-meta .hljs-string {
+  color: #a5d6ff;
+}
+.ProseMirror pre .hljs-number,
+.ProseMirror pre .hljs-symbol,
+.ProseMirror pre .hljs-bullet,
+.ProseMirror pre .hljs-template-variable {
+  color: #79c0ff;
+}
+.ProseMirror pre .hljs-title,
+.ProseMirror pre .hljs-name,
+.ProseMirror pre .hljs-selector-id,
+.ProseMirror pre .hljs-selector-class {
+  color: #d2a8ff;
+}
+.ProseMirror pre .hljs-built_in,
+.ProseMirror pre .hljs-type,
+.ProseMirror pre .hljs-class .hljs-title {
+  color: #ffa657;
+}
+.ProseMirror pre .hljs-variable,
+.ProseMirror pre .hljs-template-variable,
+.ProseMirror pre .hljs-attribute {
+  color: #ffa657;
+}
+.ProseMirror pre .hljs-tag,
+.ProseMirror pre .hljs-regexp {
+  color: #7ee787;
+}
+.ProseMirror pre .hljs-emphasis {
+  font-style: italic;
+}
+.ProseMirror pre .hljs-strong {
+  font-weight: 700;
+}
+
+/* ===================== 行内/块级公式 ===================== */
+
+.math-inline {
+  display: inline-block;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+  background: rgba(88, 166, 255, 0.08);
+  cursor: text;
+  vertical-align: baseline;
+}
+
+.math-inline.has-error {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+.math-inline .math-source {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  color: var(--text-primary);
+  outline: none;
+  min-width: 6em;
+  max-width: 40em;
+}
+
+.math-block {
+  position: relative;
+  margin: 1em 0;
+  padding: 16px 24px;
+  background: rgba(88, 166, 255, 0.06);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(88, 166, 255, 0.25);
+  text-align: center;
+  overflow-x: auto;
+}
+
+.math-block.has-error {
+  background: rgba(248, 81, 73, 0.1);
+  border-color: rgba(248, 81, 73, 0.4);
+}
+
+.math-block .math-source {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+}
+
+.math-block .math-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.math-block .math-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.math-block:hover .math-toolbar {
+  opacity: 1;
+}
+
+/* KaTeX 适配：深色主题下白色公式 */
+.katex {
+  font-size: 1.05em;
+}
+
+.ProseMirror .katex,
+.math-inline .katex,
+.math-block .katex {
+  color: inherit;
+}
+
+/* ===================== Mermaid 图表 ===================== */
+
+.mermaid-block {
+  position: relative;
+  margin: 1em 0;
+  padding: 16px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  text-align: center;
+  overflow-x: auto;
+}
+
+.mermaid-block .mermaid-render {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 60px;
+}
+
+.mermaid-block .mermaid-render svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-block .mermaid-placeholder {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.mermaid-block .mermaid-error {
+  color: var(--danger);
+  background: rgba(248, 81, 73, 0.08);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.mermaid-block .mermaid-toolbar {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.mermaid-block:hover .mermaid-toolbar {
+  opacity: 1;
+}
+
+.mermaid-block .mermaid-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mermaid-block .mermaid-source {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.mermaid-block .mermaid-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* ===================== 滚动条 ===================== */
+
+.ProseMirror pre::-webkit-scrollbar,
+.editor-content::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.ProseMirror pre::-webkit-scrollbar-thumb,
+.editor-content::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+.ProseMirror pre::-webkit-scrollbar-track,
+.editor-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ===================== 选择高亮 ===================== */
+
+.ProseMirror ::selection {
+  background: color-mix(in srgb, var(--text-primary) 30%, transparent);
+}
+
+/* ===================== 编辑器演示页 ===================== */
+
+/* 演示页的 padding / 标题样式由 .page + .page-header 提供 */
+
+.editor-output {
+  margin-top: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+}
+
+.editor-output summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  list-style: none;
+  padding: 2px 0;
+}
+
+.editor-output summary::-webkit-details-marker {
+  display: none;
+}
+
+.editor-output summary::before {
+  content: '▸ ';
+  display: inline-block;
+  transition: transform 0.15s;
+}
+
+.editor-output[open] summary::before {
+  content: '▾ ';
+}
+
+.editor-output .output-block {
+  margin: 8px 0 0;
+  padding: 12px;
+  background: var(--bg-overlay);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* ===================== 模块 6：图片上传 ===================== */
+
+/* 上传中状态 */
+.editor-stats .upload-status {
+  color: var(--accent, #4a90e2);
+  font-weight: 500;
+}
+
+.editor-stats .upload-error {
+  color: var(--danger, #e74c3c);
+  cursor: help;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 拖拽高亮（dragover 状态） */
+.ProseMirror.image-upload-dragover,
+.ProseMirror.image-upload-dragover * {
+  outline: 2px dashed var(--focus-ring) !important;
+  outline-offset: -2px;
+  background-color: var(--focus-ring-bg);
+  border-radius: var(--radius-md);
+}
+
+/* ProseMirror 内的图片节点样式 */
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+  margin: 8px 0;
+}
+
+.ProseMirror img[src^="attachments://"] {
+  /* 标识本地图床图片 */
+  background: linear-gradient(135deg, transparent 0%, transparent 95%, var(--accent, #4a90e2) 95%);
+  background-size: 8px 8px;
+}
+
+/* ===================== 编辑器页（/editor） ===================== */
+
+.editor-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-page .page-header {
+  padding: 16px var(--page-pad-x, 28px);
+}
+
+.editor-page .page-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.editor-page-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.editor-page-sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--bg-elevated);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-page-sidebar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.editor-page-sidebar-header .btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.editor-page-note-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.editor-page-note-list .empty-hint {
+  padding: 24px 16px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.editor-page-note-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.editor-page-note-item:hover {
+  background: var(--bg-overlay);
+}
+
+.editor-page-note-item.active {
+  background: var(--bg-overlay);
+  border-left-color: var(--accent);
+}
+
+.editor-page-note-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editor-page-note-meta {
+  font-size: 11px;
+}
+
+.editor-page-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-page-main .tiptap-editor {
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-page-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.editor-page-empty-card {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 360px;
+}
+
+.editor-page-empty-card .empty-icon {
+  font-size: 48px;
+  opacity: 0.5;
+}
+
+.editor-page-empty-card h2 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+@media (max-width: 720px) {
+  .editor-page-body {
+    grid-template-columns: 1fr;
+  }
+  .editor-page-sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 30vh;
+  }
+}
+
+/* ====== WCAG 2.3.3 prefers-reduced-motion ====== */
+/* R33-CSS-audit 修复 (LOW editor-css-missing-reduced-motion)：editor.css
+   之前完全缺 @media (prefers-reduced-motion) 块；审查发现 5 个 violation
+   （`.editor-toolbar-btn`、`.math-block .math-toolbar`、`.mermaid-block
+   .mermaid-toolbar`、`.editor-output summary::before`、`.editor-page-note-item`
+   的 transition）。用 wildcard 覆盖所有 transition / animation 与未来新增，
+   与 sticky-notes.css / dashboard.css / notes.css / index.css / library.css
+   对齐。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

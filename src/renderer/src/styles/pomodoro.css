@@ -1,0 +1,1092 @@
+/**
+ * 番茄钟页面样式（重写版）
+ *
+ * 设计目标：深色紫灰渐变背景 + 玻璃感日历卡片 + 大字日期 header + 底部焦点控件
+ *
+ * 视觉层级：
+ *   1. .pomodoro-page-v2 —— 全屏深紫灰渐变背景
+ *   2. .pomodoro-stage —— 中部"日历舞台"（透明卡片）
+ *   3. .focus-date-header / .focus-calendar / .focus-controls —— 三段式布局
+ *   4. .focus-calendar-tooltip —— 悬停 tooltip（当日番茄 / 分钟）
+ *   5. .pomodoro-stage-left / .pomodoro-stage-right —— 双栏布局
+ */
+
+/* ==========================================================================
+   全局 page 容器
+   ========================================================================== */
+
+.pomodoro-page-v2 {
+  /* 覆盖全局 .page 的 max-width，让番茄钟页面填满整个窗口宽度 */
+  max-width: none !important;
+  width: 100%;
+  margin: 0 !important;
+  padding: 24px 32px 40px;
+  min-height: 100%;
+  position: relative;
+
+  /* 深色紫灰渐变背景 —— 比全局 aurora 更聚焦、更冷静 */
+  background:
+    radial-gradient(
+      ellipse at 20% 0%,
+      color-mix(in srgb, var(--accent-purple) 18%, transparent) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 80% 100%,
+      color-mix(in srgb, var(--accent-cyan) 12%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, #2a2540 90%, var(--bg-base)) 0%,
+      var(--bg-base) 60%,
+      color-mix(in srgb, #1f2030 92%, var(--bg-base)) 100%
+    );
+  background-attachment: fixed;
+}
+
+/* 浅色主题覆盖（保持日历可读性） */
+[data-theme='light'] .pomodoro-page-v2 {
+  background:
+    radial-gradient(
+      ellipse at 20% 0%,
+      color-mix(in srgb, var(--accent-purple) 14%, transparent) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 80% 100%,
+      color-mix(in srgb, var(--accent-cyan) 12%, transparent) 0%,
+      transparent 60%
+    ),
+    linear-gradient(160deg, var(--bg-base) 0%, var(--bg-base) 100%);
+}
+
+.pomodoro-page-header-v2 {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.pomodoro-page-header-v2 h1 {
+  margin: 0 0 4px;
+  font-size: var(--page-title-size, 22px);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.pomodoro-page-header-v2 p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   主面板布局 —— 双栏（v3）：左原番茄钟 + 右日历
+   ========================================================================== */
+
+.pomodoro-panel-dual {
+  display: grid;
+  /* 左栏稍窄（计时器现在更紧凑），右栏稍宽（日历需要横向空间） */
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 1180px) {
+  .pomodoro-panel-dual {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pomodoro-stage-left,
+.pomodoro-stage-right {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 22px;
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl, 24px);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow:
+    0 8px 32px color-mix(in srgb, var(--accent-purple) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+.pomodoro-stage-right {
+  animation-delay: 140ms;
+}
+
+.pomodoro-timer-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.pomodoro-settings-inline {
+  padding: 12px;
+  background: color-mix(in srgb, var(--bg-overlay) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* .pomodoro-secondary-controls —— 布局由嵌入态 dashboard.css 提供，
+   此处不再覆盖，避免与 dashboard.css 的 flex-wrap:nowrap + gap 冲突。 */
+
+.pomodoro-side-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-self: start;
+  position: sticky;
+  top: 16px;
+}
+
+.pomodoro-side-toggle-row {
+  display: none;
+}
+
+.pomodoro-side-toggle {
+  display: none;
+}
+
+.pomodoro-side-content {
+  display: none;
+}
+
+/* ==========================================================================
+   FocusDateHeader —— 顶部大字日期
+   ========================================================================== */
+
+.focus-date-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  transition: opacity 0.3s ease;
+}
+
+.focus-date-header.is-running {
+  opacity: 0.85;
+}
+
+.focus-date-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.focus-date-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.focus-date-md {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-date-weekday {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.focus-date-row2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.focus-date-lunar {
+  font-size: 14px;
+  color: var(--accent-purple);
+  background: color-mix(in srgb, var(--accent-purple) 14%, transparent);
+  padding: 3px 10px;
+  border-radius: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.focus-date-dropdown {
+  position: relative;
+}
+
+.focus-date-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.focus-date-toggle:hover {
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+  transform: rotate(180deg);
+}
+
+.focus-date-caret {
+  display: inline-block;
+}
+
+.focus-date-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px;
+  box-shadow:
+    0 12px 32px color-mix(in srgb, #000 24%, transparent),
+    0 2px 8px color-mix(in srgb, var(--accent-purple) 10%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 200px;
+}
+
+.focus-date-popover-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.focus-date-input {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color-scheme: dark;
+}
+
+.focus-date-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.focus-date-input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-color: var(--accent);
+}
+
+.focus-date-today {
+  background: var(--accent);
+  color: var(--text-on-accent, #fff);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, filter 0.15s;
+}
+
+.focus-date-today:hover {
+  filter: brightness(1.1);
+}
+
+/* ==========================================================================
+   FocusCalendar —— 月历
+   ========================================================================== */
+
+.focus-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.focus-calendar-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.focus-calendar-nav {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+
+.focus-calendar-nav:hover {
+  background: var(--bg-overlay);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.focus-calendar-title {
+  flex: 1;
+  text-align: center;
+}
+
+.focus-calendar-month {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.focus-calendar-monthstat {
+  margin-left: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.focus-calendar-monthstat strong {
+  color: var(--accent-cyan);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-calendar-today {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 14px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+
+.focus-calendar-today:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.focus-calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+
+.focus-calendar-weekday {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  padding: 6px 0;
+  letter-spacing: 0.02em;
+}
+
+.focus-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  /* 总高度 = 6 行 × (56 + 6) - 6 ≈ 354px，与日间卡片协调 */
+}
+
+.focus-calendar-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 56px;
+  background: color-mix(in srgb, var(--bg-overlay) 50%, transparent);
+  border: 1px solid transparent;
+  border-radius: 14px;
+  cursor: pointer;
+  font-family: inherit;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+  padding: 4px;
+}
+
+.focus-calendar-cell:hover:not(.is-today) {
+  background: color-mix(in srgb, var(--bg-overlay) 100%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  transform: translateY(-1px);
+}
+
+.focus-calendar-cell.out-month {
+  opacity: 0.35;
+}
+
+.focus-calendar-cell.is-today {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent-cyan) 22%, transparent) 0%,
+    color-mix(in srgb, var(--accent-cyan) 32%, transparent) 100%
+  );
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 60%, transparent);
+  color: var(--text-primary);
+  box-shadow:
+    0 4px 16px color-mix(in srgb, var(--accent-cyan) 30%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 30%, transparent);
+  /* 之前 today-cell-pulse 3s infinite —— 用户反馈删除「随秒数跳动」特效 */
+}
+
+.focus-calendar-cell.is-today .focus-calendar-solar {
+  color: var(--accent-cyan);
+  font-weight: 700;
+  font-size: 17px;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent-cyan) 60%, transparent);
+}
+
+.focus-calendar-cell.is-today .focus-calendar-lunar {
+  color: color-mix(in srgb, var(--accent-cyan) 80%, var(--text-primary));
+}
+
+.focus-calendar-cell.is-selected:not(.is-today) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: var(--accent);
+}
+
+.focus-calendar-solar {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-calendar-lunar {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.focus-calendar-cell.has-term .focus-calendar-lunar {
+  color: var(--accent-purple);
+  font-weight: 600;
+}
+
+.focus-calendar-cell.is-leap .focus-calendar-lunar {
+  color: var(--accent-pink);
+  font-weight: 600;
+}
+
+/* 当日有截止便签：右上角小圆点提示（非紧急 = 紫色，紧急 = 红色高亮） */
+.focus-calendar-due-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+
+.focus-calendar-due-dot.is-urgent {
+  background: #ef4444;
+  box-shadow: 0 0 8px color-mix(in srgb, #ef4444 80%, transparent);
+}
+
+/* 当日截止 ≥ 4 张便签：角标数字（替代 dot） */
+.focus-calendar-due-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.focus-calendar-cell.has-urgent {
+  border-color: color-mix(in srgb, #ef4444 30%, var(--border));
+}
+
+.focus-calendar-cell.has-many-due {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-overlay));
+  border-color: color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.focus-calendar-cell.has-many-due .focus-calendar-due-badge {
+  background: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+/* 悬停 tooltip */
+.focus-calendar-tooltip {
+  background: color-mix(in srgb, var(--bg-elevated) 96%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-cyan) 35%, var(--border));
+  border-radius: 10px;
+  padding: 8px 12px;
+  box-shadow:
+    0 8px 24px color-mix(in srgb, #000 30%, transparent),
+    0 2px 8px color-mix(in srgb, var(--accent-cyan) 20%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-size: 12px;
+  color: var(--text-primary);
+  max-width: 240px;
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+/* 朝下的小三角（默认 / .is-above：tooltip 在 cell 上方，三角朝下） */
+.focus-calendar-tooltip.is-above::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid color-mix(in srgb, var(--accent-cyan) 35%, var(--border));
+}
+
+/* 朝上的小三角（.is-below：tooltip 在 cell 下方，三角朝上） */
+.focus-calendar-tooltip.is-below::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -5px;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid color-mix(in srgb, var(--accent-cyan) 35%, var(--border));
+}
+
+.focus-calendar-tooltip-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.focus-calendar-tooltip-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-calendar-tooltip-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.focus-calendar-tooltip-stat strong {
+  color: var(--accent-cyan);
+  font-weight: 700;
+}
+
+.focus-calendar-tooltip-titles {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+  color: var(--text-primary);
+}
+
+.focus-calendar-tooltip-title-item {
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-calendar-tooltip-more {
+  font-size: 10px;
+  font-style: italic;
+}
+
+.focus-calendar-tooltip-empty {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+/* ==========================================================================
+   FocusControls —— 底部时长 + ▶ 开始
+   ========================================================================== */
+
+.focus-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 4px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.focus-duration {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.focus-duration-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-family: inherit;
+}
+
+.focus-duration-btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--accent);
+  transform: scale(1.05);
+}
+
+.focus-duration-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.focus-duration-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.focus-duration-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.focus-duration-display {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 4px 12px;
+  font-family: inherit;
+  border-radius: var(--radius-md);
+  transition: background 0.15s;
+}
+
+.focus-duration-display:hover:not(:disabled) {
+  background: var(--bg-overlay);
+}
+
+.focus-duration-display:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.focus-duration-display:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.focus-duration-num {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.focus-duration-unit {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.focus-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 16px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: background 0.2s, color 0.2s;
+  background: linear-gradient(
+    135deg,
+    var(--accent-cyan) 0%,
+    color-mix(in srgb, var(--accent-cyan) 60%, var(--accent-purple)) 100%
+  );
+  color: var(--text-on-accent, #fff);
+  box-shadow:
+    0 4px 16px color-mix(in srgb, var(--accent-cyan) 30%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 25%, transparent);
+}
+
+.focus-start:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 8px 24px color-mix(in srgb, var(--accent-cyan) 40%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 30%, transparent);
+}
+
+.focus-start:active:not(:disabled) {
+  transform: translateY(0);
+}
+.focus-start:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.focus-start.is-running {
+  background: linear-gradient(
+    135deg,
+    var(--accent-purple) 0%,
+    color-mix(in srgb, var(--accent-purple) 70%, var(--accent-pink)) 100%
+  );
+  box-shadow:
+    0 4px 16px color-mix(in srgb, var(--accent-purple) 30%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #fff 25%, transparent);
+}
+
+.focus-start:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.focus-start-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* ==========================================================================
+   保留组件依赖类（TimerDisplay / TodayPomodoros / DailyGoalRing 等）
+   ========================================================================== */
+
+/* timer-display 由 TimerDisplay.tsx 使用；保留其样式 */
+.timer-display {
+  position: relative;
+  display: inline-block;
+}
+
+.timer-display.is-running .timer-ring circle:nth-of-type(2) {
+  /* 之前这里有 timer-ring-running（2.4s 滴答呼吸）效果 —— 用户反馈删除，改为静态环 */
+}
+
+.timer-ring {
+  display: block;
+}
+
+.timer-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.timer-mode {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timer-time {
+  font-family: var(--font-mono);
+  font-size: 38px;
+  font-weight: 700;
+  margin-top: 4px;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-dot {
+  font-size: 6px;
+  color: var(--success);
+  /* 之前 pulse 1.2s infinite —— 用户反馈删除「随秒数跳动」特效 */
+}
+
+/* ====== Phase 6：番茄钟设置已内嵌到 PomodoroTimerPanel 底部一行（PomodoroQuickSettings），
+ * 不再需要独立的 settings widget 与折叠 strip 块 ====== */
+
+/* ===== 顶栏迷你番茄钟 ===== */
+.mini-pomodoro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  color: var(--text-primary);
+  cursor: pointer;
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.mini-pomodoro:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-overlay);
+}
+
+.mini-pomodoro-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-pomodoro-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  background: var(--success);
+  border-radius: 50%;
+  /* 之前 pulse 1.2s infinite —— 用户反馈删除「随秒数跳动」特效 */
+}
+
+.timer-cycle {
+  font-size: 11px;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+/* @keyframes pulse / timer-ring-running / focus-running-glow —— 已全部删除
+   （用户反馈：番茄钟需要静态、干净的计时显示，无随秒数呼吸效果） */
+
+/* DailyGoalRing */
+.daily-goal-ring {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.daily-goal-svg { flex-shrink: 0; }
+.daily-goal-track { stroke: var(--border); }
+.daily-goal-progress { stroke: var(--accent); transition: stroke-dashoffset 400ms ease; }
+.daily-goal-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.daily-goal-count { display: flex; align-items: baseline; gap: 4px; font-size: 14px; color: var(--text-primary); }
+.daily-goal-count strong { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.daily-goal-sep { color: var(--text-muted); }
+.daily-goal-target { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.daily-goal-text { font-size: 11px; color: var(--text-muted); }
+
+/* StickyNoteSelector / TaskSelector 已下线 —— 不再有关联便签 widget */
+
+.today-pomodoro-title {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* TodayPomodoros */
+.today-pomodoros { width: 100%; padding-top: 8px; }
+.today-pomodoros h3 { margin: 0 0 6px; font-size: 13px; color: var(--text-secondary); }
+.today-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.today-item {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--bg-overlay);
+  border-radius: var(--radius-sm, 6px);
+  font-size: 12px;
+}
+.today-time { font-family: var(--font-mono); color: var(--text-secondary); }
+.today-duration { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Round 6.5：把 .today-summary 限定到 pomodoro-timer-panel 内嵌的今日番茄
+   摘要元素。原本不带父级限定，dashboard 上 TodaySummary widget 的根
+   .today-summary 也被命中 → margin-top/padding-top/border-top/font-size
+   全泄到外卡上，让 widget 顶部出现一段空白 + 一条虚线 + 字号变小。
+   现在用 :where() 包裹以保持低优先级，老选择器匹配不上 dashboard 根元素。 */
+:where(.pomodoro-timer-panel .today-pomodoros) .today-summary {
+  margin-top: 8px;
+  font-size: 12px;
+  text-align: left;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--border);
+  color: var(--text-secondary);
+}
+:where(.pomodoro-timer-panel .today-pomodoros) .today-summary strong {
+  color: var(--text-primary);
+}
+.empty-tip { padding: 12px; text-align: center; font-size: 12px; background: var(--bg-overlay); border-radius: var(--radius-md); }
+
+/* ============================================================
+ * MonthStats —— 本月番茄钟统计（单行不换行）
+ * 用户需求：日历面板里被移除的"本月番茄"统计放回番茄钟面板，
+ * 单行紧凑显示 + 进度条。
+ * ============================================================ */
+.pomodoro-month-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0 0;
+  margin-top: var(--space-1);
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap; /* 极窄列下允许文本块换行，不被 overflow:hidden 吞 */
+  row-gap: 4px;
+  min-width: 0;
+}
+
+.pomodoro-month-stats-label {
+  color: var(--text-primary);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.pomodoro-month-stats-sep {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.pomodoro-month-stats-num {
+  flex-shrink: 0;
+}
+
+.pomodoro-month-stats-num strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.pomodoro-month-stats-progress-label {
+  flex-shrink: 0;
+}
+
+.pomodoro-month-stats-progress-label strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.pomodoro-month-stats-bar {
+  flex: 1 1 60px;
+  min-width: 40px;
+  height: 4px;
+  background: var(--bg-overlay);
+  border-radius: 2px;
+  overflow: hidden;
+  position: relative;
+}
+
+.pomodoro-month-stats-bar-fill {
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 80%, var(--success)) 100%
+  );
+  border-radius: 2px;
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+/* PomodoroSettings（独立 widget）已下线 —— 设置内嵌到 PomodoroQuickSettings。
+ * 历史样式保留选择器为空块以避免外部 import 残留，未来若完全清除 import 可一并删除。 */
+
+/* 全局按钮基础类 */
+.btn {
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.large { padding: 10px 24px; font-size: 14px; min-width: 100px; }
+.btn.small { padding: 4px 10px; font-size: 11px; }
+
+/* ==========================================================================
+   动画 keyframes
+   ========================================================================== */
+
+/* @keyframes today-cell-pulse / focus-running-glow / pulse / pomodoro-fade-up / pomodoro-slide-in-right —— 已全部删除
+   （用户反馈：番茄钟需要静态、干净的计时显示，无随秒数呼吸 / 装饰性入场动画） */
+
+/* ==========================================================================
+   Reduced motion 守卫
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .pomodoro-page-header-v2,
+  .pomodoro-stage,
+  .pomodoro-side-v2,
+  .focus-calendar-cell.is-today,
+  .focus-start.is-running,
+  .focus-calendar-tooltip {
+    animation: none !important;
+  }
+
+  .focus-calendar-cell,
+  .focus-start,
+  .focus-date-toggle {
+    transition: none !important;
+  }
+}

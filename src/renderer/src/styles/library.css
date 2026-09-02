@@ -1,0 +1,305 @@
+/**
+ * 模块 9 样式：库目录选择 + 首次启动向导 + 丢失弹窗
+ */
+
+/* ====== 启动加载页 ====== */
+.boot-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--bg-base);
+  color: var(--text-secondary);
+  gap: 16px;
+}
+
+/* ====== Spinner 通用 ====== */
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ====== WCAG 2.3.3 prefers-reduced-motion ====== */
+/* R33-A11yPerf-1 修复 (CRITICAL missing-reduced-motion-on-library-css)：
+   library.css 是唯一仍带 @keyframes 但缺 reduced-motion 媒体查询的样
+   式表（dashboard / heatmap / today / index / git 在 R30-R32 都已加）。
+   boot-loading 的 `.spinner` 0.8s 无限旋转 + 首次启动向导的
+   `welcome-icon-float` 4s 浮动对前庭功能障碍 / 偏头痛用户持续诱发眩晕。
+   修复：把这两个动画类在 reduce 模式下停掉，与其他 stylesheet 对齐。
+   R33-CSS-audit 续：换用 wildcard `*, *::before, *::after` 覆盖文件中
+   所有 transition / animation（包括审查发现的 2 个 violations + 任何
+   未来新增的），与 sticky-notes.css / dashboard.css / notes.css / index.css
+   对齐。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ====== 全屏向导覆盖层 ====== */
+.wizard-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-base);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 24px;
+}
+
+.wizard {
+  width: 720px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-header {
+  padding: 24px 32px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.wizard-header h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+}
+
+.wizard-body {
+  padding: 24px 32px 32px;
+  flex: 1;
+  min-height: 320px;
+}
+
+.wizard-step h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.wizard-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.welcome-step {
+  text-align: center;
+}
+
+.welcome-icon {
+  display: inline-block;
+  width: 72px;
+  height: 72px;
+  margin: 16px 0;
+  filter: drop-shadow(0 6px 24px color-mix(in srgb, var(--accent) 40%, transparent));
+  animation: welcome-icon-float 4s ease-in-out infinite;
+}
+
+@keyframes welcome-icon-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-4px); }
+}
+
+.welcome-desc {
+  color: var(--text-secondary);
+  line-height: 1.7;
+  max-width: 520px;
+  margin: 0 auto 24px;
+}
+
+.welcome-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 auto 16px;
+  max-width: 460px;
+  text-align: left;
+  color: var(--text-secondary);
+  line-height: 2;
+}
+
+.welcome-features li {
+  padding: 6px 0;
+}
+
+.select-step {
+  display: flex;
+  flex-direction: column;
+}
+
+.select-step .muted {
+  margin-bottom: 16px;
+  line-height: 1.6;
+}
+
+.init-step,
+.done-step {
+  text-align: center;
+}
+
+.init-progress {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.done-icon {
+  font-size: 48px;
+  color: var(--success);
+  margin: 16px 0;
+}
+
+/* ====== 步骤指示器 ====== */
+.step-indicator {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.step-indicator li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.step-indicator li .dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-overlay);
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.step-indicator li.active {
+  color: var(--accent);
+}
+
+.step-indicator li.active .dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.step-indicator li.done {
+  color: var(--success);
+}
+
+.step-indicator li.done .dot {
+  border-color: var(--success);
+  background: var(--success);
+  color: white;
+}
+
+/* ====== 库目录选择器 ====== */
+.library-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.library-selector-row {
+  display: flex;
+  gap: 8px;
+}
+
+.library-path-input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: var(--font-mono);
+}
+
+.library-path-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.library-validation {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.library-validation.ok {
+  color: var(--success);
+}
+
+.library-validation.fail {
+  color: var(--danger);
+}
+
+/* ====== ErrorBox 通用 ====== */
+.error-box {
+  padding: 12px 16px;
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  color: var(--danger);
+}
+
+.error-box p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+/* ====== 库目录丢失弹窗 ====== */
+.missing-path {
+  display: block;
+  padding: 8px 12px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  word-break: break-all;
+  margin: 8px 0 16px;
+}
+
+.missing-help {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+/* ====== 主界面失焦效果 ====== */
+.app-shell.is-dimmed {
+  pointer-events: none;
+  opacity: 0.45;
+  filter: grayscale(0.4);
+}

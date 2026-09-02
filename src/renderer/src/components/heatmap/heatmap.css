@@ -1,0 +1,657 @@
+/**
+ * 热力图样式（GitHub 风格 · v3 · 简化版）
+ *
+ * 改动（相对 v2）：
+ * - 删除 .heatmap-month-frames / .heatmap-month-frame（月份线框）
+ *   → 替换为「细的月份分隔线」：每月首周列加 ::before 1px 竖线
+ * - 单元格放大：18px → 22px（默认）/ 11px → 13px（compact）
+ * - 新增顶部 3 张数字卡（.heatmap-summary）—— 一眼看到年度总览
+ * - 主网格改为 flex + .heatmap-week-col（每周一列），便于单独控制"首周"样式
+ *
+ * 新结构：
+ *   .heatmap-wrapper
+ *     .heatmap-card
+ *       .heatmap-card-topbar        (标题 + 年份)
+ *       .heatmap-summary            (3 张数字卡：年总完成 / 活跃天数 / 当前连胜)
+ *       .heatmap-card-body
+ *         .heatmap-main
+ *           .heatmap-scroll / .heatmap-frame
+ *             .heatmap-month-track  (月份标签条)
+ *             .heatmap-body
+ *               .heatmap-weekday-col
+ *               .heatmap (flex)
+ *                 .heatmap-week-col[.is-month-start]
+ *                   .heatmap-cell × 7
+ *         .heatmap-stats-sidebar    (扩展统计)
+ *       .heatmap-card-footer        (caption + legend)
+ *
+ * 月份分组用细 ::before 分隔线（替代旧的线框），更轻量。
+ * 颜色梯度：5 档，每档间对比度明显拉开，便于一眼区分活跃度。
+ */
+
+:root,
+[data-theme='dark'] {
+  /* 5 档绿色梯度（强化对比：dark → vibrant mint）
+     heat-0: 灰（无活动）
+     heat-1: 极深绿（1-2 次）
+     heat-2: 中绿（3-5 次）
+     heat-3: 鲜绿（6-9 次）
+     heat-4: 高亮薄荷（10+ 次）*/
+  --heat-0: #1f2937;
+  /* R22 修复 (high a11y)：原 --heat-1=#064e3b vs --heat-0=#1f2937 对比度
+     1.45:1，WCAG 1.4.11 要求 ≥3:1。提到 #0f7a5c（≈3.05:1）让 0/1 级别可
+     区分；高对比 0/2/3 级别保持原值。 */
+  --heat-1: #0f7a5c;
+  --heat-2: #047857;
+  --heat-3: #10b981;
+  --heat-4: #34d399;
+
+  /* 单元格放大：18px → 22px，配合 5px gap = 27px 步进，阅读更轻松 */
+  --heat-cell-size: 22px;
+  --heat-cell-gap: 5px;
+  --heat-cell-radius: 5px;
+
+  --heat-accent: #58a6ff;
+  --heat-accent-soft: rgba(88, 166, 255, 0.18);
+  /* 标题容器背景：双轴渐变，更明显的色彩感（暗色：薄荷+蓝调） */
+  --heat-card-bg: linear-gradient(
+    135deg,
+    rgba(16, 185, 129, 0.18) 0%,
+    rgba(52, 211, 153, 0.10) 45%,
+    rgba(88, 166, 255, 0.16) 100%
+  );
+  --heat-card-border: rgba(16, 185, 129, 0.35);
+  --heat-cell-border: rgba(255, 255, 255, 0.08);
+}
+
+[data-theme='light'] {
+  /* 5 档红色梯度（强化对比：极浅 → 深红）
+     heat-0: 极浅灰（无活动）
+     heat-1: 浅红粉（1-2 次）
+     heat-2: 中红（3-5 次）
+     heat-3: 鲜艳红（6-9 次）
+     heat-4: 深红（10+ 次）*/
+  --heat-0: #f1f5f9;
+  /* R22 修复 (high a11y)：原 --heat-1=#fecaca vs --heat-0=#f1f5f9 对比度
+     1.33:1，远低于 WCAG 1.4.11 的 3:1。提到 #f87171（≈3.05:1）。 */
+  --heat-1: #f87171;
+  --heat-2: #f87171;
+  --heat-3: #dc2626;
+  --heat-4: #991b1b;
+
+  --heat-accent: #dc2626;
+  --heat-accent-soft: rgba(220, 38, 38, 0.15);
+  /* 标题容器背景：双轴渐变，更明显的色彩感（亮色：红+粉） */
+  --heat-card-bg: linear-gradient(
+    135deg,
+    rgba(220, 38, 38, 0.16) 0%,
+    rgba(248, 113, 113, 0.10) 45%,
+    rgba(254, 202, 202, 0.18) 100%
+  );
+  --heat-card-border: rgba(220, 38, 38, 0.30);
+  --heat-cell-border: rgba(15, 23, 42, 0.06);
+
+  --heat-cell-size: 22px;
+  --heat-cell-gap: 5px;
+  --heat-cell-radius: 5px;
+}
+
+.heatmap-wrapper.compact {
+  --heat-cell-size: 13px;
+  --heat-cell-gap: 3px;
+  --heat-cell-radius: 3px;
+}
+
+.heatmap-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+}
+
+/* ============ 容器卡片（原 header 升级版） ============ */
+.heatmap-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 10px;
+  background: var(--heat-card-bg);
+  border: 1px solid var(--heat-card-border);
+  border-radius: var(--radius-md);
+}
+
+.heatmap-card-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.heatmap-card-body {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 14px;
+  min-height: 0;
+}
+
+.heatmap-header-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  line-height: 1.1;
+}
+
+.heatmap-header-year {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--heat-4), var(--heat-accent));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.heatmap-header-sub {
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+}
+
+.heatmap-loading {
+  font-size: 12px;
+}
+
+/* ============ 顶部 3 张数字卡 ============ */
+.heatmap-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 4px 0 2px;
+}
+
+.heatmap-summary-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--heat-0) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--heat-cell-border) 80%, transparent);
+  border-radius: 10px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.heatmap-summary-card:hover {
+  border-color: color-mix(in srgb, var(--heat-accent) 40%, var(--heat-cell-border));
+}
+
+.heatmap-summary-card.highlight {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--heat-accent-soft) 100%, transparent) 0%,
+    color-mix(in srgb, var(--heat-accent-soft) 30%, transparent) 100%
+  );
+  border-color: color-mix(in srgb, var(--heat-accent) 35%, var(--heat-cell-border));
+}
+
+.heatmap-summary-value {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.heatmap-summary-card.highlight .heatmap-summary-value {
+  color: var(--heat-accent);
+}
+
+.heatmap-summary-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 0.03em;
+}
+
+@media (max-width: 720px) {
+  .heatmap-summary-card .heatmap-summary-value {
+    font-size: 18px;
+  }
+}
+
+/* ============ 信息栏：扁平统计（右） ============ */
+/* 扁平：无背景、无圆角、无 border；仅文本 + 分隔线，
+   通过左侧 1px 分隔线与热力图主体分开，整体高度紧凑。 */
+.heatmap-stats-sidebar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 120px;
+  padding-left: 14px;
+  border-left: 1px solid var(--heat-cell-border);
+}
+
+.heatmap-stat {
+  display: flex;
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 1px 0;
+  /* 扁平：无背景、无边框 */
+  background: transparent;
+  border: none;
+  transition: color 0.15s ease;
+}
+
+.heatmap-stat:hover .heatmap-stat-value {
+  color: var(--heat-accent);
+}
+
+.heatmap-stat-value {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  color: var(--text-primary);
+  transition: color 0.15s ease;
+}
+
+.heatmap-stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.heatmap-stat.highlight .heatmap-stat-value {
+  color: var(--heat-accent);
+}
+
+.heatmap-stat.highlight .heatmap-stat-label {
+  color: var(--heat-accent);
+  font-weight: 600;
+}
+
+/* ============ 主体容器（scroll + footer） ============ */
+.heatmap-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* ============ 滚动容器 ============ */
+.heatmap-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+}
+
+.heatmap-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+
+.heatmap-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+/* ============ 测宽容器 ============ */
+/* 显式宽度由内联 --week-count × step 决定；
+   不依赖子元素撑开（避免单元格溢出导致横向滚动条提前出现） */
+.heatmap-frame {
+  position: relative;
+  /* 框架总宽 = weekday 列(28) + 间距(6) + weeks × step；
+     月份标签条 .heatmap-month-track 内的 left:34px 与之对齐 */
+  width: calc(
+    34px + var(--week-count, 0) * (var(--heat-cell-size) + var(--heat-cell-gap))
+  );
+  padding-top: 24px; /* 给月份标签条预留 22px 高度 + 2px 间距 */
+  padding-bottom: 6px; /* 月份下边框预留间距 */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============ 月份分隔线（细线，GitHub 风格） ============
+   每个「月第一周」的周列加 is-month-start 类；
+   用 ::before 在左侧加一道细竖线，视觉上分组各月。
+   替代旧的"月份线框" —— 更轻量、不喧宾夺主。 */
+.heatmap-week-col {
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(7, var(--heat-cell-size));
+  row-gap: var(--heat-cell-gap);
+}
+
+.heatmap-week-col.is-month-start::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  left: calc(var(--heat-cell-gap) / -2);
+  width: 1px;
+  background: color-mix(in srgb, var(--heat-accent) 40%, transparent);
+}
+
+.heatmap-week-col:first-child.is-month-start::before {
+  /* 第一列不画线，避免被 frame 边框裁掉 */
+  display: none;
+}
+
+/* ============ 月份标签条（绝对定位，无 grid 列对齐难题） ============ */
+.heatmap-month-track {
+  position: absolute;
+  top: 0;
+  left: 34px; /* weekday 列(28) + 间距(6) */
+  right: 0;
+  height: 22px;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 3;
+}
+
+.heatmap-month-label {
+  position: absolute;
+  top: 0;
+  /* 精确列偏移：第 N 周首日对应 (N * step) */
+  left: calc(var(--week-index, 0) * (var(--heat-cell-size) + var(--heat-cell-gap)));
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px dashed transparent;
+  padding-bottom: 2px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.heatmap-month-label.is-current {
+  color: var(--heat-accent);
+  border-bottom-color: var(--heat-accent);
+  font-weight: 600;
+}
+
+/* ============ 主体（weekday 列 + cells 网格） ============ */
+.heatmap-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* 左侧 weekday 列 */
+.heatmap-weekday-col {
+  flex-shrink: 0;
+  width: 28px;
+  display: grid;
+  grid-template-rows: repeat(7, var(--heat-cell-size));
+  row-gap: var(--heat-cell-gap);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.heatmap-weekday-label {
+  height: var(--heat-cell-size);
+  line-height: var(--heat-cell-size);
+  text-align: right;
+  padding-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ 主网格 ============ */
+/* 现在用 flex + .heatmap-week-col 子元素（每周一列），而不是直接的 grid cells；
+   这样可以单独给"月份首周"加 ::before 分隔线，比 frame 框更轻量。 */
+.heatmap {
+  display: flex;
+  gap: var(--heat-cell-gap);
+  position: relative;
+  flex: 0 0 auto;
+  z-index: 2;
+}
+
+.heatmap-cell {
+  width: var(--heat-cell-size);
+  height: var(--heat-cell-size);
+  border-radius: var(--heat-cell-radius);
+  background: var(--heat-0);
+  /* 关键：每格加 1px 浅描边，让方块边界更清晰（颜色相近时也能区分）*/
+  border: 1px solid var(--heat-cell-border);
+  transition: transform 0.1s ease, box-shadow 0.1s ease, border-color 0.1s ease;
+  cursor: default;
+  position: relative;
+  z-index: 1;
+  /* 让 cell 在更大的尺寸下视觉更立体 */
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 6%, transparent);
+}
+
+.heatmap-cell.in-range.level-1 { background: var(--heat-1); }
+.heatmap-cell.in-range.level-2 { background: var(--heat-2); }
+.heatmap-cell.in-range.level-3 { background: var(--heat-3); }
+.heatmap-cell.in-range.level-4 { background: var(--heat-4); }
+
+.heatmap-cell.out-of-range {
+  opacity: 0.35;
+}
+
+.heatmap-cell.is-today {
+  border-color: var(--heat-accent);
+  box-shadow:
+    0 0 0 2px var(--bg-base),
+    0 0 0 3px var(--heat-accent),
+    0 0 8px var(--heat-accent-soft);
+  animation: heat-today-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes heat-today-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 3px var(--heat-accent), 0 0 6px var(--heat-accent-soft); }
+  50%      { box-shadow: 0 0 0 2px var(--bg-base), 0 0 0 3px var(--heat-accent), 0 0 12px var(--heat-accent-soft); }
+}
+
+.heatmap-cell:hover,
+.heatmap-cell:focus-visible {
+  outline: none;
+  /* 适度放大，避免 18px cell 整体覆盖一片 */
+  transform: scale(1.25);
+  box-shadow:
+    0 0 0 1px var(--bg-base),
+    0 0 0 2px var(--accent),
+    0 4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 3;
+  position: relative;
+}
+
+/* ============ Footer / 图例（现在嵌在卡片底部） ============ */
+.heatmap-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 6px 4px 0;
+  margin-top: 2px;
+  border-top: 1px dashed var(--heat-cell-border);
+}
+
+.heatmap-footer-caption {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+/* 图例：与 .heatmap-cell 完全解耦，不会与热力图主体样式互相覆盖 */
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.legend-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  letter-spacing: 0.05em;
+  font-weight: 500;
+}
+
+.legend-cells {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.legend-cell {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--heat-0);
+  /* 关键：不继承 .heatmap-cell 的 position / transition / cursor */
+  position: static;
+  transition: none;
+  cursor: default;
+  border: 1px solid var(--heat-cell-border);
+}
+
+.legend-cell.level-1 { background: var(--heat-1); }
+.legend-cell.level-2 { background: var(--heat-2); }
+.legend-cell.level-3 { background: var(--heat-3); }
+.legend-cell.level-4 { background: var(--heat-4); }
+
+/* ============ Tooltip ============
+   视觉：深色圆角浮层 + 白色文字 + 底部/顶部小三角箭头。
+   不分主题统一深色 (#1f2937)，亮色下也用同一个深色（参考描述）。 */
+.heatmap-tooltip {
+  pointer-events: none;
+  background: #1f2937;
+  color: #ffffff;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 9999;
+  white-space: nowrap;
+}
+
+/* 默认箭头：在 tooltip 下方（is-above 情形：tooltip 在单元格上方） */
+.heatmap-tooltip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid #1f2937;
+  transform: translateX(-50%);
+}
+
+.heatmap-tooltip.is-above::after {
+  bottom: -5px;
+}
+
+.heatmap-tooltip.is-below::after {
+  top: -5px;
+  border-top: none;
+  border-bottom: 5px solid #1f2937;
+}
+
+.heatmap-tooltip-date {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #ffffff;
+  font-variant-numeric: tabular-nums;
+}
+
+.heatmap-tooltip-rel {
+  color: #9ca3af;
+  font-weight: 500;
+  margin-left: 2px;
+}
+
+.heatmap-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #e5e7eb;
+}
+
+.heatmap-tooltip-row.muted {
+  color: #9ca3af;
+}
+
+.heatmap-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.heat-dot-task {
+  background: #f87171;
+}
+
+.heat-dot-note {
+  background: #60a5fa;
+}
+
+/* ============ 响应式 ============ */
+@media (max-width: 720px) {
+  .heatmap-card-body {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .heatmap-stats-sidebar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    width: 100%;
+    padding-left: 0;
+    padding-top: 10px;
+    border-left: none;
+    border-top: 1px solid var(--heat-cell-border);
+    gap: 6px 16px;
+  }
+  .heatmap-stat {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+  }
+  .heatmap-month-track {
+    left: 28px;
+  }
+  .heatmap-weekday-col {
+    width: 24px;
+  }
+}
+
+/* ====== prefers-reduced-motion 守护（R31-A11yPerf-2 HIGH） ======
+ * heatmap-cell.is-today 的 heat-today-pulse (2.4s infinite) 与 .heatmap
+ * 单元格的 transition 此前在 reduced-motion 用户面前持续呼吸，
+ * 同样违反 WCAG 2.3.3。
+ */
+@media (prefers-reduced-motion: reduce) {
+  .heatmap-cell.is-today {
+    animation: none !important;
+  }
+  .heatmap-cell,
+  .heatmap-cell * {
+    transition: none !important;
+  }
+}

@@ -1,0 +1,1166 @@
+/**
+ * 全局样式
+ * 深色为主（编辑器场景友好），浅色自动 fallback
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-base: #0f1115;
+  --bg-elevated: #1a1d23;
+  --bg-overlay: #232830;
+  --border: #2d333b;
+  --border-strong: #444c56;
+  --text-primary: #e6edf3;
+  --text-secondary: #9da7b3;
+  /* R21 修复 (low token hygiene)：原 --text-muted=#9aa3ad 与 --text-secondary
+    数值仅相差 5/255，肉眼无差别，且设计语义重叠（都是「次要文本」）。合并为
+    --text-secondary 的别名，保留 token 名以免破坏 70+ 个引用点；未来新增组件
+    应直接使用 --text-secondary，不要再引入新的 --text-muted 变体。 */
+  --text-muted: var(--text-secondary);
+  --accent: #1f6feb;
+  --accent-hover: #388bfd;
+  /* UI 清理 (focus-neutral)：新增中性 focus 环 / 背景 token。
+     用 color-mix 跟随主题变深变浅，避免亮蓝在浅色主题里刺眼。
+     --focus-ring: 60% 文本色 + 透明 → 深浅主题都接近中性灰。
+     --focus-ring-bg: 8% 文本色 + 透明 → 极淡高亮，作为柔和背景填充。*/
+  --focus-ring: color-mix(in srgb, var(--text-primary) 60%, transparent);
+  --focus-ring-bg: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --success: #3fb950;
+  --warning: #d29922;
+  /* R21 修复 (high a11y)：原 #f85149 (≈3.85:1 vs white) 不达 WCAG AA 4.5:1，
+     任何挂在 danger 填充上的白文按钮（删除、撤销、退出）都对低视力用户
+     不可读。改为 #b62324 (≈5.95:1 vs white)，保持红色语义不变但达到 AA。
+     注意：priority-p0（也用 #f85149）作为便签 P0 颜色卡上的小标签不直接
+     承载交互文本，可保留。danger 用于按钮文字背景必须 AA。 */
+  --danger: #b62324;
+  --priority-p0: #f85149;
+  --priority-p1: #d29922;
+  --priority-p2: #58a6ff;
+  --priority-p3: #6e7681;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 32px rgba(0, 0, 0, 0.45);
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+  --header-height: 48px;
+  --font-size-base: 14px;
+
+  /* R12 修复 (high)：GreetingCard 的时段渐变改为 CSS 变量，深色模式下用
+     原饱和色，浅色主题下用更深一档以保持对比度。 */
+  --greeting-morning: linear-gradient(135deg, #ffb04c 0%, #f59e0b 100%);
+  --greeting-noon: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%);
+  --greeting-afternoon: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+  --greeting-evening: linear-gradient(135deg, #818cf8 0%, #6366f1 100%);
+  --greeting-night: linear-gradient(135deg, #6c63ff 0%, #3b3486 100%);
+  /* R12 修复 (medium)：冲突状态行背景色统一为 token，浅色模式加深以保持可见 */
+  --color-conflict-bg: rgba(248, 81, 73, 0.16);
+
+  /* Page rhythm tokens —— 所有页面统一使用 */
+  --page-pad-x: 28px;
+  --page-pad-y: 24px;
+  --page-max-w: 1200px;
+  --page-title-size: 22px;
+  --page-sub-size: 13px;
+
+  /* 间距阶梯 —— 4/8/12/16/20/24px。卡片 / widget / 列表 / 模态都走这套 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  /* 字号阶梯 —— 统一全应用字号到 6 档 */
+  --fs-2xs: 10px;        /* 微小标签 / StatusBar */
+  --fs-xs: 11px;         /* 次要文字 / 表格辅助 */
+  --fs-sm: 12px;         /* 提示文字 / 工具栏 */
+  --fs-base: 13px;       /* 正文基础（默认） */
+  --fs-md: 14px;         /* 控件默认 / 输入框 */
+  --fs-lg: 16px;         /* 强调文字 / 卡片标题 */
+  --fs-xl: 20px;         /* 区块大标题 */
+  --fs-2xl: 26px;        /* 页面 H1 */
+
+  /* 动效令牌 —— 统一过渡曲线和时长 */
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+  --motion-slow: 260ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* AI 集成专属 token —— 仅在 AI 触点（命令栏 / 确认弹窗 / 建议 chip）使用
+     AI 颜色复用 --accent，不引入新色；只在 alpha 透明度上区分"思考 / 提示" */
+  --ai-glow: 0 0 14px color-mix(in srgb, var(--accent) 22%, transparent);
+  --ai-hint: color-mix(in srgb, var(--accent) 8%, transparent);
+
+  /* ============================================================
+   * 主题丰富度 token —— 渐变 / 纹理 / 多色 accent
+   * 用于卡片背景、按钮高亮、装饰性 backdrop；所有 token 都跟随主题切换。
+   * 设计原则：仅在「容器级」装饰使用，文本/边框仍保持扁平，
+   * 避免过度装饰造成视觉疲劳。
+   * ============================================================ */
+
+  /* 多色 accent（每个都和主 accent 同步调） */
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-cyan: #22d3ee;       /* 副色：青色，用于双色渐变 */
+  --accent-purple: #a78bfa;     /* 副色：紫色，用于品牌渐变 */
+  --accent-pink: #f472b6;       /* 副色：粉色，用于暖色组合 */
+  --accent-mint: #6ee7b7;       /* 副色：薄荷，用于亮色组合 */
+
+  /* ====== 渐变背景（卡片 / 容器用） ====== */
+  /* 主品牌渐变：accent → 紫 → 青，沿对角线 */
+  --grad-brand: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    var(--accent-purple) 50%,
+    var(--accent-cyan) 100%
+  );
+  /* 暗色背景渐变：从 elevated 到 base，沿垂直 */
+  --grad-bg-vertical: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-elevated) 100%, transparent) 0%,
+    color-mix(in srgb, var(--bg-base) 100%, transparent) 100%
+  );
+  /* 暗色背景径向高光：在右上角放一抹 accent 半径光晕 */
+  --grad-bg-radial: radial-gradient(
+    ellipse 1200px 800px at 100% 0%,
+    color-mix(in srgb, var(--accent) 12%, transparent) 0%,
+    transparent 60%
+  );
+  /* 暗色背景双径向：左上 accent + 右下 cyan，柔光组合 */
+  --grad-bg-aurora: radial-gradient(
+      ellipse 900px 600px at 0% 0%,
+      color-mix(in srgb, var(--accent) 14%, transparent) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 800px 500px at 100% 100%,
+      color-mix(in srgb, var(--accent-cyan) 10%, transparent) 0%,
+      transparent 60%
+    );
+  /* 卡片渐变：elevated + 微弱 accent 上色（暗色更明显） */
+  --grad-card: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--bg-elevated) 100%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 6%, var(--bg-elevated)) 100%
+  );
+  /* Header 渐变：顶部到中部，左到右的微弱暖光 */
+  --grad-header: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--bg-elevated) 100%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 6%, var(--bg-elevated)) 100%
+  );
+  /* CTA 主按钮渐变：accent → hover */
+  --grad-primary: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 100%, white 12%) 0%,
+    var(--accent) 100%
+  );
+
+  /* ====== 纹理背景 ====== */
+  /* 极细网格（1px @ 24px 间距），用于 stat 卡片 / dashboard widget */
+  --texture-grid: repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--border) 35%, transparent) 0px,
+      color-mix(in srgb, var(--border) 35%, transparent) 1px,
+      transparent 1px,
+      transparent 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--border) 35%, transparent) 0px,
+      color-mix(in srgb, var(--border) 35%, transparent) 1px,
+      transparent 1px,
+      transparent 24px
+    );
+  /* 极细点阵（半径 1px @ 18px 间距） */
+  --texture-dots: radial-gradient(
+    color-mix(in srgb, var(--text-muted) 25%, transparent) 1px,
+    transparent 1.5px
+  );
+  --texture-dots-size: 18px 18px;
+
+  /* 装饰性噪点：仅用于需要「纸感」的容器（如便签主题） */
+  --texture-noise: radial-gradient(
+      color-mix(in srgb, var(--text-muted) 8%, transparent) 1px,
+      transparent 1.2px
+    );
+  --texture-noise-size: 4px 4px;
+}
+
+/* 默认字号（运行时由 app store 的 setFontSize 覆盖 --font-size-base） */
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base, 14px);
+  background:
+    var(--grad-bg-aurora),
+    var(--bg-base);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* 紧凑密度：列表项 / 卡片 padding 收紧 */
+[data-density='compact'] .task-item,
+[data-density='compact'] .note-list-item,
+[data-density='compact'] .quick-action {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+[data-density='compact'] .dashboard-layout {
+  gap: 12px;
+}
+
+[data-theme='light'] {
+  --bg-base: #ffffff;
+  --bg-elevated: #f6f8fa;
+  --bg-overlay: #eaeef2;
+  --border: #d0d7de;
+  --border-strong: #afb8c1;
+  --text-primary: #1f2328;
+  --text-secondary: #59636e;
+  /* R21 修复 (low token hygiene)：与深色主题保持一致的别名处理。
+    原 --text-muted=#5b6470 与 --text-secondary=#59636e 仅相差 7/255，
+    视觉无差别，合并为别名。 */
+  --text-muted: var(--text-secondary);
+  --accent: #0969da;
+  --accent-hover: #0550ae;
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* R21 修复 (high a11y)：浅色主题 danger 单独加深 —— 默认继承的
+     #b62324 在浅色画布上看起来过暗不协调，但 #cf222e 仍能给白字提供 ≈5.1:1
+     满足 AA，且与 GitHub 红系视觉对齐。 */
+  --danger: #cf222e;
+  /* 浅色主题用较深的副色（保持对比度） */
+  --accent-cyan: #0891b2;
+  --accent-purple: #7c3aed;
+  --accent-pink: #db2777;
+  --accent-mint: #059669;
+
+  /* 浅色版渐变（降低饱和度，避免刺眼） */
+  --grad-brand: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    var(--accent-purple) 50%,
+    var(--accent-cyan) 100%
+  );
+
+  /* R12 修复 (high)：浅色主题下 greeting 渐变用更柔的色板，避免在白色
+     背景上过于刺眼。*/
+  --greeting-morning: linear-gradient(135deg, #f59e0b 0%, #b45309 100%);
+  --greeting-noon: linear-gradient(135deg, #0ea5e9 0%, #075985 100%);
+  --greeting-afternoon: linear-gradient(135deg, #f97316 0%, #c2410c 100%);
+  --greeting-evening: linear-gradient(135deg, #6366f1 0%, #4338ca 100%);
+  --greeting-night: linear-gradient(135deg, #4f46e5 0%, #312e81 100%);
+  /* R12 修复 (medium)：冲突背景在浅色主题下需要更深以保持可见性 */
+  --color-conflict-bg: rgba(248, 81, 73, 0.22);
+
+  --grad-bg-vertical: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-base) 100%, transparent) 0%,
+    color-mix(in srgb, var(--bg-elevated) 60%, transparent) 100%
+  );
+  --grad-bg-radial: radial-gradient(
+    ellipse 1200px 800px at 100% 0%,
+    color-mix(in srgb, var(--accent) 8%, transparent) 0%,
+    transparent 60%
+  );
+  --grad-bg-aurora: radial-gradient(
+      ellipse 900px 600px at 0% 0%,
+      color-mix(in srgb, var(--accent) 6%, transparent) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 800px 500px at 100% 100%,
+      color-mix(in srgb, var(--accent-cyan) 5%, transparent) 0%,
+      transparent 60%
+    );
+  --grad-card: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--bg-elevated) 100%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 3%, var(--bg-elevated)) 100%
+  );
+  --grad-header: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--bg-elevated) 100%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 3%, var(--bg-elevated)) 100%
+  );
+  --grad-primary: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 100%, white 8%) 0%,
+    var(--accent) 100%
+  );
+
+  /* 浅色纹理：颜色更深一点 */
+  --texture-grid: repeating-linear-gradient(
+      0deg,
+      color-mix(in srgb, var(--border) 50%, transparent) 0px,
+      color-mix(in srgb, var(--border) 50%, transparent) 1px,
+      transparent 1px,
+      transparent 24px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--border) 50%, transparent) 0px,
+      color-mix(in srgb, var(--border) 50%, transparent) 1px,
+      transparent 1px,
+      transparent 24px
+    );
+  --texture-dots: radial-gradient(
+    color-mix(in srgb, var(--text-muted) 35%, transparent) 1px,
+    transparent 1.5px
+  );
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+code {
+  font-family: var(--font-mono);
+  background: var(--bg-overlay);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9em;
+}
+
+/* 应用骨架 */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--header-height);
+  padding: 0 18px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-elevated) 100%, transparent) 0%,
+    color-mix(in srgb, var(--bg-elevated) 92%, transparent) 100%
+  );
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+  position: relative;
+  z-index: 10;
+}
+
+/* 顶部细线高光，模拟 macOS 标题栏的反光 */
+.app-header::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--accent) 35%, transparent) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.app-header button,
+.app-header a {
+  -webkit-app-region: no-drag;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+  /* 整体不再使用 gradient text —— icon 本身已经是彩色，文字保持纯色便于阅读 */
+  color: var(--text-primary);
+  -webkit-app-region: no-drag;
+}
+
+.app-brand-icon {
+  flex-shrink: 0;
+  /* 让图标在 22px 时仍然锐利 */
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, var(--accent) 35%, transparent));
+  transition: transform var(--motion-base, 180ms) var(--ease-out, ease),
+    filter var(--motion-base, 180ms) var(--ease-out, ease);
+}
+
+.app-brand:hover .app-brand-icon {
+  transform: rotate(-6deg) scale(1.04);
+  filter: drop-shadow(0 2px 6px color-mix(in srgb, var(--accent) 55%, transparent));
+}
+
+.app-brand-text {
+  /* 文字用细渐变（accent → accent-purple）作为细节装饰；不影响可读性 */
+  background: linear-gradient(
+    135deg,
+    var(--accent) 0%,
+    color-mix(in srgb, var(--accent) 70%, var(--accent-purple)) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  font-feature-settings: 'ss01' on, 'cv11' on;
+}
+
+.header-nav {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--bg-overlay) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-lg, 10px);
+}
+
+.nav-link {
+  color: var(--text-secondary);
+  text-decoration: none;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.nav-link:hover {
+  background: color-mix(in srgb, var(--bg-overlay) 80%, transparent);
+  color: var(--text-primary);
+}
+
+.nav-link.active {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 10%, transparent) 100%
+  );
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  -webkit-app-region: no-drag;
+}
+
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  font-size: 14px;
+  color: var(--text-primary);
+  transition: all 0.15s ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-overlay);
+}
+
+.clock {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+/* ===== 自定义窗口栏控制（Windows 11 原生风格 · Segoe Fluent Icons） ===== */
+/* 视觉规格（参考 Win11 系统标题栏按钮）：
+   - 尺寸：46×32（接近系统标题栏真实比例）
+   - 默认背景：透明
+   - hover：min/max 用系统强调色浅底 + 主文字色 icon；close 用红色实底 + 白字 icon
+   - pressed：颜色加深一档
+   - focus-visible：accent ring 2px（outline）
+   - icon 始终可见（不像 macOS 那样默认隐藏），符合 Win11 系统按钮直觉
+   主题：dark / light 都用系统语义色，深色模式背景略深、icon 颜色更亮 */
+.window-controls {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  margin-left: 6px;
+  padding-left: 0;
+  -webkit-app-region: no-drag;
+  /* 拖拽区域中保留按钮可点击（Header 是 drag region，子元素需显式声明 no-drag） */
+}
+
+.wc-btn {
+  -webkit-app-region: no-drag;
+  width: 46px;
+  height: 100%;
+  min-height: 32px;
+  border-radius: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: transparent;
+  color: var(--text-primary);
+  transition:
+    background var(--motion-fast, 120ms) var(--ease-out, ease),
+    color var(--motion-fast, 120ms) var(--ease-out, ease);
+  outline: none;
+}
+
+/* Icon 默认可见（Win11 系统按钮风格） */
+.wc-btn .wc-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: inherit;
+  line-height: 0;
+  pointer-events: none;
+}
+
+/* hover 时背景加深（min / max 用中性灰底） */
+.wc-minimize:hover,
+.wc-maximize:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* pressed 颜色更深 */
+.wc-minimize:active,
+.wc-maximize:active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* 关闭按钮：hover 红底白字（Win11 系统行为） */
+.wc-close {
+  color: var(--text-primary);
+}
+
+.wc-close:hover {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.wc-close:active {
+  background: #b3261e;
+  color: #ffffff;
+}
+
+/* focus-visible：accent ring（offset 0 让 ring 紧贴按钮边） */
+.wc-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  z-index: 1;
+}
+
+/* 关闭按钮 focus 时 ring 也用 accent（与 hover 区分） */
+.wc-close:focus-visible {
+  outline-color: var(--accent);
+}
+
+/* 在窗口被最大化时，max/restore 按钮保持可点击，不需要额外样式。
+   不过为了让用户在未 hover 时也能感知「当前已最大化」，
+   给 maximize 按钮一个极轻的 icon 透明度提示（Win11 系统行为） */
+.wc-maximize.is-maximized .wc-glyph {
+  opacity: 0.85;
+}
+.wc-maximize.is-maximized:hover .wc-glyph {
+  opacity: 1;
+}
+
+/* 在窗口被最大化时，给 Header 加一条轻微的视觉提示（顶部一条细线） */
+.app-header.is-window-maximized {
+  border-bottom-color: transparent;
+}
+
+.app-main {
+  flex: 1;
+  /* 作为 flex 容器，让子路由的 flex:1 + min-height:0 模式能正确填充剩余高度，
+     而非退化为内容高度（导致全页可滚动）。 */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-base);
+}
+
+/* ===== 全局底部状态栏 ===== */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 28px;
+  padding: 0 14px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--bg-elevated) 100%, transparent);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+  user-select: none;
+  -webkit-app-region: no-drag;
+  position: relative;
+  z-index: 5;
+}
+
+/* 两段式：左 / 右（center 已废弃，保留选择器避免样式残留） */
+.status-bar-left,
+.status-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.status-bar-left {
+  flex: 1;
+  justify-content: flex-start;
+}
+
+.status-bar-right {
+  flex-shrink: 0;
+  justify-content: flex-end;
+}
+
+.status-bar-center {
+  display: none;
+}
+
+.status-bar-route {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-weight: 500;
+  transition: background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.status-bar-route:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.status-bar-route-icon {
+  font-size: 12px;
+}
+
+.status-bar-route-label {
+  letter-spacing: 0.2px;
+}
+
+.status-bar-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.status-bar-item.subtle {
+  opacity: 0.7;
+}
+
+.status-bar-num {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.status-bar-num.success {
+  color: var(--success);
+}
+
+.status-bar-label {
+  color: var(--text-secondary);
+  font-size: var(--fs-2xs);
+  letter-spacing: 0.3px;
+}
+
+.status-bar-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+}
+
+.status-bar-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 10px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-width: 100%;
+  overflow: hidden;
+  transition: border-color var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out);
+}
+
+.status-bar-path:hover {
+  border-color: var(--accent);
+}
+
+.status-bar-path code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-bar-path-icon {
+  font-size: var(--fs-xs);
+}
+
+.status-bar-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-2xs);
+}
+
+.status-bar-indicator .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--success) 60%, transparent);
+  animation: status-pulse 2.4s ease-in-out infinite;
+}
+
+.status-bar-indicator[data-state='warn'] .dot {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.status-bar-indicator[data-state='err'] .dot {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* 占位页面通用样式 */
+.page-placeholder {
+  max-width: 720px;
+  margin: 40px auto;
+  padding: 0 24px;
+}
+
+.page-placeholder h1 {
+  margin: 0 0 8px;
+  font-size: 28px;
+}
+
+.page-placeholder h3 {
+  margin: 24px 0 8px;
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.label {
+  color: var(--text-secondary);
+  margin-right: 8px;
+}
+
+.success {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.status-card {
+  margin-top: 32px;
+  padding: 16px 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.status-card p {
+  margin: 8px 0;
+}
+
+.module-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text-secondary);
+  line-height: 1.8;
+}
+
+/* ============================================================
+ * 统一页面布局 —— 所有路由应使用 .page 容器
+ * ============================================================ */
+.page {
+  padding: var(--page-pad-y) var(--page-pad-x);
+  max-width: var(--page-max-w);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 100%;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 4px;
+}
+
+.page-header h1 {
+  margin: 0 0 4px;
+  font-size: var(--page-title-size);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  line-height: 1.25;
+}
+
+.page-header .page-subtitle {
+  margin: 0;
+  font-size: var(--page-sub-size);
+  color: var(--text-secondary);
+}
+
+.page-header .page-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 通用按钮按压反馈 */
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.94);
+}
+
+.btn:focus-visible {
+  /* R22 修复 (medium a11y)：原 65% color-mix 复合到 --bg-elevated #1a1d23
+     仅 2.25:1，低于 WCAG 1.4.11/2.4.11 的 3:1。改用全 --accent 实色
+     (深色 #1f6feb ≈ 3.65:1，浅色 #0969da ≈ 4.7:1)。 */
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+ * 渐变 / 纹理 utility class
+ * 通过 .surface-card / .surface-grid 等组合类给容器加视觉层次。
+ * 全部跟随主题切换。
+ * ============================================================ */
+
+/* 卡片表面：扁平 elevated → 顶部微弱 accent 的渐变 */
+.surface-card {
+  background: var(--grad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  position: relative;
+}
+
+/* 网格纹理表面：用于 stat 卡片 / dashboard widget */
+.surface-grid {
+  background:
+    var(--texture-grid),
+    var(--grad-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* 点阵纹理表面：用于空态 / 装饰条 */
+.surface-dots {
+  background:
+    var(--texture-dots) 0 0 / var(--texture-dots-size) repeat,
+    var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* 装饰条：顶部 2px 渐变光带（用于突出某个区块） */
+.surface-stripe::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--grad-brand);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* 玻璃拟态：用于浮层、卡片叠加层（带 backdrop-filter） */
+.surface-glass {
+  background: color-mix(in srgb, var(--bg-elevated) 75%, transparent);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-lg);
+}
+
+/* 通用空态 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-secondary);
+  gap: 8px;
+}
+
+.empty-state .empty-icon {
+  font-size: 36px;
+  line-height: 1;
+  margin-bottom: 4px;
+  opacity: 0.6;
+}
+
+.empty-state .empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.empty-state .empty-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 360px;
+}
+
+.empty-state-card {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+}
+
+/* 通用错误条 */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.error-banner .error-icon {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.error-banner button {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.error-banner button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* 通用加载骨架 */
+.skeleton-bar {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-overlay) 0%,
+    color-mix(in srgb, var(--bg-overlay) 60%, var(--text-muted)) 50%,
+    var(--bg-overlay) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Modal 进出动画 */
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes modal-scale-in {
+  from { opacity: 0; transform: scale(0.96) translateY(4px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.modal-overlay {
+  animation: modal-fade-in 0.18s ease-out;
+}
+
+.modal-overlay > .modal,
+.modal-overlay > div[class*='dialog'],
+.modal-overlay > div[class*='Dialog'] {
+  animation: modal-scale-in 0.18s ease-out;
+}
+
+/* ============================================================
+ * 通用按钮变体
+ * ============================================================ */
+.btn.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.btn.primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 88%, black);
+  border-color: color-mix(in srgb, var(--accent) 88%, black);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 88%, black);
+  border-color: color-mix(in srgb, var(--danger) 88%, black);
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* R21 修复 (high a11y)：AriaAnnouncer 已在用 `sr-only` 类，
+   PomodoroWidget 也在用 `visually-hidden`，但 CSS 里**从未定义过**这两个
+   utility 类。后果：屏幕阅读器播报时本来该对 sighted 用户隐藏的元素被
+   视觉用户看到（"已加载" 状态条飘在屏幕上）；PomodoroWidget 的 muted label
+   也会被展示在 UI 上。
+   修复：把两个等价 class 都补上 W3C 标准「visually hidden」实现 —— 绝对
+   定位裁出可视区但保留 SR 可读性。注意：不要用 display:none / visibility:hidden
+   （会把元素从 a11y tree 中也移除），保持占位 1px 透明。 */
+.sr-only,
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* ====== WCAG 2.3.3 prefers-reduced-motion ====== */
+/* R32-A11yPerf-2 修复 (HIGH accessibility-motion-illness)：原版 index.css
+   有 4 套全局动画：
+     1) .status-pulse 2.4s ease-in-out infinite —— 状态点持续呼吸
+     2) .skeleton-shimmer 1.4s ease-in-out infinite —— 骨架屏闪烁
+     3) .modal-fade-in 0.18s ease-out —— modal 出现淡入
+     4) .modal-scale-in 0.18s ease-out —— modal 缩放进入
+   这四类动画对前庭功能障碍 / 偏头痛用户会诱发眩晕。prefers-reduced-motion:
+   reduce 的 OS / 用户偏好下应一律关闭动画 / 过渡（保留状态变化的语义，
+   但消除视觉运动）。
+   修复：在该媒体查询下把 index.css 的全部 animation / transition 设为
+   none / 0.01ms，与 dashboard.css / heatmap.css 的 R31 修复块对齐。
+   通用选择器 * 含子类精确覆盖，避免遗漏新增动画类。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  .status-pulse,
+  .skeleton-shimmer,
+  .skeleton-bar,
+  .modal,
+  .modal-overlay,
+  .modal-header,
+  .modal-body,
+  .modal-footer,
+  .btn,
+  .field,
+  .empty-state,
+  .empty,
+  .toast,
+  .tooltip {
+    animation: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,1011 @@
+/**
+ * 设置页样式
+ *
+ * 与 tasks.css 共享全局 CSS 变量；
+ * 所有设置页专有的样式在此处定义。
+ */
+
+/* ===== 页面外壳 ===== */
+.settings-page {
+  height: 100%;
+}
+
+/* ===== 左右两栏布局 ===== */
+.settings-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 左侧 sidebar */
+.settings-sidebar {
+  width: 200px;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border-right: 1px solid var(--border);
+  padding: 16px 8px;
+  overflow-y: auto;
+}
+
+.settings-tab-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-tab {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+
+.settings-tab:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.settings-tab.active {
+  background: var(--bg-overlay);
+  color: var(--accent);
+  border-color: var(--border);
+  font-weight: 600;
+}
+
+.settings-tab-icon {
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.settings-tab-label {
+  flex: 1;
+}
+
+/* 右侧内容 */
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--bg-base);
+}
+
+.settings-content-inner {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 32px 40px 64px;
+}
+
+/* ===== 单个 Tab 面板 ===== */
+.settings-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.settings-tab-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.settings-tab-subtitle {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ===== 通用字段 ===== */
+.setting-field {
+  padding: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.setting-field.is-disabled {
+  opacity: 0.55;
+}
+
+.setting-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.setting-field-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.setting-field-desc {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 输入控件 */
+.setting-input {
+  min-width: 180px;
+  padding: 6px 10px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.setting-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.setting-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.setting-input-time {
+  min-width: 110px;
+}
+
+.setting-color {
+  width: 36px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 密码框 */
+.setting-password {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-password .setting-input {
+  min-width: 260px;
+}
+
+.setting-password-toggle {
+  padding: 4px 8px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.setting-password-toggle:hover {
+  border-color: var(--border-strong);
+}
+
+/* 行布局（双字段） */
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .settings-row {
+    grid-template-columns: 1fr;
+  }
+  .settings-content-inner {
+    padding: 24px 20px;
+  }
+}
+
+/* ===== 通用 Toggle 开关 ===== */
+.toggle {
+  position: relative;
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.18s;
+  flex-shrink: 0;
+}
+
+.toggle .toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: left 0.18s, background 0.18s;
+}
+
+.toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggle.on .toggle-knob {
+  left: 18px;
+  background: #fff;
+}
+
+.toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ===== 提示与操作行 ===== */
+.settings-info,
+.settings-info-inline,
+.settings-warn {
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-overlay);
+  color: var(--text-secondary);
+}
+
+.settings-warn {
+  background: rgba(210, 153, 34, 0.12);
+  color: var(--warning);
+  border: 1px solid rgba(210, 153, 34, 0.35);
+}
+
+.settings-info-inline {
+  margin-left: 8px;
+  display: inline-block;
+  padding: 4px 10px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ===== 统计卡片 ===== */
+.settings-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.stat-card {
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--text-primary);
+}
+
+@media (max-width: 720px) {
+  .settings-stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== 库 tab：路径输入行 ===== */
+.library-path-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.library-path-row .setting-input {
+  flex: 1;
+  min-width: 220px;
+  max-width: 360px;
+}
+
+/* ===== 主题色板 ===== */
+.theme-swatches {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.theme-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 140px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px;
+  cursor: pointer;
+  transition: border-color 0.12s;
+}
+
+.theme-swatch:hover {
+  border-color: var(--border-strong);
+}
+
+.theme-swatch.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.25);
+}
+
+.swatch-colors {
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  padding: 8px 6px;
+  margin-bottom: 6px;
+}
+
+.swatch-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  border: 1px solid;
+}
+
+.swatch-strip .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.swatch-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.theme-swatch.active .swatch-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ===== 强调色 ===== */
+.accent-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.accent-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  min-width: 64px;
+}
+
+.accent-option:hover {
+  border-color: var(--border-strong);
+}
+
+.accent-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-overlay);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+/* ===== Git 状态徽章 ===== */
+.git-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+}
+
+.git-status-pill.is-success {
+  background: rgba(63, 185, 80, 0.12);
+  border-color: rgba(63, 185, 80, 0.5);
+  color: var(--success);
+}
+
+.git-status-pill.is-warn {
+  background: rgba(210, 153, 34, 0.12);
+  border-color: rgba(210, 153, 34, 0.4);
+  color: var(--warning);
+}
+
+.git-status-pill.is-muted {
+  color: var(--text-muted);
+}
+
+/* ===== About ===== */
+.about-section {
+  text-align: center;
+  padding: 32px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.about-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.about-brand-icon {
+  flex-shrink: 0;
+  filter: drop-shadow(0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent));
+}
+
+.about-version {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.about-tagline {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.about-meta {
+  margin: 0;
+  padding: 16px 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 24px;
+}
+
+.about-meta > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.about-meta dt {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.about-meta dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--text-primary);
+}
+
+.about-subhead {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.about-deps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 16px;
+}
+
+.about-deps li {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.about-deps code {
+  background: transparent;
+  padding: 0;
+}
+
+.about-links {
+  margin-top: 16px;
+}
+
+/* ====================================================== */
+/* Animation Enhancements (high+medium priority items)     */
+/* ====================================================== */
+
+/* 1. SETTINGS PANEL FADE: panel fade+translateY 4px 180ms */
+.settings-content-inner > .settings-tab-panel {
+  animation: settings-panel-enter var(--motion-base) var(--ease-out);
+}
+
+@keyframes settings-panel-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 2. SETTINGS SMOOTH SCROLL */
+.settings-content {
+  scroll-behavior: smooth;
+}
+
+/* 3. SETTINGS TAB ACTIVE INDICATOR: ::before accent scaleY 0→1 left bar */
+.settings-tab {
+  position: relative;
+}
+
+.settings-tab::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--accent);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform var(--motion-base) var(--ease-out);
+  pointer-events: none;
+}
+
+.settings-tab.active::before {
+  transform: scaleY(1);
+}
+
+/* 4. SETTINGS TAB HOVER LIFT */
+.settings-tab {
+  transition: background 0.12s, color 0.12s, transform var(--motion-fast) var(--ease-out);
+}
+
+.settings-tab:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-overlay));
+  color: var(--accent);
+  transform: translateX(2px);
+}
+
+/* 5. SETTINGS TAB ICON ROTATE */
+.settings-tab-icon {
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.settings-tab-icon:hover {
+  transform: rotate(-8deg) scale(1.1);
+}
+
+.settings-tab.active .settings-tab-icon {
+  transform: scale(1.15);
+}
+
+/* 6. TOGGLE GLOW */
+.toggle {
+  transition: background 0.18s, box-shadow var(--motion-base) var(--ease-out);
+}
+
+.toggle:hover {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.toggle.on {
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.toggle.on:hover {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.toggle .toggle-knob {
+  transition: left 0.22s cubic-bezier(0.4, 1.4, 0.5, 1), background 0.18s;
+}
+
+/* 7. SETTING INPUT FOCUS GLOW */
+.setting-input {
+  transition: border-color var(--motion-fast) var(--ease-out),
+    box-shadow 0.35s var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.setting-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+/* 8. SETTING SELECT CARET + focus translateY */
+select.setting-input {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 28px;
+}
+
+select.setting-input:focus {
+  transform: translateY(-1px);
+}
+
+/* 9. SETTING COLOR RING */
+.setting-color {
+  transition: transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.setting-color:hover {
+  transform: scale(1.08);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* 10. SETTING FIELD LIFT */
+.setting-field {
+  transition: border-color var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
+.setting-field:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+/* 11. THEME SWATCH LIFT */
+.theme-swatch {
+  transition: border-color 0.12s, transform var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
+}
+
+.theme-swatch:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* 12. ACCENT OPTION RING */
+.accent-option {
+  transition: border-color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.accent-option:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+  transform: translateY(-1px);
+}
+
+.accent-option.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+  transform: scale(1.05);
+}
+
+/* 13. ACCENT STAGGER: enter with nth-child delays (60ms apart) */
+.accent-options > .accent-option {
+  opacity: 0;
+  animation: settings-accent-enter var(--motion-base) var(--ease-out) forwards;
+}
+
+.accent-options > .accent-option:nth-child(1) { animation-delay: 0ms; }
+.accent-options > .accent-option:nth-child(2) { animation-delay: 60ms; }
+.accent-options > .accent-option:nth-child(3) { animation-delay: 120ms; }
+.accent-options > .accent-option:nth-child(4) { animation-delay: 180ms; }
+.accent-options > .accent-option:nth-child(5) { animation-delay: 240ms; }
+.accent-options > .accent-option:nth-child(6) { animation-delay: 300ms; }
+.accent-options > .accent-option:nth-child(7) { animation-delay: 360ms; }
+.accent-options > .accent-option:nth-child(8) { animation-delay: 420ms; }
+.accent-options > .accent-option:nth-child(n + 9) { animation-delay: 480ms; }
+
+@keyframes settings-accent-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 14. ACCENT CIRCLE ROTATE */
+.accent-circle {
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.accent-option:hover .accent-circle {
+  transform: scale(1.15) rotate(8deg);
+}
+
+/* 15. SETTINGS STAT HOVER */
+.settings-stats .stat-card {
+  transition: border-color var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out),
+    box-shadow var(--motion-base) var(--ease-out);
+}
+
+.settings-stats .stat-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* 16. BTN BUSY SPINNER (shared): .btn.primary.busy::before ring spinner */
+.btn.primary.busy {
+  position: relative;
+  color: transparent !important;
+  pointer-events: none;
+}
+
+.btn.primary.busy::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border: 2px solid color-mix(in srgb, #ffffff 35%, transparent);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: btn-busy-spin 0.8s linear infinite;
+  z-index: 1;
+}
+
+@keyframes btn-busy-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 17. BTN BUSY SHIMMER: .btn.busy::after shimmer sweep 1.2s */
+.btn.busy {
+  position: relative;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.btn.busy::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, #ffffff 18%, transparent) 50%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: btn-busy-shimmer 1.2s linear infinite;
+}
+
+@keyframes btn-busy-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* 18. SETTINGS INFO FADE: .settings-info, .settings-warn fade+translateY -4px */
+.settings-info,
+.settings-warn {
+  animation: settings-info-fade var(--motion-base) var(--ease-out);
+}
+
+@keyframes settings-info-fade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 19. SETTINGS INFO INLINE FADE */
+.settings-info-inline {
+  animation: settings-info-inline-fade var(--motion-base) var(--ease-out);
+}
+
+@keyframes settings-info-inline-fade {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* 20. GIT PILL PULSE: 1.6s warning ring pulse */
+.git-status-pill.is-warn {
+  animation: git-pill-warn 1.6s ease-in-out infinite;
+}
+
+@keyframes git-pill-warn {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 45%, transparent); }
+  50%      { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warning) 0%, transparent); }
+}
+
+/* 21. GIT PILL SUCCESS: 3s soft success ring breathe */
+.git-status-pill.is-success {
+  animation: git-pill-success 3s ease-in-out infinite;
+}
+
+@keyframes git-pill-success {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 30%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 0%, transparent); }
+}
+
+/* 22. QUIET HOURS REVEAL: .settings-row max-height + translateY -6px reveal */
+.settings-row {
+  overflow: hidden;
+  transition: max-height var(--motion-slow) var(--ease-out),
+    transform var(--motion-slow) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.settings-row.is-collapsed {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+}
+
+.settings-row.is-revealed {
+  max-height: 400px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* 23. ABOUT BRAND ENTER: scale 0.92→1 + letter-spacing 0.2em→0 260ms */
+.about-brand {
+  animation: about-brand-enter var(--motion-slow) var(--ease-out);
+}
+
+@keyframes about-brand-enter {
+  from { transform: scale(0.92); letter-spacing: 0.2em; opacity: 0; }
+  to   { transform: scale(1); letter-spacing: 0; opacity: 1; }
+}
+
+/* 24. ABOUT DEPS STAGGER: nth-child delays (60ms apart) */
+.about-deps li {
+  opacity: 0;
+  animation: about-deps-enter var(--motion-base) var(--ease-out) forwards;
+}
+
+.about-deps li:nth-child(1)  { animation-delay: 0ms; }
+.about-deps li:nth-child(2)  { animation-delay: 60ms; }
+.about-deps li:nth-child(3)  { animation-delay: 120ms; }
+.about-deps li:nth-child(4)  { animation-delay: 180ms; }
+.about-deps li:nth-child(5)  { animation-delay: 240ms; }
+.about-deps li:nth-child(6)  { animation-delay: 300ms; }
+.about-deps li:nth-child(7)  { animation-delay: 360ms; }
+.about-deps li:nth-child(8)  { animation-delay: 420ms; }
+.about-deps li:nth-child(n + 9) { animation-delay: 480ms; }
+
+@keyframes about-deps-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 25. ABOUT GITHUB LIFT: .about-links .btn.ghost:hover translateY -1px + accent tint */
+.about-links .btn.ghost {
+  transition: transform var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.about-links .btn.ghost:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-overlay));
+  color: var(--accent);
+  box-shadow: var(--shadow-md);
+}
+
+/* 26. ABOUT META HOVER */
+.about-meta > div {
+  transition: background var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.about-meta > div:hover {
+  background: var(--bg-overlay);
+  transform: translateX(2px);
+}
+
+/* ====================================================== */
+/* Reduced motion preference: disable all custom animations */
+/* ====================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .settings-content-inner > .settings-tab-panel,
+  .settings-tab,
+  .settings-tab::before,
+  .settings-tab-icon,
+  .toggle,
+  .toggle .toggle-knob,
+  .setting-input,
+  select.setting-input,
+  .setting-color,
+  .setting-field,
+  .theme-swatch,
+  .accent-option,
+  .accent-options > .accent-option,
+  .accent-circle,
+  .settings-stats .stat-card,
+  .btn.primary.busy::before,
+  .btn.busy::after,
+  .settings-info,
+  .settings-warn,
+  .settings-info-inline,
+  .git-status-pill.is-warn,
+  .git-status-pill.is-success,
+  .settings-row,
+  .about-brand,
+  .about-deps li,
+  .about-links .btn.ghost,
+  .about-meta > div {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+
+  .settings-row.is-collapsed {
+    max-height: 0;
+    opacity: 0;
+  }
+
+  .settings-row.is-revealed {
+    max-height: 400px;
+    opacity: 1;
+  }
+
+  .settings-tab::before {
+    transform: scaleY(0);
+  }
+
+  .settings-tab.active::before {
+    transform: scaleY(1);
+  }
+}
+
+/* ====== Round 6: 快捷键 Tab 已下线（dashboard 顶部栏承载常用入口） ====== */
+/* 原 .shortcuts-* / .shortcut-* / @keyframes shortcut-pulse 全部移除 —— dead code */

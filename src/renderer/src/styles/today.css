@@ -1,0 +1,301 @@
+/**
+ * 今日页（today route）样式
+ *
+ * - page-header：左标题 + 日期，右 Tab 切换 + 新建按钮
+ * - body：左侧列表 + 右侧详情面板（详情面板出现时为并排）
+ * - Tab：胶囊 + 选中态渐变
+ * - 详情面板：滑入动画 + 卡片样式
+ */
+
+/* ====== 页面框架 ====== */
+/* 与 AI 页一致：用 flex:1 + min-height:0 模式填满 .app-main 可用高度，
+   让 .today-page-body 在父容器里高度受控，详情面板的 max-height 才能
+   正确基于容器（而非视口）算出，不再因为 StatusBar / 标题栏导致错位。 */
+.today-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* Round 5：删除顶部 28px padding（page-header 已空，顶部空白冗余）；
+     保留左右 36px 让便签 / 时间线有呼吸空间；底部 60px 给滚动安全区。 */
+  padding: 0 36px 60px;
+  max-width: 1400px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.today-page .page-header {
+  flex-shrink: 0;
+}
+
+/* ====== 主体布局 ====== */
+.today-page-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+  transition: grid-template-columns 0.25s ease;
+}
+
+.today-page-body.has-detail {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+}
+
+.today-list-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ====== 详情面板 ====== */
+/* 用 height:100% 而不是 calc(100vh - …)：父容器 .today-page-body 是
+   flex:1 + min-height:0 的可滚动容器，详情面板作为其子项只需 100% 即可。 */
+.today-detail-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 8px 28px -12px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-height: 100%;
+  align-self: stretch;
+  animation: tdp-slide-in 0.22s ease-out;
+  overflow: hidden;
+}
+
+@keyframes tdp-slide-in {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.tdp-header {
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tdp-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tdp-close {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 22px;
+  line-height: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.tdp-close:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+}
+
+.tdp-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: -0.1px;
+  word-break: break-word;
+}
+
+.tdp-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.tdp-section {
+  margin-bottom: 18px;
+}
+
+.tdp-section h3 {
+  margin: 0 0 8px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.tdp-desc {
+  margin: 0;
+  font-size: var(--fs-md);
+  line-height: 1.65;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+}
+
+.tdp-meta dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tdp-meta dt {
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.tdp-meta dd {
+  margin: 0;
+  font-size: var(--fs-base);
+  color: var(--text-primary);
+}
+
+.tdp-tag {
+  display: inline-block;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: var(--fs-sm);
+  margin-right: 6px;
+  margin-bottom: 4px;
+}
+
+.tdp-subtasks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tdp-subtasks li {
+  font-size: var(--fs-base);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.tdp-subtasks li.is-done {
+  text-decoration: line-through;
+  color: var(--text-secondary);
+}
+
+.tdp-footer {
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.btn.ghost.danger {
+  color: #ef4444;
+  border-color: color-mix(in srgb, #ef4444 40%, var(--border));
+}
+
+.btn.ghost.danger:hover {
+  background: color-mix(in srgb, #ef4444 12%, transparent);
+  border-color: #ef4444;
+}
+
+/* ====== Status Badge（详情面板用） ====== */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+.status-todo {
+  background: color-mix(in srgb, var(--text-secondary) 16%, transparent);
+  color: var(--text-secondary);
+}
+
+.status-in_progress {
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #f59e0b;
+}
+
+.status-done {
+  background: color-mix(in srgb, #10b981 18%, transparent);
+  color: #10b981;
+}
+
+.status-cancelled {
+  background: color-mix(in srgb, #6b7280 18%, transparent);
+  color: #6b7280;
+}
+
+/* ====== Quick Todo Dialog ====== */
+.quick-todo-modal {
+  max-width: 480px;
+}
+
+.quick-todo-hint {
+  margin: 8px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+
+.quick-todo-hint kbd {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin: 0 2px;
+}
+
+/* ====== 响应式：窄屏下详情面板改为底部 ====== */
+@media (max-width: 880px) {
+  .today-page-body.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .today-detail-panel {
+    height: auto;
+    max-height: none;
+  }
+}
+
+/* ====== WCAG 2.3.3 prefers-reduced-motion ====== */
+/* R32-A11yPerf-1 修复 (HIGH accessibility-motion-illness)：原版 today.css
+   有 .today-detail-panel animation: tdp-slide-in 0.22s ease-out 滑入动画 +
+   .today-page-body transition: grid-template-columns 0.25s ease 详情面板
+   出现时的 grid 重排过渡。对前庭功能障碍 / 偏头痛用户而言，这些动画会诱
+   发眩晕。prefers-reduced-motion: reduce 的 OS / 用户偏好下应一律关闭。
+   修复：把 today.css 的全部 animation / transition 在该媒体查询下置 0.01ms
+   或 none（保留状态过渡的语义但消除视觉运动），与 dashboard.css 的 R31
+   修复块对齐。 */
+@media (prefers-reduced-motion: reduce) {
+  .today-detail-panel,
+  .today-page-body,
+  .tdp-close {
+    animation: none !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+    transition-duration: 0.01ms !important;
+  }
+}

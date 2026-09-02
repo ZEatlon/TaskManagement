@@ -1,0 +1,164 @@
+{
+  "name": "taskpilot",
+  "version": "1.0.0",
+  "description": "本地优先的个人任务 + 笔记 + AI 助手桌面应用",
+  "main": "out/main/index.js",
+  "author": "TaskPilot",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
+    "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "lint": "eslint . --ext .ts,.tsx",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css,md}\"",
+    "postinstall": "node scripts/postinstall.cjs",
+    "rebuild:native": "electron-builder install-app-deps",
+    "fuses": "node --no-warnings scripts/fuses.ts",
+    "icons": "node scripts/build-icons.mjs",
+    "package": "npm run build && npm run fuses && electron-builder --dir",
+    "dist": "npm run build && npm run fuses && electron-builder --win --x64",
+    "dist:win": "npm run build && npm run fuses && electron-builder --win --x64",
+    "dist:mac": "npm run build && npm run fuses && electron-builder --mac",
+    "dist:dir": "npm run build && npm run fuses && electron-builder --dir"
+  },
+  "build": {
+    "appId": "com.taskpilot.app",
+    "productName": "TaskPilot",
+    "asar": true,
+    "icon": "build/icon.ico",
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts",
+        "to": "scripts"
+      },
+      {
+        "from": "resources",
+        "to": "."
+      },
+      {
+        "from": "build",
+        "to": "build"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "TaskPilot-${version}-portable.${ext}",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": false,
+      "identity": null,
+      "artifactName": "TaskPilot-${version}-${arch}.${ext}"
+    },
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**",
+      "**/node_modules/@img/sharp-*/**"
+    ]
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-slot": "^1.3.3",
+    "@tanstack/react-router": "^1.95.0",
+    "@tiptap/extension-character-count": "^2.10.0",
+    "@tiptap/extension-code-block-lowlight": "^2.10.0",
+    "@tiptap/extension-color": "^2.10.0",
+    "@tiptap/extension-highlight": "^2.10.0",
+    "@tiptap/extension-image": "^2.10.0",
+    "@tiptap/extension-link": "^2.10.0",
+    "@tiptap/extension-placeholder": "^2.10.0",
+    "@tiptap/extension-subscript": "^2.10.0",
+    "@tiptap/extension-superscript": "^2.10.0",
+    "@tiptap/extension-table": "^2.10.0",
+    "@tiptap/extension-table-cell": "^2.10.0",
+    "@tiptap/extension-table-header": "^2.10.0",
+    "@tiptap/extension-table-row": "^2.10.0",
+    "@tiptap/extension-task-item": "^2.10.0",
+    "@tiptap/extension-task-list": "^2.10.0",
+    "@tiptap/extension-text-style": "^2.10.0",
+    "@tiptap/extension-typography": "^2.10.0",
+    "@tiptap/extension-underline": "^2.10.0",
+    "@tiptap/html": "^2.10.0",
+    "@tiptap/pm": "^2.10.0",
+    "@tiptap/react": "^2.10.0",
+    "@tiptap/starter-kit": "^2.10.0",
+    "better-sqlite3": "^13.0.3",
+    "call-bind-apply-helpers": "^1.0.2",
+    "chokidar": "^4.0.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "croner": "^9.0.0",
+    "electron-log": "^5.2.0",
+    "electron-store": "^10.0.0",
+    "gray-matter": "^4.0.3",
+    "isomorphic-git": "^1.27.1",
+    "katex": "^0.16.21",
+    "lowlight": "^3.3.0",
+    "lucide-react": "^1.38.0",
+    "markdown-it": "^14.1.0",
+    "mermaid": "^11.4.1",
+    "mimic-response": "^1.0.1",
+    "openai": "^4.77.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "readable-stream": "^3.6.2",
+    "remark": "^15.0.1",
+    "remark-gfm": "^4.0.0",
+    "rrule": "^2.8.1",
+    "sharp": "^0.33.5",
+    "tailwind-merge": "^3.6.0",
+    "turndown": "^7.2.0",
+    "util-deprecate": "^1.0.2",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@electron-toolkit/preload": "^3.0.1",
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@electron/fuses": "^2.1.3",
+    "@tanstack/router-devtools": "^1.95.0",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/markdown-it": "^14.1.2",
+    "@types/mdast": "^4.0.4",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/turndown": "^5.0.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "eslint": "^9.16.0",
+    "eslint-plugin-react": "^7.37.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

