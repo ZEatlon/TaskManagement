@@ -53,11 +53,18 @@ const YMD_RE = /^\d{4}-\d{2}-\d{2}$/
 
 function isValidDayKey(s: string): boolean {
   if (!YMD_RE.test(s)) return false
+  // 关键：与渲染端 dayKeyOf() 的语义保持一致 —— 一律用**本地时区**比较。
+  // 原版用 getUTCFullYear/getUTCMonth/getUTCDate 在东八区会假阴性（早上 8 点前
+  // 创建"今天"的便签会被拒），因为 'YYYY-MM-DDT00:00:00' 被 JS 当成本地时间，
+  // UTC 视角下已经跨到昨天。
+  // 解析：'2026-09-03T00:00:00'（无时区后缀）= 本地 00:00；上海时区 = UTC 前一天 16:00
+  //   d.getFullYear()/getMonth()/getDate() 拿本地年月日
+  //   与 s.slice 比对即可
   const d = new Date(s + 'T00:00:00')
   return !Number.isNaN(d.getTime())
-    && d.getUTCFullYear() === Number(s.slice(0, 4))
-    && d.getUTCMonth() + 1 === Number(s.slice(5, 7))
-    && d.getUTCDate() === Number(s.slice(8, 10))
+    && d.getFullYear() === Number(s.slice(0, 4))
+    && d.getMonth() + 1 === Number(s.slice(5, 7))
+    && d.getDate() === Number(s.slice(8, 10))
 }
 
 function isValidIsoOrNull(s: unknown): boolean {

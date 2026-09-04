@@ -2,12 +2,13 @@
  * 库设置 Tab
  *
  * 字段：当前库路径展示、更改目录、库大小/笔记数/便签数、打开目录按钮
- * 所有操作通过 IPC（lib:select-directory / shell.openPath）完成。
+ * 切换库目录走 LibrarySwitcherModal（多步流程：选新目录 → 扫描 → 选动作）。
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSettingsStore } from '../../../stores/settings'
 import { stickyNotesApi } from '../../../lib/ipc'
 import { SettingField } from '../SettingField'
+import { LibrarySwitcherModal } from '../../library/LibrarySwitcherModal'
 
 /** 库统计信息 */
 interface LibraryStats {
@@ -34,8 +35,8 @@ function formatSize(bytes: number): string {
 export function LibraryTab() {
   const settings = useSettingsStore()
   const [stats, setStats] = useState<LibraryStats>(EMPTY_STATS)
-  const [busy, setBusy] = useState(false)
   const [info, setInfo] = useState<string | null>(null)
+  const [switcherOpen, setSwitcherOpen] = useState(false)
 
   /** 拉取统计信息：db 大小 + 便签数 */
   const refreshStats = useCallback(async () => {
@@ -58,31 +59,8 @@ export function LibraryTab() {
   }, [refreshStats, settings.libraryPath])
 
   async function handleChangeDirectory() {
-    setBusy(true)
-    setInfo(null)
-    try {
-      const selected = await window.api.invoke<undefined, string | null>('lib:select-directory', undefined)
-      if (!selected) {
-        setInfo('已取消选择')
-        return
-      }
-      const validation = await window.api.invoke<{ path: string }, { valid: boolean; reason?: string }>(
-        'lib:validate',
-        { path: selected },
-      )
-      if (!validation?.valid) {
-        setInfo(`目录无效：${validation?.reason ?? '未知原因'}`)
-        return
-      }
-      await window.api.invoke<{ path: string }, { ok: true }>('lib:set-current', { path: selected })
-      await settings.update({ libraryPath: selected })
-      setInfo(`已切换到 ${selected}`)
-      refreshStats()
-    } catch (err) {
-      setInfo(`失败：${err instanceof Error ? err.message : String(err)}`)
-    } finally {
-      setBusy(false)
-    }
+    // 走多步流程：选新目录 → 扫描 → 选动作（解析原有 / 在新建库 / 迁移）
+    setSwitcherOpen(true)
   }
 
   async function handleOpenDirectory() {
@@ -117,8 +95,8 @@ export function LibraryTab() {
             readOnly
             placeholder="（未配置）"
           />
-          <button className="btn" onClick={handleChangeDirectory} disabled={busy}>
-            {busy ? '处理中…' : '更改目录'}
+          <button className="btn" onClick={handleChangeDirectory}>
+            切换库目录…
           </button>
           <button className="btn ghost" onClick={handleOpenDirectory} disabled={!settings.libraryPath}>
             打开目录
@@ -127,6 +105,16 @@ export function LibraryTab() {
       </SettingField>
 
       {info && <div className="settings-info">{info}</div>}
+
+      <LibrarySwitcherModal
+        open={switcherOpen}
+        onClose={() => setSwitcherOpen(false)}
+        onSwitched={() => {
+          // 切完库后重拉统计
+          setSwitcherOpen(false)
+          refreshStats()
+        }}
+      />
 
       <div className="settings-stats">
         <div className="stat-card">

@@ -1,4 +1,61 @@
-# Logs
+# =============================================================================
+# .gitignore for TaskPilot
+#
+# 关键分组：依赖 / 构建产物 / 用户私有数据 / 一次性调试残留 / 编辑器元数据
+# 规则：
+#   - 默认忽略 node_modules / out / dist / *.tsbuildinfo —— 任何 clone 仓库后
+#     跑 `npm install && npm run build` 都能完整重建
+#   - 用户私有数据 (仓库/、库/) 强忽略 —— 包含 notes / attachments / tasks，
+#     一旦 push 就会泄露用户本地笔记
+#   - 测试 / 调试一次性产物（test.exe / _test_simple.nsi / r21-list.js /
+#     findings*.json）忽略 —— 它们是开发期的中间产物，不属于项目源码
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. Dependencies & lockfiles
+# -----------------------------------------------------------------------------
+node_modules
+.pnp
+.pnp.js
+
+# -----------------------------------------------------------------------------
+# 2. Build outputs
+# -----------------------------------------------------------------------------
+# electron-vite build (main / preload / renderer 三段)
+out
+# electron-builder packaged artifacts (portable / dmg / nsis / dir)
+dist
+release
+# TypeScript incremental build cache（typecheck 会自动重建）
+*.tsbuildinfo
+# electron-builder 缓存目录
+.electron-builder.cache
+
+# -----------------------------------------------------------------------------
+# 3. Runtime / user-private data（重点！绝对不能 push）
+# -----------------------------------------------------------------------------
+# 用户本地笔记仓库 + 测试库 —— 包含 .taskpilot/notes/*.md + attachments +
+# tasks。一旦 push 会泄露用户的所有本地笔记。
+仓库
+库
+# 内嵌 portable Node runtime（dist 构建产物，~90 MB；dist 已经忽略所以这里
+# 也写明，避免有人手工拷 resources/node 进来）
+resources/node/node.exe
+resources/node/VERSION
+
+# -----------------------------------------------------------------------------
+# 4. Secrets / local config
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+# API key 文件（OpenAI / Anthropic / MiniMax / Git token 等）
+*.pem
+*.key
+
+# -----------------------------------------------------------------------------
+# 5. Logs
+# -----------------------------------------------------------------------------
 logs
 *.log
 npm-debug.log*
@@ -7,55 +64,59 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Dependencies
-node_modules
-.pnp
-.pnp.js
+# -----------------------------------------------------------------------------
+# 6. Test / coverage artifacts
+# -----------------------------------------------------------------------------
+.nyc_output
+coverage
+*.lcov
 
-# Build outputs
-out
-dist
-release
-*.tsbuildinfo
+# -----------------------------------------------------------------------------
+# 7. Cache & temp
+# -----------------------------------------------------------------------------
+.eslintcache
+.parcel-cache
+.turbo
+.cache
+*.tmp
+*.bak
 
-# Editor / IDE
+# -----------------------------------------------------------------------------
+# 8. One-off debug / build helpers（开发者一次性产物，非源码）
+# -----------------------------------------------------------------------------
+# AI review / workflow 输出的发现清单（大型 JSON，几万行）
+findings*.json
+# 便携版调试残留（test.exe / NSIS 调试脚本 / R21 列表）
+test.exe
+_test_simple.nsi
+r21-list.js
+# 调试用一次性脚本（underscore 前缀 = 私有 / 非项目源码）
+scripts/_*.cjs
+scripts/_*.mjs
+scripts/check_*.cjs
+scripts/check_*.mjs
+scripts/dump_*.cjs
+scripts/inspect.cjs
+scripts/list_app.cjs
+scripts/debug_paths.cjs
+scripts/diag_portable.cjs
+scripts/fix_asar.cjs
+# Claude Code / Claude Workflow 运行时状态 + 工作流脚本（不是项目源码）
+.claude/
+.claude-workflows/
+
+# -----------------------------------------------------------------------------
+# 9. OS / editor metadata
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json.example
-.idea
-.DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 *.local
-
-# Electron
-.electron-builder.cache
-out/main
-out/preload
-out/renderer
-
-# Env
-.env
-.env.local
-.env.*.local
-
-# OS
-Thumbs.db
-
-# Test
-.nyc_output
-coverage
-*.lcov
-
-# Cache
-.eslintcache
-.parcel-cache
-.turbo
-.cache
-
-# Migrations test artifacts
-*.tmp
-*.bak

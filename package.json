@@ -6,7 +6,7 @@
   "author": "TaskPilot",
   "license": "MIT",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "node scripts/dev.cjs",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",

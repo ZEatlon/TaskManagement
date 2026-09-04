@@ -235,6 +235,7 @@ export function CommandBar() {
         </div>
 
         <div className="cb-body" ref={scrollRef}>
+          {/* 初始空状态：4 个建议项的网格 */}
           {!lastAssistant && messages.length === 0 && (
             <div className="cb-suggestions">
               <div className="cb-suggestions-label">试试：</div>
@@ -326,6 +327,37 @@ export function CommandBar() {
             </div>
           )}
           {error && !isStreaming && <div className="cb-error">⚠ {error}</div>}
+
+          {/* 响应完成后仍保留 4 个建议（紧凑横排）—— 让用户随时能回到初始选项继续问。
+             流式响应时隐藏避免视觉拥挤。 */}
+          {!isStreaming && lastAssistant && (
+            <div className="cb-suggestions cb-suggestions-compact">
+              <div className="cb-suggestions-label">换个问题：</div>
+              <div className="cb-suggestions-row">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    className="cb-suggestion cb-suggestion-chip"
+                    onClick={() => {
+                      // 点击建议：填入输入框 + 自动发送，模拟「接着问」的体验
+                      setInput(s.prompt)
+                      // 立即发送。sendMessage(content) 接 content 参数，
+                      // 不依赖 input state —— setInput 只用于让输入框短暂
+                      // 显示已选中的建议文本（用户可以接着改），同时清空
+                      // 是为了如果 send 失败时 input 仍是空（不会留半句话）。
+                      void send(s.prompt)
+                      setInput('')
+                    }}
+                    aria-label={`再次询问：${s.label}`}
+                  >
+                    <span className="cb-suggestion-icon">{s.icon}</span>
+                    <span className="cb-suggestion-label">{s.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="cb-input-area">

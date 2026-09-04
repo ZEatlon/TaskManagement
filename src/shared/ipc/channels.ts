@@ -29,6 +29,16 @@ export const IPC_CHANNELS = {
   LIB_VALIDATE: 'lib:validate',
   LIB_IS_FIRST_RUN: 'lib:is-first-run',
   LIB_CLEAR: 'lib:clear',
+  /**
+   * 扫描指定路径：报告是否有 .taskpilot 子目录、笔记 / 附件 / 占用大小。
+   * 切换库目录前用于预览"新目录是否已有数据"（解析原有仓库数据路径）。
+   */
+  LIB_SCAN: 'lib:scan',
+  /**
+   * 把当前库的数据（.taskpilot/ 整棵子树）复制到新路径；之后 setCurrent。
+   * 出参 { copiedFiles, copiedBytes, sourcePath, destPath }。
+   */
+  LIB_MIGRATE: 'lib:migrate',
 
   // 便签（多级待办 / 时间线 / 统一任务实体）
   STICKY_NOTE_LIST: 'sticky-note:list',
@@ -90,6 +100,11 @@ export const IPC_CHANNELS = {
    * 入参 { html, defaultFilename }，出参 { savedPath } | null（用户取消）。
    */
   NOTE_EXPORT_PDF: 'note:export-pdf',
+  /**
+   * 一次性清理历史版本自动写入的 mock 数据（笔记 + sticky + pomodoros）。
+   * 出参 { deletedNotes, deletedStickies, deletedPomodoros }。
+   */
+  MOCK_CLEANUP: 'mock:cleanup',
   // 主进程主动推送到渲染进程的笔记事件
   NOTE_FS_EVENT: 'note:fs-event',
 

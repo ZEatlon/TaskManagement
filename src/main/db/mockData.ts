@@ -7,14 +7,21 @@
  *     pomodoros（过去 30 天的专注记录）、tags
  *   - 幂等：检测到「seed.v1」标记后跳过，避免每次启动都重复塞数据
  *
+ * 重要：默认不跑。
+ *   - 历史版本在 dev 模式下自动跑，会把 12 篇 mock 笔记写到用户**真实**的
+ *     library 目录（仓库/.taskpilot/notes/），污染用户的笔记列表。
+ *   - 现在 seedMockDataIfNeeded 永远跳过 —— 除非显式设 MOCK_SEED=1。
+ *   - 真正想塞 mock 的开发者：npm run dev 前 export MOCK_SEED=1。
+ *
  * 调用方式：
- *   - 仅在显式启用时执行（设置 MOCK_SEED 环境变量，或首次启动）
- *   - 默认在生产构建里不跑，dev 模式自动跑一次
+ *   - 默认：什么都不做（避免污染）
+ *   - 显式启用：环境变量 MOCK_SEED=1（MOCK_SEED=0 同样跳过）
+ *   - 已经塞过一遍的库（settings.mock.seed.v1 已存在）→ 直接跳过
  *
  * 触发：
  *   - 主进程 index.ts 在 initDatabase 完成后调用 seedMockDataIfNeeded()
  *
- * 数据规模（默认）：
+ * 数据规模（仅在 MOCK_SEED=1 时写入）：
  *   - 4 个文件夹（工作 / 个人 / 学习 / 项目）
  *   - 12 篇笔记（覆盖 markdown / 任务列表 / 代码块 / 表格 / 引用 / mermaid / 多空行）
  *   - 14 条 sticky note（今日 5 条 + 过去 7 天 8 条 + 未来 1 天 1 条）
@@ -664,23 +671,12 @@ async function seedPomodoros(): Promise<void> {
  * - 默认 dev 模式自动跑；prod 默认不跑，除非 MOCK_SEED=1 强制开启
  */
 export async function seedMockDataIfNeeded(opts?: { force?: boolean }): Promise<void> {
-  // 设置为 0 显式禁用
-  if (process.env['MOCK_SEED'] === '0' && !opts?.force) {
-    log.info('[mock] seed disabled by env MOCK_SEED=0')
-    return
-  }
-  // prod 默认不跑（除非 MOCK_SEED=1 强制）
-  let isPackaged = false
-  try {
-    // dynamic require：避免在测试环境加载 electron
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electron = require('electron')
-    isPackaged = !!electron?.app?.isPackaged
-  } catch {
-    isPackaged = true // 没 electron 时按 prod 处理
-  }
-  if (isPackaged && process.env['MOCK_SEED'] !== '1' && !opts?.force) {
-    log.info('[mock] seed skipped in production build')
+  // R37-cleanup：默认完全不跑 —— 历史版本在 dev 模式自动跑会把 mock
+  // 数据写到用户的真实 library 目录（仓库/.taskpilot/notes/）造成污染。
+  // 现在只有显式设 MOCK_SEED=1 才执行（MOCK_SEED=0 也跳）。
+  // 想清理之前已写入的 mock 数据：见 cleanupMockSeededData()。
+  if (process.env['MOCK_SEED'] !== '1' && !opts?.force) {
+    log.info('[mock] seed skipped (set MOCK_SEED=1 to enable)')
     return
   }
 
@@ -723,4 +719,142 @@ export async function seedMockDataIfNeeded(opts?: { force?: boolean }): Promise<
   } catch (err) {
     log.error('[mock] seed failed', err)
   }
+}
+
+/**
+ * 一次性清理：把历史版本自动写入的 mock 数据从用户 library 移除。
+ *
+ * 设计要点：
+ *   - mock 笔记标题 / sticky 标题有固定的「mock」前缀（如 "Mermaid 示例"、
+ *     "番茄钟 ×4（深度工作）"、"客户拜访 - 星河科技"），用 allowlist 识别
+ *   - 笔记：检测文件名匹配 mock 列表 → 调 notesManager.deleteNote 走 chokidar
+ *     同步路径（避免 DB 与磁盘漂移）
+ *   - sticky：按 title in allowlist 删除；status = todo 也好删（不需要做完成记录）
+ *   - 文件夹：保留（用户可能已经把真实笔记拖进去了，删掉会丢失分类）
+ *   - 番茄钟：通过 stickyNoteId IS NULL 识别（mock 全是 null）→ 删
+ *   - 幂等：找不到任何匹配时静默 no-op
+ *
+ * 触发：
+ *   - 主进程 IPC（让用户在设置页点「清理 mock 数据」按钮）
+ *   - 控制台手动调：await cleanupMockSeededData()
+ *
+ * 注意：此函数**始终**执行，不受 MOCK_SEED 环境变量控制（清理是破坏
+ * 现有 mock 数据，不是创建新数据）。
+ */
+export async function cleanupMockSeededData(): Promise<{
+  deletedNotes: number
+  deletedStickies: number
+  deletedPomodoros: number
+}> {
+  log.info('[mock] cleanup: scanning for previously-seeded mock data...')
+
+  const MOCK_NOTE_FILENAMES = new Set<string>([
+    '欢迎使用 TaskPilot.md',
+    '今日计划.md',
+    '复盘模板.md',
+    '多空行测试.md',
+    '本周工作重点.md',
+    '读书笔记：代码之道.md',
+    '番茄钟使用心得.md',
+    'Mermaid 示例.md',
+    '链接收藏.md',
+    '空笔记测试.md',
+    '项目 A 需求.md',
+    '项目 B 会议纪要.md',
+  ])
+
+  const MOCK_STICKY_TITLES = new Set<string>([
+    '完成项目 A 需求评审',
+    '番茄钟 ×4（深度工作）',
+    '回复客户邮件',
+    '晚间跑步 30 分钟',
+    '阅读《代码之道》第 5 章',
+    '客户拜访 - 星河科技',
+    '修复编辑器 BUG',
+    '代码评审',
+    '周会准备',
+    '数据库迁移脚本',
+    '更新 README',
+    '番茄钟 ×6',
+    '整理本周便签',
+    '明天 - 下周一对一沟通',
+  ])
+
+  let deletedNotes = 0
+  let deletedStickies = 0
+  let deletedPomodoros = 0
+
+  // 1. 笔记：按文件名 in allowlist 删
+  try {
+    const allNotes = await notesRepo.findAll({
+      archived: false,
+      limit: 10000,
+      orderBy: 'mtime DESC',
+    })
+    for (const n of allNotes) {
+      if (MOCK_NOTE_FILENAMES.has(n.filename)) {
+        try {
+          await notesManager.deleteNote(n.path)
+          deletedNotes++
+        } catch (err) {
+          log.warn(`[mock] cleanup: failed to delete note ${n.filename}`, err)
+        }
+      }
+    }
+  } catch (err) {
+    log.warn('[mock] cleanup: notesRepo.findAll failed', err)
+  }
+
+  // 2. sticky：按 title in allowlist 删
+  try {
+    const stickies = await stickyNotesRepo.listFiltered({ archived: false, limit: 10000 })
+    for (const s of stickies) {
+      if (MOCK_STICKY_TITLES.has(s.title)) {
+        try {
+          await stickyNotesRepo.remove(s.id)
+          deletedStickies++
+        } catch (err) {
+          log.warn(`[mock] cleanup: failed to delete sticky ${s.title}`, err)
+        }
+      }
+    }
+  } catch (err) {
+    log.warn('[mock] cleanup: stickyNotesRepo.listFiltered failed', err)
+  }
+
+  // 3. 番茄钟：mock 全是 stickyNoteId IS NULL 的「过去 30 天专注记录」
+  //    一次性 DELETE 整段 WHERE sticky_note_id IS NULL
+  try {
+    const stmtId = (
+      await dbClient.call<{ stmtId: number }>('prepare', {
+        sql: `DELETE FROM pomodoros WHERE sticky_note_id IS NULL`,
+      })
+    ).stmtId
+    try {
+      const res = (await dbClient.call('run', { stmtId, params: [] })) as {
+        changes?: number
+      }
+      deletedPomodoros = res?.changes ?? 0
+    } finally {
+      try {
+        await dbClient.call('finalize', { stmtId })
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (err) {
+    log.warn('[mock] cleanup: delete pomodoros failed', err)
+  }
+
+  // 4. 清掉 seed 标记，让下次 MOCK_SEED=1 时还能重新塞入（如果用户想再看一遍示例）
+  try {
+    await settingsRepo.delete(SEED_FLAG_KEY)
+  } catch {
+    /* ignore */
+  }
+
+  log.info(
+    `[mock] cleanup done: notes=${deletedNotes} stickies=${deletedStickies} pomodoros=${deletedPomodoros}`,
+  )
+  return { deletedNotes, deletedStickies, deletedPomodoros }
 }

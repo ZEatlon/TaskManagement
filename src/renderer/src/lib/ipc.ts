@@ -381,6 +381,24 @@ export interface LibraryValidation {
   reason?: string
 }
 
+export interface LibraryScanResult {
+  path: string
+  hasTaskpilotDir: boolean
+  noteCount: number
+  attachmentCount: number
+  totalBytes: number
+  extraSubdirCount: number
+  error?: string
+}
+
+export interface LibraryMigrateResult {
+  copiedFiles: number
+  copiedBytes: number
+  sourcePath: string
+  destPath: string
+  sourceHadData: boolean
+}
+
 export const libraryApi = {
   selectDirectory: () => invoke<undefined, string | null>('lib:select-directory'),
   getCurrent: () => invoke<undefined, string | null>('lib:get-current'),
@@ -395,6 +413,28 @@ export const libraryApi = {
     invoke<{ path: string }, LibraryValidation>('lib:validate', { path }),
   isFirstRun: () => invoke<undefined, boolean>('lib:is-first-run'),
   clear: () => invoke<undefined, { ok: true }>('lib:clear'),
+  /**
+   * 扫描指定路径：返回 .taskpilot 子目录的数据现状（笔记数 / 附件数 /
+   * 占用字节 / 子目录数 / error）。
+   *
+   * 用于「切换库目录」前先预览新目录里已有多少数据：
+   *   - hasTaskpilotDir=false → 新目录为空，可选初始化
+   *   - hasTaskpilotDir=true && noteCount>0 → 新目录里已有数据
+   *     （"解析原有仓库数据"模式：直接 setCurrent 即可）
+   *   - error 有值 → 路径无效 / 不可读，不阻塞流程
+   */
+  scan: (path: string) =>
+    invoke<{ path: string }, LibraryScanResult>(IPC_CHANNELS.LIB_SCAN, { path }),
+  /**
+   * 把当前库（<libraryPath>/.taskpilot/）数据复制到 destPath。
+   * 复制完成后 .taskpilot/notes 下既有 src 笔记 + dest 笔记（如有），
+   * chokidar 自动 ingest；调用方接着 setCurrent 切到新路径。
+   */
+  migrate: (destPath: string) =>
+    invoke<{ destPath: string }, LibraryMigrateResult>(
+      IPC_CHANNELS.LIB_MIGRATE,
+      { destPath },
+    ),
 }
 
 // ===== 附件（模块 6）=====
@@ -456,4 +496,17 @@ export const notesApi = {
       { html: string; defaultFilename?: string },
       { savedPath: string } | null
     >(IPC_CHANNELS.NOTE_EXPORT_PDF, { html, defaultFilename }),
+}
+
+// ===== Mock 数据清理（一次性：移除历史版本自动写入的 mock 数据）=====
+export const mockApi = {
+  /**
+   * 把 mock 自动塞的笔记 / sticky / pomodoros 从用户 library 移除。
+   * 幂等：找不到任何匹配时返回全 0。
+   */
+  cleanup: () =>
+    invoke<
+      undefined,
+      { deletedNotes: number; deletedStickies: number; deletedPomodoros: number }
+    >(IPC_CHANNELS.MOCK_CLEANUP),
 }

@@ -93,5 +93,13 @@ export function registerIpcHandlers(): void {
   registerWindowHandlers()
   registerStickyNoteHandlers()
 
+  // Mock 数据清理：一次性把历史版本自动写入的 mock 笔记 / sticky /
+  // pomodoros 从用户 library 移除。不受 MOCK_SEED 控制（清理是破坏性
+  // 操作，不是创建新数据）。
+  handle(CHANNELS.MOCK_CLEANUP, async () => {
+    const { cleanupMockSeededData } = await import('../db/mockData')
+    return cleanupMockSeededData()
+  })
+
   log.info('[ipc] all handlers registered.')
 }

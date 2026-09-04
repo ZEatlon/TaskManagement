@@ -2132,6 +2132,46 @@
   flex: 1;
 }
 
+/* 紧凑模式：响应完成后回到 4 个建议的横排 —— 用户随时能继续问。
+   跟空态不同的是紧凑模式用 1 行 chip 而非 2x2 网格，
+   视觉上明确表达「这是延续对话的快捷入口」而不是「首次引导」。 */
+.cb-suggestions-compact {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--border);
+}
+
+.cb-suggestions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cb-suggestion-chip {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  font-size: var(--fs-xs, 11px);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast, 120ms) var(--ease-out, ease),
+    color var(--motion-fast, 120ms) var(--ease-out, ease),
+    background var(--motion-fast, 120ms) var(--ease-out, ease);
+}
+
+.cb-suggestion-chip:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
+}
+
+.cb-suggestion-chip .cb-suggestion-icon {
+  font-size: 12px;
+}
+
 /* 响应区 */
 .cb-response-label {
   font-size: var(--fs-xs, 11px);
