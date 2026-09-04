@@ -70,7 +70,7 @@ export function MonthStats({ viewMonth }: MonthStatsProps): JSX.Element {
         if (!cancelled) setDailyMinutes(res ?? {})
       } catch (err) {
         if (!cancelled) setDailyMinutes({})
-        // eslint-disable-next-line no-console
+         
         console.warn('[MonthStats] pomodorosDailyApi.daily failed:', err)
       }
     }

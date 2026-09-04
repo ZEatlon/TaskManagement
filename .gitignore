@@ -84,6 +84,8 @@ coverage
 # -----------------------------------------------------------------------------
 # 8. One-off debug / build helpers（开发者一次性产物，非源码）
 # -----------------------------------------------------------------------------
+# 调试截图：screenshot 脚本会落到 docs/screenshots/，绝对不能 push
+docs/screenshots/
 # AI review / workflow 输出的发现清单（大型 JSON，几万行）
 findings*.json
 # 便携版调试残留（test.exe / NSIS 调试脚本 / R21 列表）

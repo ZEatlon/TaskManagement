@@ -54,7 +54,7 @@ export function TagsSidebar(): JSX.Element {
       await createTag({ name })
       setNewName('')
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[tags-sidebar] create failed', err)
     }
   }
@@ -68,7 +68,7 @@ export function TagsSidebar(): JSX.Element {
     try {
       await updateTag(id, { name: next })
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[tags-sidebar] rename failed', err)
     }
     setRenamingId(null)
@@ -82,7 +82,7 @@ export function TagsSidebar(): JSX.Element {
       const removed = tags.find((t) => t.id === id)
       if (removed && activeTag === removed.name) setActiveTag(null)
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[tags-sidebar] delete failed', err)
     }
   }

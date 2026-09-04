@@ -57,7 +57,7 @@ export function TagChipSelector({ noteId, maxChips = 6 }: Props): JSX.Element | 
     try {
       await save(currentNote.path, baseContent, { tags: arr })
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[tag-chip] toggle failed', err)
       // 失败回滚
       setActive(active)

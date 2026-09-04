@@ -6,7 +6,7 @@
  */
 import { useEffect, useState, useCallback } from 'react'
 import { useSettingsStore } from '../../../stores/settings'
-import { stickyNotesApi } from '../../../lib/ipc'
+import { stickyNotesApi, noteFoldersApi } from '../../../lib/ipc'
 import { SettingField } from '../SettingField'
 import { LibrarySwitcherModal } from '../../library/LibrarySwitcherModal'
 
@@ -33,20 +33,24 @@ function formatSize(bytes: number): string {
 }
 
 export function LibraryTab() {
-  const settings = useSettingsStore()
+  // R37-perf-2：只订阅本 tab 实际用到的 libraryPath 字段
+  const libraryPath = useSettingsStore((s) => s.libraryPath)
   const [stats, setStats] = useState<LibraryStats>(EMPTY_STATS)
   const [info, setInfo] = useState<string | null>(null)
   const [switcherOpen, setSwitcherOpen] = useState(false)
 
-  /** 拉取统计信息：db 大小 + 便签数 */
+  /** 拉取统计信息：db 大小 + 笔记数 + 便签数 */
   const refreshStats = useCallback(async () => {
     try {
-      const status = await window.api.invoke<undefined, { sizeBytes: number }>('db:status', undefined)
-      // listFiltered 不返回 total，用 fetchAll + 长度粗略估计（限 1000 以内足够首页展示）
-      const stickies = await stickyNotesApi.listFiltered({ archived: false, limit: 1000 })
+      const [status, notes, stickies] = await Promise.all([
+        window.api.invoke<undefined, { sizeBytes: number }>('db:status', undefined),
+        // folderId: undefined = 跨文件夹；archived: false = 不算归档；limit 1000 足够首页展示
+        noteFoldersApi.listByFolder(undefined, { archived: false, limit: 1000 }),
+        stickyNotesApi.listFiltered({ archived: false, limit: 1000 }),
+      ])
       setStats({
         sizeBytes: status?.sizeBytes ?? 0,
-        notes: 0,
+        notes: Array.isArray(notes) ? notes.length : 0,
         stickies: Array.isArray(stickies) ? stickies.length : 0,
       })
     } catch (_) {
@@ -56,7 +60,7 @@ export function LibraryTab() {
 
   useEffect(() => {
     refreshStats()
-  }, [refreshStats, settings.libraryPath])
+  }, [refreshStats, libraryPath])
 
   async function handleChangeDirectory() {
     // 走多步流程：选新目录 → 扫描 → 选动作（解析原有 / 在新建库 / 迁移）
@@ -64,7 +68,7 @@ export function LibraryTab() {
   }
 
   async function handleOpenDirectory() {
-    const path = settings.libraryPath
+    const path = libraryPath
     if (!path) {
       setInfo('尚未配置库目录')
       return
@@ -91,14 +95,14 @@ export function LibraryTab() {
           <input
             className="setting-input"
             type="text"
-            value={settings.libraryPath ?? ''}
+            value={libraryPath ?? ''}
             readOnly
             placeholder="（未配置）"
           />
           <button className="btn" onClick={handleChangeDirectory}>
             切换库目录…
           </button>
-          <button className="btn ghost" onClick={handleOpenDirectory} disabled={!settings.libraryPath}>
+          <button className="btn ghost" onClick={handleOpenDirectory} disabled={!libraryPath}>
             打开目录
           </button>
         </div>
@@ -110,8 +114,9 @@ export function LibraryTab() {
         open={switcherOpen}
         onClose={() => setSwitcherOpen(false)}
         onSwitched={() => {
-          // 切完库后重拉统计
-          setSwitcherOpen(false)
+          // Modal 自己负责显示「完成」状态（step='done'）。这里只刷新统计，
+          // 不能再 setSwitcherOpen(false) —— 那会让 modal 在显示成功提示前
+          // 就被关闭，用户根本看不到「已切换到新目录」的反馈。
           refreshStats()
         }}
       />

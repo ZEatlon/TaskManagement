@@ -18,6 +18,13 @@ export const IPC_CHANNELS = {
   // 系统
   SYSTEM_PING: 'system:ping',
   SYSTEM_OPEN_EXTERNAL: 'system:open-external',
+  /**
+   * 渲染端报告运行时错误（ErrorBoundary / window.onerror / unhandledrejection），
+   * 主进程收下后写 log（已含 stack + componentStack）。原 R7S-2 设计：让主
+   * 进程 boot-trace 能拿到渲染端 crash；旧实现漏注册 → preload 白名单
+   * 静默 reject，错误报告全丢。
+   */
+  APP_ERROR: 'app:error',
   // Shell（唤起系统资源管理器等）
   SHELL_OPEN_PATH: 'shell:open-path',
 
@@ -230,7 +237,6 @@ export const IPC_CHANNELS = {
   POMODORO_GET_CONFIG: 'pomodoro:get-config',
   POMODORO_UPDATE_CONFIG: 'pomodoro:update-config',
   POMODORO_TODAY: 'pomodoro:today',
-  POMODORO_RECENT: 'pomodoro:recent',
   POMODORO_DAILY: 'pomodoro:daily',
   // 主进程主动推送到渲染进程的事件
   POMODORO_TICK: 'pomodoro:tick',

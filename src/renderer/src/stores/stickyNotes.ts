@@ -431,7 +431,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       beforeAll.find((n) => n.id === id)
       ?? Object.values(before).flat().find((n) => n.id === id)
     if (!note) {
-      // eslint-disable-next-line no-console
+       
       console.warn(`[stickyNotes.update] note ${id} not in store; skipping optimistic update`)
       return
     }
@@ -483,7 +483,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
         // CAS 冲突时返回 null（粘性 update() R26-DI-5 修复），但原版留
         // 下乐观 patch 在 store 里 → UI 显示"已保存"，下次 reload 又丢。
         // 修复：CAS 冲突时回滚乐观 patch + 重新拉最新 row。
-        // eslint-disable-next-line no-console
+         
         console.warn(`[stickyNotes.update] CAS conflict for id=${id}; rolling back optimistic patch`)
         // 把版本号还原，让并发的更高优先级操作不被本次回滚打扰
         noteVersion.delete(id)
@@ -520,7 +520,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       beforeAll.find((n) => n.id === id)
       ?? Object.values(before).flat().find((n) => n.id === id)
     if (!note) {
-      // eslint-disable-next-line no-console
+       
       console.warn(`[stickyNotes.remove] note ${id} not in store; skipping`)
       return
     }
@@ -552,7 +552,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       beforeAll.find((n) => n.id === noteId)
       ?? Object.values(before).flat().find((n) => n.id === noteId)
     if (!note) {
-      // eslint-disable-next-line no-console
+       
       console.warn(`[stickyNotes.addStep] note ${noteId} not in store; skipping`)
       return
     }
@@ -620,7 +620,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       beforeAll.find((n) => n.id === noteId)
       ?? Object.values(before).flat().find((n) => n.id === noteId)
     if (!note) {
-      // eslint-disable-next-line no-console
+       
       console.warn(`[stickyNotes.updateStep] note ${noteId} not in store; skipping`)
       return
     }
@@ -724,7 +724,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
             byDate: { ...curByDate, [note.date]: sortNotes(arr) },
             all: patchAll(curAll, rolled),
           })
-          // eslint-disable-next-line no-console
+           
           console.warn('[stickyNotes] status 联动失败:', statusErr)
         }
       }
@@ -745,7 +745,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       beforeAll.find((n) => n.id === noteId)
       ?? Object.values(before).flat().find((n) => n.id === noteId)
     if (!note) {
-      // eslint-disable-next-line no-console
+       
       console.warn(`[stickyNotes.removeStep] note ${noteId} not in store; skipping`)
       return
     }

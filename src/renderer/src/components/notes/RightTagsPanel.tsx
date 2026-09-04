@@ -58,7 +58,7 @@ export function RightTagsPanel(): JSX.Element {
       await createTag({ name })
       setNewName('')
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[right-tags-panel] create failed', err)
     }
   }
@@ -72,7 +72,7 @@ export function RightTagsPanel(): JSX.Element {
     try {
       await updateTag(id, { name: next })
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[right-tags-panel] rename failed', err)
     }
     setRenamingId(null)
@@ -85,7 +85,7 @@ export function RightTagsPanel(): JSX.Element {
       const removed = tags.find((t) => t.id === id)
       if (removed && activeTag === removed.name) setActiveTag(null)
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[right-tags-panel] delete failed', err)
     }
   }

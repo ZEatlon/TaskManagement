@@ -6,7 +6,7 @@
  */
 import { shell } from 'electron'
 import { extname, isAbsolute, resolve } from 'node:path'
-import { realpath } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { handle } from './channels'
 
 /** 允许通过 shell.openPath 打开的扩展名（防止被用于执行任意 .bat / .ps1 / .exe） */
@@ -38,20 +38,23 @@ export function registerShellHandlers(): void {
     if (!isAbsolute(args.path)) {
       throw new Error('shell:open-path: 仅允许绝对路径')
     }
-    const ext = extname(args.path).toLowerCase()
-    if (!ALLOWED_EXTS.has(ext)) {
-      throw new Error(`shell:open-path: 不允许的文件类型 '${ext || '(无扩展名)'}'`)
-    }
     let real: string
     try {
       real = await realpath(resolve(args.path))
     } catch {
       throw new Error('shell:open-path: 路径不存在或不可读')
     }
-    // realpath 后再次校验扩展名（防止符号链接指向不同后缀）
-    const realExt = extname(real).toLowerCase()
-    if (!ALLOWED_EXTS.has(realExt)) {
-      throw new Error(`shell:open-path: 符号链接目标不允许的文件类型 '${realExt || '(无扩展名)'}'`)
+    // 目录路径（库目录、文件夹）：直接放行，shell.openPath 在系统资源管理器里打开
+    // 这是「打开目录」按钮的真实使用场景（设置页打开库目录）。目录没有扩展名，
+    // 强制走扩展名白名单会让这个按钮永远失败。
+    const s = await stat(real).catch(() => null)
+    if (s?.isDirectory()) {
+      return shell.openPath(real)
+    }
+    // 文件路径：必须命中扩展名白名单（防 .bat / .ps1 / .exe 等任意代码执行）
+    const ext = extname(real).toLowerCase()
+    if (!ALLOWED_EXTS.has(ext)) {
+      throw new Error(`shell:open-path: 不允许的文件类型 '${ext || '(无扩展名)'}'`)
     }
     return shell.openPath(real)
   })

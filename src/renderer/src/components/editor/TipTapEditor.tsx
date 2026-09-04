@@ -334,8 +334,7 @@ export function TipTapEditor(props: TipTapEditorProps) {
         style={{ display: 'none' }}
         onChange={handleFilesChosen}
       />
-      {(renderFooter || true) && (
-        <div className="editor-footer">
+      <div className="editor-footer">
           <div className="editor-stats">
             <span className={overLimit ? 'over-limit' : ''}>
               {charCount} 字符
@@ -366,7 +365,6 @@ export function TipTapEditor(props: TipTapEditorProps) {
           </div>
           {renderFooter?.()}
         </div>
-      )}
     </div>
   )
 }

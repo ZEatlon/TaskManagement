@@ -51,7 +51,7 @@ export function MenuBar({ editor, disabled = false, onPickImage }: Props) {
   const promptText = useCallback(
     (msg: string, defaultValue = ''): string | null => {
       if (typeof window === 'undefined') return null
-      // eslint-disable-next-line no-alert
+       
       const v = window.prompt(msg, defaultValue)
       return v
     },

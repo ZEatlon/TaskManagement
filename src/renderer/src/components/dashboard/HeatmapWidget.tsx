@@ -20,7 +20,7 @@ import {
   weekdayLabel,
   type FirstDayOfWeek,
   type HeatmapDay,
-} from '../heatmap'
+} from '../heatmap/heatmapData'
 import { dayKeyOf } from '../../lib/date'
 
 const FIRST_DOW: FirstDayOfWeek = 1 // 周一首（与中文月历对齐）

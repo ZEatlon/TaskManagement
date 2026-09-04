@@ -25,7 +25,14 @@ const DENSITY_OPTIONS = [
 const LANGUAGE_OPTIONS = [{ value: 'zh-CN', label: '简体中文' }]
 
 export function GeneralTab() {
-  const settings = useSettingsStore()
+  // R37-perf-2：替代全 store 订阅 —— 任何 settings 字段变更都会触发重渲染，
+  // 但本 tab 只读 4 个字段。只订阅这 4 个避免无关字段（如 accentColor）写
+  // 触发的无谓重渲染。
+  const language = useSettingsStore((s) => s.language)
+  const theme = useSettingsStore((s) => s.theme)
+  const density = useSettingsStore((s) => s.density)
+  const fontSize = useSettingsStore((s) => s.fontSize)
+  const update = useSettingsStore((s) => s.update)
   const setTheme = useAppStore((s) => s.setTheme)
   const setDensity = useAppStore((s) => s.setDensity)
   const setFontSize = useAppStore((s) => s.setFontSize)
@@ -36,7 +43,7 @@ export function GeneralTab() {
    */
   function handleThemeChange(next: string | number | boolean) {
     const value = String(next) as 'auto' | 'light' | 'dark'
-    settings.update({ theme: value })
+    update({ theme: value })
     if (value === 'auto' || value === 'light' || value === 'dark') {
       // auto 模式下回退到 dark（auto 检测能力稍后接入）
       setTheme(value === 'light' ? 'light' : 'dark')
@@ -45,19 +52,19 @@ export function GeneralTab() {
 
   function handleDensityChange(next: string | number | boolean) {
     const value = String(next) as 'compact' | 'comfortable'
-    settings.update({ density: value })
+    update({ density: value })
     setDensity(value)
   }
 
   function handleLanguageChange(next: string | number | boolean) {
-    settings.update({ language: next as 'zh-CN' })
+    update({ language: next as 'zh-CN' })
   }
 
   function handleFontSizeChange(next: string | number | boolean) {
     const n = Number(next)
     if (Number.isFinite(n)) {
       const clamped = Math.max(12, Math.min(18, n))
-      settings.update({ fontSize: clamped })
+      update({ fontSize: clamped })
       setFontSize(clamped)
     }
   }
@@ -71,7 +78,7 @@ export function GeneralTab() {
         label="语言"
         description="界面显示语言（当前仅支持简体中文）"
         type="select"
-        value={settings.language}
+        value={language}
         onChange={handleLanguageChange}
         options={LANGUAGE_OPTIONS}
       />
@@ -80,7 +87,7 @@ export function GeneralTab() {
         label="主题"
         description="选择 UI 配色，跟随系统会随操作系统切换"
         type="select"
-        value={settings.theme}
+        value={theme}
         onChange={handleThemeChange}
         options={THEME_OPTIONS}
       />
@@ -89,7 +96,7 @@ export function GeneralTab() {
         label="密度"
         description="紧凑模式减少列表项间距"
         type="select"
-        value={settings.density}
+        value={density}
         onChange={handleDensityChange}
         options={DENSITY_OPTIONS}
       />
@@ -98,9 +105,9 @@ export function GeneralTab() {
         label="默认字号"
         description="任务/笔记等的默认正文字号（12-18）"
         type="number"
-        value={settings.fontSize}
+        value={fontSize}
         onChange={handleFontSizeChange}
-        onBlur={() => settings.update({ fontSize: settings.fontSize })}
+        onBlur={() => update({ fontSize })}
         min={12}
         max={18}
         step={1}

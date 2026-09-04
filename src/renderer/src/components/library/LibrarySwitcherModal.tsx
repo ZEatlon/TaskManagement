@@ -42,7 +42,10 @@ function formatBytes(bytes: number): string {
 }
 
 export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
-  const settings = useSettingsStore()
+  // R37-perf-2：精确订阅本 modal 实际用到的字段（libraryPath + update 方法）。
+  // 全 store 订阅会让任意字段（如 accentColor）写入触发本 modal 重新挂载状态机。
+  const currentLibraryPath = useSettingsStore((s) => s.libraryPath)
+  const update = useSettingsStore((s) => s.update)
   const [step, setStep] = useState<Step>('pick')
   const [pickedPath, setPickedPath] = useState<string | null>(null)
   const [scan, setScan] = useState<LibraryScanResult | null>(null)
@@ -103,12 +106,12 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
           // 在新目录建立新库：init + setCurrent
           await libraryApi.initialize(pickedPath)
           await libraryApi.setCurrent(pickedPath)
-          await settings.update({ libraryPath: pickedPath })
+          await update({ libraryPath: pickedPath })
           setResult('已在新目录建立新库并切换')
         } else if (chosen === 'use-existing') {
           // 解析原有仓库数据：只 setCurrent，不动 dest 数据
           await libraryApi.setCurrent(pickedPath)
-          await settings.update({ libraryPath: pickedPath })
+          await update({ libraryPath: pickedPath })
           setResult('已切换到新目录（新目录数据已就绪）')
         } else {
           // 从当前库迁移：migrate + setCurrent
@@ -127,7 +130,7 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
           }
           const m = await libraryApi.migrate(pickedPath)
           await libraryApi.setCurrent(pickedPath)
-          await settings.update({ libraryPath: pickedPath })
+          await update({ libraryPath: pickedPath })
           setResult(
             `已迁移 ${m.copiedFiles} 个文件（${formatBytes(m.copiedBytes)}），并切换到新目录`,
           )
@@ -143,13 +146,13 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
         setAction(null)
       }
     },
-    [pickedPath, settings, onSwitched],
+    [pickedPath, update, onSwitched],
   )
 
   if (!open) return null
 
-  const currentPath = settings.libraryPath ?? '（未设置）'
-  const isCurrent = pickedPath && pickedPath === settings.libraryPath
+  const currentPath = currentLibraryPath ?? '（未设置）'
+  const isCurrent = pickedPath && pickedPath === currentLibraryPath
 
   return (
     <div className="library-switcher-backdrop" onClick={onClose}>

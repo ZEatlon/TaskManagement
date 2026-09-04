@@ -101,5 +101,26 @@ export function registerIpcHandlers(): void {
     return cleanupMockSeededData()
   })
 
+  /**
+   * 渲染端报告运行时错误。R7S-2 设计：让主进程 boot-trace 能拿到渲染端
+   * crash 信息（ErrorBoundary / window.onerror / unhandledrejection）。
+   * 旧版只 invoke 不注册 → preload 白名单静默 reject，错误报告全丢。
+   * 这里只 log 落盘，不做任何 user-facing 弹窗（避免和渲染端 ErrorBoundary
+   * 自身的 UI 重复）。
+   */
+  handle(CHANNELS.APP_ERROR, async (_e, payload: {
+    message: string
+    stack?: string
+    componentStack?: string
+    source?: string
+  }) => {
+    log.error(
+      `[renderer-error] ${payload?.source ?? 'unknown'}: ${payload?.message ?? '(no message)'}`,
+    )
+    if (payload?.stack) log.error(`[renderer-error] stack: ${payload.stack}`)
+    if (payload?.componentStack) log.error(`[renderer-error] componentStack: ${payload.componentStack}`)
+    return { ok: true }
+  })
+
   log.info('[ipc] all handlers registered.')
 }

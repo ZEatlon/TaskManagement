@@ -40,6 +40,8 @@ export function NoteMetaPanel({ noteId }: Props) {
   // R11 修复 (low #1)：用 ref 而非闭包记录"上一次成功的 folderId"，避免快速
   // 切换文件夹时旧闭包把 UI 回滚到错误值。
   const lastSuccessfulFolderRef = useRef<string | null>(null)
+  // R37-fix #H4：同理用于 starred —— 快速连点时闭包值陈旧，ref 记最近真值。
+  const lastSuccessfulStarredRef = useRef<boolean>(false)
   useEffect(() => {
     if (!currentNote || currentNote.id !== noteId) return
     if (lastSyncedNoteIdRef.current === noteId) return
@@ -48,6 +50,7 @@ export function NoteMetaPanel({ noteId }: Props) {
     lastSuccessfulFolderRef.current = initialFolderId
     setTags(currentNote.tags)
     setStarred(currentNote.isFavorite)
+    lastSuccessfulStarredRef.current = currentNote.isFavorite
     setArchived(false) // Note 接口无 archived，从元数据读
     setTitle(currentNote.title)
     setFolderId(initialFolderId)
@@ -92,20 +95,20 @@ export function NoteMetaPanel({ noteId }: Props) {
     try {
       await save(currentNote.path, baseContent, { tags: next })
     } catch (err) {
-      // eslint-disable-next-line no-console
+       
       console.warn('[note-meta] persist tags failed', err)
     }
   }
 
   async function handleStarredToggle() {
     if (!currentNote) return
-    // R11 修复 (medium #14)：原版把 next = !starred 写进闭包后 setStarred(next)，
-    // catch 失败时回滚到 !next —— 两次快速点击：第一次成功后第二次失败 → catch
-    // 用第二次的 next (=false) 算出 !next = true 回滚，但实际状态应该是 true
-    // (第一次成功留下的)。修正：在调用前用 `original = starred` 快照，回滚到
-    // original 而不是 !next，并发 catch 收敛到 original 而不是最后点击的相反值。
-    const original = starred
-    const next = !original
+    // R37-fix #H4：原版用闭包里的 `starred` 抓取原值，但快速连点时
+    // setStarred 还没 commit 到 React 树，闭包值仍是点击前的 → 两次快速点：
+    // 第一次成功后第二次 IPC 失败 → catch 用过时的闭包 original 回滚到错误值。
+    // 修法：和 handleFolderChange 一样用 ref 记录"最近一次成功 commit 的值"，
+    // 无论闭包多陈旧，回滚都用最近真值。乐观更新直接基于 ref 而不是 state。
+    const next = !lastSuccessfulStarredRef.current
+    lastSuccessfulStarredRef.current = next
     setStarred(next)
     try {
       await window.api.invoke<{ id: string; starred: boolean }, unknown>(
@@ -114,7 +117,11 @@ export function NoteMetaPanel({ noteId }: Props) {
       )
     } catch (err) {
       console.warn(err)
-      setStarred(original)
+      // 失败：回滚到 ref 记录的最近成功值（不依赖闭包）
+      const rollback = lastSuccessfulStarredRef.current
+      // lastSuccessfulStarredRef 此时已经被上面乐观写成 next，把它恢复
+      lastSuccessfulStarredRef.current = !next
+      setStarred(rollback)
     }
   }
 
@@ -173,7 +180,7 @@ export function NoteMetaPanel({ noteId }: Props) {
                 newTitle: next,
               })
               .catch((err) => {
-                // eslint-disable-next-line no-console
+                 
                 console.warn('[note-meta] rename failed', err)
                 // 仅当当前 currentNote 仍是同一篇时才回滚；避免用户切换笔记后
                 // 把新笔记的本地输入覆盖掉。

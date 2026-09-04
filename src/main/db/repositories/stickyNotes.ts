@@ -1550,7 +1550,7 @@ async function addStep(noteId: ID, content: string, order?: number): Promise<Sti
           next_order: number
         } | null
         resolvedOrder = row?.next_order ?? 0
-        // eslint-disable-next-line no-console
+         
         console.warn(
           `[stickyNotes.addStep] order=${order} for note ${noteId} was taken; falling back to append order=${resolvedOrder}`,
         )

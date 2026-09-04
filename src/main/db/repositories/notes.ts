@@ -571,26 +571,23 @@ export class NotesRepository {
                 WHERE id = ? AND updated_at = ?`,
         )
         let result: { changes?: number } | null = null
-        try {
-          result = (await dbClient.call('run', {
-            stmtId,
-            params: [
-              merged.title,
-              merged.tags_json,
-              merged.starred,
-              merged.archived,
-              merged.folder_id,
-              merged.updated_at,
-              id,
-              existing.updated_at,
-            ],
-          })) as { changes?: number }
-        } catch (err) {
-          // R26 防御：cache 命中的 stmtId 不能在这里 finalize（会被其它调用者
-          // 复用时变成 zombie）。但 worker 端 prepare 已固化 SQL，重建仅在
-          // worker respawn 后由 R25-DI-5 invalidator 触发，我们无需手动清理。
-          throw err
-        }
+        // R26 防御：cache 命中的 stmtId 不能在这里 finalize（会被其它调用者
+        // 复用时变成 zombie）。worker 端 prepare 已固化 SQL，rebuild 仅在
+        // worker respawn 后由 R25-DI-5 invalidator 触发，无需手动清理。
+        // 异常直接抛给外层 ROLLBACK 兜底，不再用 try/catch rethrow。
+        result = (await dbClient.call('run', {
+          stmtId,
+          params: [
+            merged.title,
+            merged.tags_json,
+            merged.starred,
+            merged.archived,
+            merged.folder_id,
+            merged.updated_at,
+            id,
+            existing.updated_at,
+          ],
+        })) as { changes?: number }
         if (!result || result.changes === 0) {
           // R15：CAS 失败说明中途有另一个 updateMeta / updateFolderId 改了同一行。
           // 抛错让 IPC handler 把错误回传给渲染端，渲染端应重新 fetch 并提示用户。

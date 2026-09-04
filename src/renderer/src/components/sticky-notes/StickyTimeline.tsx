@@ -345,7 +345,7 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
         })
         return note.id
       } catch (err) {
-        // eslint-disable-next-line no-console
+         
         console.warn('[sticky-timeline] 新建便签失败：', err)
         return null
       }

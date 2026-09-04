@@ -38,7 +38,7 @@ import {
 import { useDashboardLayout } from '../components/dashboard/useDashboardLayout'
 import { useStickyNotesStore } from '../stores/stickyNotes'
 import { useNotesStore } from '../stores/notes'
-import { dayKeyOf } from '../lib/date'
+import { useTodayKey } from '../lib/useDayRollover'
 
 interface DragSource {
   column: number
@@ -60,7 +60,9 @@ export function DashboardRoute() {
   const notesLoading = useNotesStore((s) => s.loading)
   const fetchNotes = useNotesStore((s) => s.fetch)
 
-  const todayKey = useMemo(() => dayKeyOf(new Date()), [])
+  // R5R-4 配套：用 useTodayKey() 替代 useMemo + 空依赖 —— 后者跨午夜后
+  // todayKey 永远停留在昨天，导致"逾期未完成"用错基准日计算。
+  const todayKey = useTodayKey()
 
   useEffect(() => {
     void loadAllFiltered({ archived: false, limit: 500 })

@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Download } from 'lucide-react'
 import { useNotesStore } from '../../stores/notes'
-import { TipTapEditor, type EditorContentSource } from '../editor'
+import { TipTapEditor, type EditorContentSource } from '../editor/TipTapEditor'
 import { NotePreview } from './NotePreview'
 import { StatusBadge } from './StatusBadge'
 import { useAutosave } from '../../lib/useAutosave'

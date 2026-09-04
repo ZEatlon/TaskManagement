@@ -92,14 +92,10 @@ export function EditorTab() {
         options={AUTOSAVE_OPTIONS}
       />
 
-      <SettingField
-        label="拼写检查"
-        description="（占位）编辑器内的拼写检查功能尚未实装"
-        type="toggle"
-        value={cfg.spellCheck}
-        onChange={(v) => patch({ spellCheck: Boolean(v) })}
-        disabled
-      />
+      {/* 拼写检查 toggle 已移除 —— M6 修复：之前虽然 disabled 但仍然渲染出来，
+          用户点开看不到任何反馈还以为是 bug。等实装了再加回来。
+          cfg.spellCheck 字段保留在 EditorSettings 与 patch 类型中以保证兼容，
+          但 UI 不再暴露入口。 */}
     </div>
   )
 }

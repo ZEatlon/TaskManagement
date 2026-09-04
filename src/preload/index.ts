@@ -238,8 +238,8 @@ const api = {
 
 try {
   contextBridge.exposeInMainWorld('api', api)
-  console.log('[preload] window.api exposed successfully')
 } catch (err) {
+  // 仅在异常路径打日志 —— 成功路径保持安静，避免污染生产 DevTools
   console.error('[preload] Failed to expose API:', err)
 }
 

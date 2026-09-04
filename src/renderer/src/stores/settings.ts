@@ -55,13 +55,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const next = { ...before, ...patch }
     set(patch)
     try {
-      const { loaded: _l, load: _ld, update: _u, setLibraryPath: _sl, checkLibraryReady: _cr, ...persistable } = next
+      // R37-fix #M7：原本用 `const { loaded: _l, ..., ...persistable } = next`
+      // + `void _l; void _ld; ...` 把"未用变量"哑掉 —— 既冗长又骗过 lint。
+      // 现在显式列出要剥掉的方法名，destructure 取剩下的 spread，更直白。
+      const { loaded, load, update, setLibraryPath, checkLibraryReady, ...persistable } = next
+      void loaded; void load; void update; void setLibraryPath; void checkLibraryReady
       await settingsApi.set('app.settings', persistable)
     } catch (err) {
       // R6S-5：IPC 失败时回滚本地 state，避免下次 reload 后本地与 DB 永久不一致。
       console.error('[settings] save failed', err)
-      const { loaded: _l2, load: _ld2, update: _u2, setLibraryPath: _sl2, checkLibraryReady: _cr2, ...beforePersistable } = before
-      void _l2; void _ld2; void _u2; void _sl2; void _cr2
+      const { loaded: loaded2, load: load2, update: update2, setLibraryPath: sl2, checkLibraryReady: cr2, ...beforePersistable } = before
+      void loaded2; void load2; void update2; void sl2; void cr2
       set(beforePersistable as Partial<AppSettings>)
       throw err
     }
@@ -76,8 +80,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       // 一旦切换 library 就会把这些配置悄悄清空。改为：只剥离方法/loaded，
       // 保留全部 AppSettings 字段（包括 AI），再覆盖 libraryPath。
       const next = { ...get(), libraryPath: path }
-      const { loaded: _l, load: _ld, update: _u, setLibraryPath: _sl, checkLibraryReady: _cr, ...persistable } = next
-      void _l; void _ld; void _u; void _sl; void _cr
+      const { loaded, load, update, setLibraryPath: sl, checkLibraryReady, ...persistable } = next
+      void loaded; void load; void update; void sl; void checkLibraryReady
       await settingsApi.set('app.settings', persistable)
     } catch (err) {
       console.error('[settings] setLibraryPath save failed', err)

@@ -32,7 +32,6 @@ import {
   loadConfig,
   saveConfig,
   listToday,
-  listRecent,
 } from '../pomodoro/pomodoroService'
 import { pomodorosRepo } from '../db/repositories/pomodoros'
 
@@ -97,12 +96,6 @@ export function registerPomodoroHandlers(): void {
   handle<undefined, Awaited<ReturnType<typeof listToday>>>(
     IPC_CHANNELS.POMODORO_TODAY,
     async () => listToday(),
-  )
-
-  /** 最近 N 条 */
-  handle<number | undefined, Awaited<ReturnType<typeof listRecent>>>(
-    IPC_CHANNELS.POMODORO_RECENT,
-    async (_e, limit) => listRecent(limit ?? 50),
   )
 
   /**

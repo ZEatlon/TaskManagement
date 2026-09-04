@@ -30,7 +30,7 @@ export function MathBlock({ tex, display }: Props) {
     })
   } catch (err) {
     hasError = true
-    // eslint-disable-next-line no-console
+     
     console.warn('[MathBlock] katex render failed:', err)
   }
 

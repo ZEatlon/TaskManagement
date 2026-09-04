@@ -122,7 +122,7 @@ export function NoteFoldersSidebar({
   // 文件夹列表变化 / 创建 / 删除后刷新笔记树
   useEffect(() => {
     void reloadTreeNotes()
-    // eslint-disable-next-line react-hooks/exhaustive-dees
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folders.length])
 
   // BUG-2-fix：监听 window-level dragend，确保 ESC / 拖到无效位置 / drop 失败时

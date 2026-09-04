@@ -66,13 +66,33 @@ const MODEL_OPTIONS: Record<AIProvider, { value: string; label: string }[]> = {
   ],
 }
 
-/** 从 AppSettings 中读取指定 provider 当前模型 */
-function pickModel(s: AppSettings, p: AIProvider): string {
-  return s[PROVIDER_MODEL_FIELD[p]]
+/** 从三个 model 字段里取指定 provider 的当前模型 */
+function pickModel(
+  p: AIProvider,
+  openai: string,
+  anthropic: string,
+  minimax: string,
+): string {
+  switch (p) {
+    case 'openai': return openai
+    case 'anthropic': return anthropic
+    case 'minimax': return minimax
+  }
 }
 
 export function AITab() {
-  const settings = useSettingsStore()
+  // R37-perf-2：精确订阅本 tab 实际读到的字段。原版 `useSettingsStore()`
+  // 全 store 订阅让任何 settings 写入（accentColor / theme 等）都触发本
+  // tab 重渲染，浪费。
+  // 注：aiEnabled 只在本 tab 中被 write（updateSettings({ aiEnabled: true })），
+  // 没必要订阅读取，跳过。
+  const aiProvider = useSettingsStore((s) => s.aiProvider)
+  const aiOpenaiModel = useSettingsStore((s) => s.aiOpenaiModel)
+  const aiAnthropicModel = useSettingsStore((s) => s.aiAnthropicModel)
+  const aiMinimaxModel = useSettingsStore((s) => s.aiMinimaxModel)
+  const aiOpenaiBaseUrl = useSettingsStore((s) => s.aiOpenaiBaseUrl)
+  const aiAnthropicBaseUrl = useSettingsStore((s) => s.aiAnthropicBaseUrl)
+  const aiMinimaxBaseUrl = useSettingsStore((s) => s.aiMinimaxBaseUrl)
   const updateSettings = useSettingsStore((s) => s.update)
   const loadSettings = useSettingsStore((s) => s.load)
   const settingsLoaded = useSettingsStore((s) => s.loaded)
@@ -135,10 +155,13 @@ export function AITab() {
       }
       // baseURL 直接从 settings store 读（settings store 已 loadSettings 完成）
       try {
-        if (!cancelled) {
-          setOpenaiBaseUrl((settings.aiOpenaiBaseUrl ?? '').trim())
-          setAnthropicBaseUrl((settings.aiAnthropicBaseUrl ?? '').trim())
-          setMinimaxBaseUrl((settings.aiMinimaxBaseUrl ?? '').trim())
+        // 必须等 settingsLoaded=true 再同步 —— 否则闭包里的 settings 是
+        // 初始空值，本地 state 会先被设成 '' 然后被 useEffect 重入再覆盖。
+        // 加 settingsLoaded 检查：未加载完时跳过本次同步，等下面 useEffect 跑。
+        if (!cancelled && settingsLoaded) {
+          setOpenaiBaseUrl((aiOpenaiBaseUrl ?? '').trim())
+          setAnthropicBaseUrl((aiAnthropicBaseUrl ?? '').trim())
+          setMinimaxBaseUrl((aiMinimaxBaseUrl ?? '').trim())
         }
       } catch (_) {
         // ignore
@@ -153,9 +176,16 @@ export function AITab() {
     return () => {
       cancelled = true
     }
-    // 仅在挂载时跑一次；store 方法引用稳定，依赖项保留以避免 lint 误报
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    // 关键：依赖 settingsLoaded + 三个 baseURL 字段。
+    // 原版用 [] 空依赖 → 闭包捕获初始渲染的 settings（empty string），
+    // 即使后续 loadSettings 把 baseURL 灌进 store，本地 state 仍残留为空。
+    // 现在 settingsLoaded=true 时再读，且任一 baseURL 变化时也同步刷新。
+  }, [
+    settingsLoaded,
+    aiOpenaiBaseUrl,
+    aiAnthropicBaseUrl,
+    aiMinimaxBaseUrl,
+  ])
 
   /** Provider 切换：自动重置为该 Provider 第一个可用模型，并启用 AI */
   async function handleProviderChange(next: string | number | boolean) {
@@ -171,7 +201,7 @@ export function AITab() {
 
   /** 模型切换：仅更新当前 Provider 对应的字段 */
   async function handleModelChange(next: string | number | boolean) {
-    const provider = settings.aiProvider
+    const provider = aiProvider
     if (!provider) return
     const model = String(next)
     await updateSettings({ [PROVIDER_MODEL_FIELD[provider]]: model } as Partial<AppSettings>)
@@ -217,7 +247,7 @@ export function AITab() {
     setBusy(true)
     setTestStatus(null)
     try {
-      const currentProvider = settings.aiProvider ?? 'openai'
+      const currentProvider = aiProvider ?? 'openai'
       const keyField: Record<typeof currentProvider, string> = {
         openai: 'openai.apiKey',
         anthropic: 'anthropic.apiKey',
@@ -238,9 +268,11 @@ export function AITab() {
     }
   }
 
-  const provider = settings.aiProvider
+  const provider = aiProvider
   const modelList = provider ? MODEL_OPTIONS[provider] ?? [] : []
-  const currentModel = provider ? pickModel(settings, provider) : ''
+  const currentModel = provider
+    ? pickModel(provider, aiOpenaiModel, aiAnthropicModel, aiMinimaxModel)
+    : ''
 
   return (
     <div className="settings-tab-panel">

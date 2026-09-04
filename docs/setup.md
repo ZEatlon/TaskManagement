@@ -19,7 +19,8 @@ npm run dev
 
 `package.json` 已配置：
 - `"postinstall": "node scripts/postinstall.cjs"` — 优雅处理 native rebuild 失败
-- `"build.electronRebuild.exclude": ["better-sqlite3"]` — 显式排除 better-sqlite3
+- `better-sqlite3` / `@img/sharp-*` 显式列入 `asarUnpack`（原生模块的 .node / .dll 必须落在 asar 外才能被 Electron 加载）
+- 注：`better-sqlite3` 走 sidecar 进程模式（在系统 Node 下用预编译 .node），无需为 Electron ABI 重新编译
 
 ## 常见安装问题
 
@@ -29,7 +30,7 @@ npm run dev
 
 **我们已处理**：
 - `scripts/postinstall.cjs` 在 rebuild 失败时**不会阻塞** `npm install`
-- `better-sqlite3` 已在 `electronRebuild.exclude` 中跳过
+- `better-sqlite3` 通过 sidecar 进程在系统 Node 下运行，**不**走 Electron ABI rebuild
 - `sharp` 等使用 prebuild 预编译产物，无需本地编译
 
 **如果遇到运行时模块加载错误**：

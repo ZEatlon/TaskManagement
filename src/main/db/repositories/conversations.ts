@@ -350,7 +350,7 @@ export class ConversationsRepository {
       )
     } catch (err) {
       // 回滚失败不应阻塞 UI 错误提示，仅日志
-      // eslint-disable-next-line no-console
+       
       console.warn('[conversations] removeLastMessage failed:', err)
     }
   }

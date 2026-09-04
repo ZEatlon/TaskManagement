@@ -25,8 +25,6 @@ const ROUTE_META: Record<string, RouteMeta> = {
   '/pomodoro': { label: '番茄钟', icon: '⏱' },
   '/settings': { label: '设置', icon: '⚙' },
   '/ai': { label: 'AI 助手', icon: '✦' },
-  '/editor-demo': { label: '编辑器演示', icon: '✎' },
-  '/heatmap-demo': { label: '热力图演示', icon: '▦' },
 }
 
 function lookupRouteMeta(pathname: string): RouteMeta {

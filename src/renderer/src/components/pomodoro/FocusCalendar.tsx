@@ -162,7 +162,7 @@ export function FocusCalendar({
         setDueByKey(grouped)
       } catch (err) {
         if (!cancelled) setDueByKey({})
-        // eslint-disable-next-line no-console
+         
         console.warn('[FocusCalendar] stickyNotesApi.listFiltered failed:', err)
       }
     }

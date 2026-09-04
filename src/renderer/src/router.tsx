@@ -6,9 +6,7 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter } from 
 import { RootRoute } from './routes/__root'
 import { DashboardRoute } from './routes/dashboard'
 import { TodayRoute } from './routes/today'
-import { HeatmapDemoRoute } from './routes/heatmap-demo'
 import { SettingsRoute } from './routes/settings'
-import { EditorDemoRoute } from './routes/editor-demo'
 import { AiRoute } from './routes/ai'
 import { NotesRoute } from './routes/notes'
 
@@ -28,22 +26,10 @@ const todayRoute = createRoute({
   component: TodayRoute,
 })
 
-const heatmapDemoRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/heatmap-demo',
-  component: HeatmapDemoRoute,
-})
-
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
   component: SettingsRoute,
-})
-
-const editorDemoRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/editor-demo',
-  component: EditorDemoRoute,
 })
 
 const aiRoute = createRoute({
@@ -61,9 +47,7 @@ const notesRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   todayRoute,
-  heatmapDemoRoute,
   settingsRoute,
-  editorDemoRoute,
   aiRoute,
   notesRoute,
 ])

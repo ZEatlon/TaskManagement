@@ -47,9 +47,13 @@ export function ChatPanel() {
   const acceptPendingConfirm = useAiStore((s) => s.acceptPendingConfirm)
   const dismissPendingConfirm = useAiStore((s) => s.dismissPendingConfirm)
 
-  /** 旧版 app.ai 中的 provider/model，作为兼容来源（AITab 写入） */
+  /** 旧版 app.ai 中的 provider/model，作为兼容来源（AITab 写入）。
+   *  R37-fix #M4：'dual' provider 在 0.x 早期版本用过，迁移到 AppSettings
+   *  时已统一丢弃（只有 openai / anthropic 能落到 aiProvider 字段）。
+   *  这里的 legacy 仅作为"读旧 key 的兜底来源"——如果旧值是 'dual'，
+   *  不该让本地 state 收到它。类型从联合中移除 'dual'。 */
   const [legacy, setLegacy] = useState<{
-    provider: 'openai' | 'anthropic' | 'dual' | null
+    provider: 'openai' | 'anthropic' | null
     model: string | null
   }>({ provider: null, model: null })
 
@@ -65,7 +69,7 @@ export function ChatPanel() {
     ;(async () => {
       try {
         const raw = await settingsApi.get<{
-          provider?: 'openai' | 'anthropic' | 'dual'
+          provider?: 'openai' | 'anthropic'
           model?: string
         } | null>('app.ai')
         if (cancelled || !raw) return

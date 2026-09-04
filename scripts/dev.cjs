@@ -32,38 +32,64 @@ const electronVite = path.resolve(projectRoot, 'node_modules', '.bin', 'electron
 const isWin = process.platform === 'win32'
 
 /**
- * 杀光系统里残留的 electron.exe（zombie）。
+ * 杀光**本项目**残留的 electron.exe（zombie）。
+ *
+ * 历史：旧版本无差别 taskkill 系统里所有 electron.exe —— 在开发者
+ * 同时开着 VS Code / Slack / Discord（它们都是 Electron）时会被一起
+ * 误杀，丢未保存的代码 / 聊天记录。修复：只杀 MainWindowTitle 包含
+ * "TaskPilot" 的进程；找不到就什么都不做（用户可以手动清理）。
+ *
  * - 当前进程 PID 排除（避免自杀）
  * - 失败也吞掉 —— 没有 taskkill 时跳过（macOS / Linux）
  */
 function killStaleElectron() {
   if (!isWin) return
   const currentPid = process.pid
-  // tasklist 输出格式：固定列宽；解析第二列（PID）
-  execFile('tasklist', ['/FI', 'IMAGENAME eq electron.exe', '/NH', '/FO', 'CSV'], (err, stdout) => {
-    if (err || !stdout) return
-    const pids = stdout
-      .split(/\r?\n/)
-      .map((line) => {
-        // CSV: "electron.exe","8012","Console","1","128,856 K"
-        const m = line.match(/^"electron\.exe","(\d+)"/)
-        return m ? Number(m[1]) : null
-      })
-      .filter((p) => p !== null && p !== currentPid)
-    if (pids.length === 0) {
-      console.log('[dev wrapper] no stale electron.exe to clean up')
-      return
-    }
-    console.log(`[dev wrapper] killing ${pids.length} stale electron.exe: ${pids.join(', ')}`)
-    // /T = 连子进程一起杀；/F = 强制
-    execFile('taskkill', ['/F', '/T', ...pids.flatMap((p) => ['/PID', String(p)])], (killErr) => {
-      if (killErr) {
-        console.log('[dev wrapper] taskkill error (ignored):', killErr.message)
-      } else {
-        console.log('[dev wrapper] stale electron.exe cleaned up')
+  // /V 带上窗口标题；CSV 输出多一列 WindowTitle。tasklist 在没有可见
+  // 窗口的进程上 WindowTitle 为空字串，可以借此过滤。
+  execFile(
+    'tasklist',
+    ['/FI', 'IMAGENAME eq electron.exe', '/NH', '/FO', 'CSV', '/V'],
+    (err, stdout) => {
+      if (err || !stdout) return
+      const pids = []
+      const seen = new Set()
+      for (const line of stdout.split(/\r?\n/)) {
+        // CSV 列: ImageName,PID,SessionName,SessionNum,MemUsage,Status,UserName,CPU,WindowTitle
+        // WindowTitle 可能含逗号 / 双引号转义，所以匹配从行尾倒数第一个
+        // 完整 CSV 字段开始往前推。这里用更稳的方式：只匹配 PID 与最后
+        // 一个字段（去除首尾引号）。
+        const m = line.match(/^"electron\.exe","(\d+)"(.*)$/)
+        if (!m) continue
+        const pid = Number(m[1])
+        if (pid === currentPid || seen.has(pid)) continue
+        const rest = m[2]
+        // WindowTitle 是 CSV 的最后一个字段，可能带引号；剥掉末尾的引号后
+        // 判断是否含 TaskPilot。
+        const titleMatch = rest.match(/,"TaskPilot"$/i) || rest.match(/,"?TaskPilot"?$/i)
+        if (!titleMatch) continue
+        seen.add(pid)
+        pids.push(pid)
       }
-    })
-  })
+      if (pids.length === 0) {
+        console.log('[dev wrapper] no stale TaskPilot electron.exe to clean up')
+        return
+      }
+      console.log(`[dev wrapper] killing ${pids.length} stale TaskPilot electron.exe: ${pids.join(', ')}`)
+      // /T = 连子进程一起杀；/F = 强制
+      execFile(
+        'taskkill',
+        ['/F', '/T', ...pids.flatMap((p) => ['/PID', String(p)])],
+        (killErr) => {
+          if (killErr) {
+            console.log('[dev wrapper] taskkill error (ignored):', killErr.message)
+          } else {
+            console.log('[dev wrapper] stale TaskPilot electron.exe cleaned up')
+          }
+        },
+      )
+    },
+  )
 }
 
 // 启动前先清 zombie
