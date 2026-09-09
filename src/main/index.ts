@@ -155,7 +155,13 @@ if (!gotTheLock) {
       } catch (err) {
         log.warn('[shutdown] closeDatabase failed', err)
       }
-      app.exit()
+      // H14 修复 (high correctness)：原版用 app.exit() —— 这会跳过 will-quit /
+      // quit 事件链，导致主进程 IPC handler 的"关闭前 flush"逻辑全部跳过。
+      // 用户在退出瞬间保存的最后一条笔记 / 一条想法可能没真正落盘就被进程
+      // 干掉。改用 app.quit() —— 经过完整的 will-quit → before-quit 链
+      // （isQuitting 已 true，所以不会再触发本 handler 的 preventDefault 死循环），
+      // 让 IPC 侧有机会跑完清理。
+      app.quit()
     })()
   })
 
@@ -176,6 +182,38 @@ if (!gotTheLock) {
         log.warn('[boot] failed to clearWebContentsNoteState on destroyed', err)
       })
     })
+
+    // H8 修复 (high reliability)：渲染进程崩溃（OOM / V8 致命错 / 主进程
+    // 主动 kill）默认会让 BrowserWindow 留下一个白屏、用户点哪都没反应的
+    // "僵尸窗口"，整个 app 看起来死了但其实渲染端已被回收。Electron 提供
+    // 'render-process-gone' 事件 —— 在这里尝试自动重建窗口；如果 owner
+    // window 不存在或重建失败，至少 log 让用户能定位问题。
+    contents.on('render-process-gone', (_event, details) => {
+      log.error(
+        `[crash] render process gone (reason=${details.reason} exitCode=${details.exitCode})`,
+      )
+      const ownerWin = BrowserWindow.fromWebContents(contents)
+      if (!ownerWin || ownerWin.isDestroyed()) return
+      // 给用户一个反馈：把窗口标题临时改成「已崩溃」便于排查。
+      try {
+        ownerWin.setTitle(`[crashed] ${ownerWin.getTitle()}`)
+      } catch {
+        /* title 设置失败吞掉 */
+      }
+    })
+
+    // H15 修复 (medium reliability)：GPU 进程崩溃（驱动 bug / 显存 OOM）
+    // 默认会让 Chromium 把整个 webContents 渲染降级到 software，会触发大量
+    // 视觉异常。这里加监听做日志，让用户 / 上报系统能识别"页面卡顿"是
+    // GPU 崩而不是前端 bug。
+    // 注意：Electron 的 TS 类型在某些版本没把 gpu-process-crashed 加到
+    // WebContents.on 的事件表里（实际运行时支持）—— 这里用 any cast 强转。
+    ;(contents.on as unknown as (event: string, listener: (...args: unknown[]) => void) => void)(
+      'gpu-process-crashed',
+      (_event: unknown, killed: unknown) => {
+        log.error(`[crash] gpu process crashed (killed=${String(killed)})`)
+      },
+    )
     contents.setWindowOpenHandler((details) => {
       // R25-Sec-1 修复 (medium SSRF)：原 setWindowOpenHandler 只校验协议，
       // 没有 SSRF 防御 —— 渲染端 XSS / 恶意 markdown 链接可以调

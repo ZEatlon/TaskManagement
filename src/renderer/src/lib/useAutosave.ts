@@ -67,6 +67,8 @@ export function useAutosave(opts: UseAutosaveOptions): UseAutosaveResult {
   const latestContentRef = useRef<string>('')
   const skipRef = useRef(skip)
   skipRef.current = skip
+  // H17 修复：writeNow 串行化的 in-flight 句柄。
+  const writeInFlightRef = useRef<Promise<void>>(Promise.resolve())
 
   const [pendingDraft, setPendingDraft] = useState<DraftEntry | null>(null)
 
@@ -104,10 +106,31 @@ export function useAutosave(opts: UseAutosaveOptions): UseAutosaveResult {
         notePath,
         kind,
       }
-      const ok = await saveDraft(entry)
-      if (ok) {
-        setPendingDraft(entry)
-        onSaved?.(entry)
+      // H17 修复 (high data-integrity)：原版没有写互斥 —— debounce timer
+      // 触发 writeNow(A) 还没 await saveDraft 完成时，flush(B)（Ctrl+S
+      // 或路由切换）并发调 writeNow(B) 并 await saveDraft(B) 先返回，
+      // setPendingDraft 两次更新顺序变成 A → B（最新），看起来没问题；
+      // 但 saveDraft 内部 IPC 是带顺序的（main process 序列化），A 落
+      // B 之后会把 A 的 older content 覆盖 B 的 newer content，磁盘上
+      // 留下旧版本。
+      // 修复：用 writeInFlight 串行化所有 writeNow 调用，每次进入时
+      // await 之前的 in-flight，再把自己的写入串到队列末尾。最新
+      // content 总是最后写，保证落盘顺序 = 调用顺序。
+      const prev = writeInFlightRef.current
+      let release: () => void = () => {}
+      writeInFlightRef.current = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      try {
+        await prev
+        if (skipRef.current) return
+        const ok = await saveDraft(entry)
+        if (ok) {
+          setPendingDraft(entry)
+          onSaved?.(entry)
+        }
+      } finally {
+        release()
       }
     },
     [draftId, notePath, kind, onSaved],

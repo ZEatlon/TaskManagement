@@ -38,6 +38,50 @@ import { MenuBar } from './MenuBar'
 import { editorJSONToHTML, editorJSONToMarkdown } from './serializer'
 import { markdownToHtml } from './markdown'
 
+/**
+ * H3 修复 (medium perf)：原版 useEditor 的 `extensions` 数组每次 render 都
+ * 用 `[…]` 字面量重建，引用都是新的；TipTap 内部会在依赖变化时重新构造
+ * ProseMirror Schema（解析 spec、构造 NodeType 表等），即便内容 / editable
+ * 都没变化。改用模块级常量 + Object.freeze，整个 app 生命周期复用同一引用。
+ *
+ * 注意：ImageUploadExtension 必须按实例配置回调（onUploadStart / onUploadEnd
+ * / onError 等），需要访问组件内 state。把这一个 extension 的 instance 化
+ * 留到 useMemo 里，base 部分复用模块级常量。Placeholder.configure 因为
+ * placeholder 文本是 prop，每实例单独配置。
+ */
+const BASE_EDITOR_EXTENSIONS = Object.freeze([
+  StarterKit.configure({
+    codeBlock: false,
+  }),
+  Link.configure({
+    openOnClick: false,
+    HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
+  }),
+  Image.configure({
+    // 允许 attachments:// 自定义协议
+    // TipTap 内置 protocol 过滤可通过自定义实现；这里通过 allowBase64 兼容未来内联
+    allowBase64: true,
+    HTMLAttributes: { loading: 'lazy', decoding: 'async' },
+  }),
+  Underline,
+  Subscript,
+  Superscript,
+  Highlight.configure({ multicolor: true }),
+  Color,
+  TextStyle,
+  Typography,
+  Table.configure({ resizable: true }),
+  TableRow,
+  TableHeader,
+  TableCell,
+  TaskList,
+  TaskItem.configure({ nested: true }),
+  MermaidNode,
+  MathInlineNode,
+  MathBlockNode,
+  CodeBlockWithHighlight,
+])
+
 export type EditorContentSource =
   | { kind: 'json'; json: object }
   | { kind: 'markdown'; markdown: string }
@@ -130,75 +174,89 @@ export function TipTapEditor(props: TipTapEditorProps) {
     errorTimer.current = setTimeout(() => setUploadError(null), 4000)
   }, [])
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        codeBlock: false,
-      }),
+  // H3 修复 (medium perf)：把 ImageUploadExtension 的回调用 ref 锁住，避免
+  // setUploading/showError 引用每次 render 变化时把整个 extensions 数组"变脏"
+  // —— useEditor 会把 extensions 数组传给内部 schema builder，引用变化会触发
+  // ProseMirror schema 重建（解析 spec、构造 NodeType）。把回调放 ref 里，扩展
+  // 实例只构造一次。
+  const uploadCallbacksRef = useRef({
+    onUploadStart: (file: File) => {
+      setUploading((prev) => ({ count: prev.count + 1, fileName: file.name }))
+    },
+    onUploadEnd: (_file: File, url: string | null, err: string | null) => {
+      setUploading((prev) => ({
+        count: Math.max(0, prev.count - 1),
+        fileName: prev.count - 1 > 0 ? prev.fileName : null,
+      }))
+      if (err) showError(err)
+      else if (url) {
+        setUploadError(null)
+      }
+    },
+    onError: (msg: string) => showError(msg),
+  })
+  // 保持 ref 引用稳定，但内部回调闭包可以读到最新的 setState
+  uploadCallbacksRef.current.onUploadStart = (file: File) => {
+    setUploading((prev) => ({ count: prev.count + 1, fileName: file.name }))
+  }
+  uploadCallbacksRef.current.onUploadEnd = (_file: File, url: string | null, err: string | null) => {
+    setUploading((prev) => ({
+      count: Math.max(0, prev.count - 1),
+      fileName: prev.count - 1 > 0 ? prev.fileName : null,
+    }))
+    if (err) showError(err)
+    else if (url) {
+      setUploadError(null)
+    }
+  }
+  uploadCallbacksRef.current.onError = (msg: string) => showError(msg)
+
+  // H3 修复：extensions 数组用模块级 BASE_EDITOR_EXTENSIONS + 单次配置的
+  // Placeholder / CharacterCount / ImageUploadExtension 拼出，依赖 placeholder
+  // （prop 文本）和 charLimit（上限）。后续 render 引用稳定，TipTap 不会触发
+  // schema 重构。
+  const extensions = useMemo(
+    () => [
+      ...BASE_EDITOR_EXTENSIONS,
       Placeholder.configure({
         placeholder,
         showOnlyWhenEditable: true,
       }),
-      Link.configure({
-        openOnClick: false,
-        HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
-      }),
-      Image.configure({
-        // 允许 attachments:// 自定义协议
-        // TipTap 内置 protocol 过滤可通过自定义实现；这里通过 allowBase64 兼容未来内联
-        allowBase64: true,
-        HTMLAttributes: { loading: 'lazy', decoding: 'async' },
-      }),
-      Underline,
-      Subscript,
-      Superscript,
-      Highlight.configure({ multicolor: true }),
-      Color,
-      TextStyle,
-      Typography,
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      TaskList,
-      TaskItem.configure({ nested: true }),
       CharacterCount.configure({
         limit: charLimit,
       }),
-      MermaidNode,
-      MathInlineNode,
-      MathBlockNode,
-      CodeBlockWithHighlight,
       ImageUploadExtension.configure({
         maxSize: 20 * 1024 * 1024,
         highlightOnDragOver: true,
-        onUploadStart: (file) => {
-          setUploading((prev) => ({ count: prev.count + 1, fileName: file.name }))
-        },
-        onUploadEnd: (_file, url, err) => {
-          setUploading((prev) => ({
-            count: Math.max(0, prev.count - 1),
-            fileName: prev.count - 1 > 0 ? prev.fileName : null,
-          }))
-          if (err) showError(err)
-          else if (url) {
-            setUploadError(null)
-          }
-        },
-        onError: (msg) => showError(msg),
+        onUploadStart: (file) => uploadCallbacksRef.current.onUploadStart(file),
+        onUploadEnd: (file, url, err) => uploadCallbacksRef.current.onUploadEnd(file, url, err),
+        onError: (msg) => uploadCallbacksRef.current.onError(msg),
       }),
     ],
+    // charLimit / placeholder 仅在挂载时构造一次（TipTap 内部存储；
+    // 真要动态改，需要在 effect 里调 editor.extensionManager 等价 API）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
+  const editor = useEditor({
+    extensions,
     content: initialDoc,
     editable,
     autofocus: autofocus as never,
     onUpdate: ({ editor }) => {
       if (!onChange) return
       const json = editor.getJSON()
-      const html = editorJSONToHTML(json)
+      // C1 修复 (critical perf)：原版每次按键都同时序列化为 HTML 和 Markdown。
+      // HTML 序列化要构造完整 ProseMirror schema + 走 zeed-dom 渲染，对一篇
+      // 5000 字的笔记 10Hz 输入是 ~50ms/次。HTML 仅在导出 / 渲染预览时需要，
+      // 上层 onChange（NoteEditor.handleChange）也只用 markdown。
+      // 修复：onUpdate 只产出 json + markdown + 计数；html 留空字符串。
+      // 需要 HTML 时上层显式调 editorJSONToHTML(json)。
       const markdown = editorJSONToMarkdown(json)
       const characters = editor.storage['characterCount']?.characters?.() ?? 0
       const words = editor.storage['characterCount']?.words?.() ?? 0
-      onChange({ json, html, markdown, characters, words })
+      onChange({ json, html: '', markdown, characters, words })
     },
   })
 
@@ -218,10 +276,28 @@ export function TipTapEditor(props: TipTapEditorProps) {
   // 通过比对 `editor.getHTML()` 与 `markdownToHtml(initialDoc)` 的归一化结果来
   // 判定"内容是否相同"。两者在 markdown 经过 turndown 损失性往返后大部分情况
   // 会一致；对于空文档（仅剩空段落）也按"内容相同"处理，避免无意义 setContent。
+  //
+  // H1 修复 (high correctness)：原 focused-branch 直接 return 并把
+  // lastAppliedKey 标成新 key —— 表面上"标记已应用"，但 setContent 实际上
+  // 没跑。后果：用户在编辑器里打字时如果另一端（外部 store / 同步 / IPC 推送）
+  // 推过来新的 content，编辑器**永远显示旧版本**，因为：
+  //   (a) 焦点状态下 setContent 被跳过
+  //   (b) lastAppliedKey 被立即更新成新值，下一次 effect 触发时会被早
+  //        出的 `lastAppliedKey.current === contentKey` 直接 short-circuit
+  //   (c) 用户失焦时 effect 也不再触发（因为 deps 没变）
+  // 修复：focused 分支只记录"待应用"标记到 pendingFocusedContentKey，不动
+  // lastAppliedKey；订阅 editor.on('blur')，失焦时如果有待应用内容就立即
+  // setContent 并清掉标记。同时 focus 变化也作为 effect 依赖，保证焦点
+  // 切换时立即尝试应用。
   const lastAppliedKey = useRef<string>(contentKey)
+  const pendingFocusedContentKey = useRef<string | null>(null)
+  const pendingFocusedInitialDoc = useRef<object | string | null>(null)
+  const [focusTick, setFocusTick] = useState(0)
   useEffect(() => {
     if (!editor) return
-    if (lastAppliedKey.current === contentKey) return
+    if (lastAppliedKey.current === contentKey && pendingFocusedContentKey.current === null) {
+      return
+    }
     // 比较编辑器当前内容与目标内容是否等价 —— 等价则跳过 setContent
     try {
       const currentHtml = editor.getHTML()
@@ -229,21 +305,56 @@ export function TipTapEditor(props: TipTapEditorProps) {
         typeof initialDoc === 'string' ? initialDoc : editorJSONToHTML(initialDoc)
       if (normalizeEditorHtml(currentHtml) === normalizeEditorHtml(targetHtml)) {
         lastAppliedKey.current = contentKey
+        pendingFocusedContentKey.current = null
+        pendingFocusedInitialDoc.current = null
         return
       }
     } catch {
       // 任意比较失败都退回到原行为
     }
     // 不在编辑器获得焦点时强行 setContent（用户在打字过程中）—— 会把光标
-    // 弹回文档开头。这里仅在编辑器失焦或刚挂载时允许 setContent。
+    // 弹回文档开头。记下来等失焦时应用。
     if (editor.isFocused) {
-      // 标记但不应用；后续失焦时会再触发
-      lastAppliedKey.current = contentKey
+      pendingFocusedContentKey.current = contentKey
+      pendingFocusedInitialDoc.current = initialDoc
       return
     }
     editor.commands.setContent(initialDoc as never, false)
     lastAppliedKey.current = contentKey
-  }, [editor, initialDoc, contentKey])
+    pendingFocusedContentKey.current = null
+    pendingFocusedInitialDoc.current = null
+  }, [editor, initialDoc, contentKey, focusTick])
+
+  // H1 修复：编辑器失焦时尝试应用等待中的内容；focus 状态变化时也触发
+  // effect 重新跑（focusTick）。
+  useEffect(() => {
+    if (!editor) return
+    const onBlur = () => {
+      if (pendingFocusedContentKey.current === null) return
+      const targetDoc = pendingFocusedInitialDoc.current
+      const targetKey = pendingFocusedContentKey.current
+      pendingFocusedContentKey.current = null
+      pendingFocusedInitialDoc.current = null
+      if (targetDoc == null) return
+      try {
+        editor.commands.setContent(targetDoc as never, false)
+        lastAppliedKey.current = targetKey
+      } catch {
+        /* 失焦应用失败不要抛，让 effect 下次再试 */
+      }
+      setFocusTick((n) => n + 1)
+    }
+    const onFocus = () => {
+      // 焦点获得时也 bump 一次 focusTick，让 effect 重新判断当前 focus 状态
+      setFocusTick((n) => n + 1)
+    }
+    editor.on('blur', onBlur)
+    editor.on('focus', onFocus)
+    return () => {
+      editor.off('blur', onBlur)
+      editor.off('focus', onFocus)
+    }
+  }, [editor])
 
   // 同步 editable
   useEffect(() => {

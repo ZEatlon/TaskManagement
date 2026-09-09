@@ -46,6 +46,20 @@ const SCAN_CRON = '* * * * *'
 let cronJob: Cron | null = null
 
 /**
+ * H10 修复 (medium reliability)：原版 cron 每分钟触发一次
+ * scanDueStickies() 但没有任何 in-flight 保护。notify / advanceRecurrence
+ * 路径里有 IO 与 await，扫描耗时长（上百条便签 + 多次 IPC）时下一次 tick
+ * 已经进入，新旧扫描并发 → 同一便签被 showStickyDue 触发两次
+ * （notification UNIQUE 约束兜底，但 advanceRecurrence 的
+ *   UPDATE … WHERE due_at = ? 也会被两次执行 → 第二次 changes=0 静默失败，
+ *   不算严重 bug，但 race window 大到能复现）。
+ *
+ * 修复：维护一个 scanInFlight，cronguard() 检测到 in-flight 直接 skip。
+ * 注意：cronguard 抛错会让 Cron 退订（crontab 语义），必须 catch 并吞。
+ */
+let scanInFlight: Promise<void> | null = null
+
+/**
  * 推进重复便签的 due_at 到下一次触发。
  * 若 RRULE 计算失败，保持原值。
  */
@@ -216,11 +230,20 @@ export function startTaskScheduler(): void {
   }
   resetPendingDue()
   cronJob = new Cron(SCAN_CRON, { name: 'sticky-due-scan' }, async () => {
-    try {
-      await scanDueStickies()
-    } catch (err) {
-      log.error('[sticky-scheduler] scan error', err)
+    // H10 修复：上一轮扫描未完则跳过本轮（不报错，避免 croner 退订）。
+    if (scanInFlight) {
+      log.debug('[sticky-scheduler] previous scan still in-flight; skipping tick')
+      return
     }
+    scanInFlight = scanDueStickies()
+      .then(() => undefined)
+      .catch((err) => {
+        log.error('[sticky-scheduler] scan error', err)
+      })
+      .finally(() => {
+        scanInFlight = null
+      })
+    await scanInFlight
   })
   log.info('[sticky-scheduler] started (cron: every minute)')
 }

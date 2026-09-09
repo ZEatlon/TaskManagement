@@ -3,7 +3,6 @@
  *
  * 使用 TipTap 提供的 generateJSON / generateHTML 桥接到 markdown.ts 的 HTML<->Markdown 工具。
  */
-import { generateHTML } from '@tiptap/html'
 import StarterKit from '@tiptap/starter-kit'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
@@ -56,6 +55,37 @@ export const sharedExtensions = [
 ] as const
 
 /**
+ * H2 修复 (medium perf)：原版每个调用都执行 `[...sharedExtensions] as any`
+ * 并把数组传给 generateHTML —— @tiptap/html 内部每次都要重新构造一个完整的
+ * ProseMirror Schema（解析所有 extensions 的 Node / Mark spec，构造 NodeType
+ * 表，构造 marks 表）。长笔记 + autosave 每秒 10Hz 触发 editorJSONToHTML 时，
+ * 整个 schema 重建过程会占用主线程 5–20ms 一次，明显掉帧。
+ *
+ * 修复：模块加载时通过 `@tiptap/core` 的 `getSchema` 构造一次并缓存；后续
+ * 用 `@tiptap/core` 的 `getHTMLFromFragment(fragment, schema)` 直接序列化，
+ * 跳过 generateHTML 内部那次 getSchema 调用，省掉整套 NodeType / spec 解析。
+ */
+import { getSchema as buildProseMirrorSchema, getHTMLFromFragment as pmGetHTMLFromFragment } from '@tiptap/core'
+import { Node as PMNode } from '@tiptap/pm/model'
+import type { Schema } from '@tiptap/pm/model'
+
+// 把 readonly tuple 转成可变数组（@tiptap/core 的 getSchema 期望可变数组）
+const extensionsArray: unknown[] = [...sharedExtensions]
+let cachedSchema: Schema | null = null
+function getCachedSchema(): Schema {
+  if (cachedSchema) return cachedSchema
+  cachedSchema = buildProseMirrorSchema(extensionsArray as Parameters<typeof buildProseMirrorSchema>[0])
+  return cachedSchema
+}
+
+/** 直接基于缓存 schema 序列化为 HTML（绕开 generateHTML 内部重新构造 schema） */
+function generateHTMLWithCachedSchema(json: object): string {
+  const schema = getCachedSchema()
+  const node = PMNode.fromJSON(schema, json as never)
+  return pmGetHTMLFromFragment(node.content, schema)
+}
+
+/**
  * 将 Markdown 文本解析为 TipTap 文档 JSON
  *
  * 流程：Markdown -> HTML（markdown.ts）-> JSON（@tiptap/html 内部 parseHTML）
@@ -104,7 +134,7 @@ export function editorJSONToMarkdown(json: object): string {
   } catch (err) {
     console.error('[serializer] editorJSONToMarkdown (json path) failed, falling back', err)
     try {
-      const html = generateHTML(json as any, [...sharedExtensions] as any)
+      const html = generateHTMLWithCachedSchema(json)
       return htmlToMarkdown(html)
     } catch (err2) {
       console.error('[serializer] editorJSONToMarkdown fallback failed', err2)
@@ -259,7 +289,7 @@ function jsonTreeToMarkdown(node: unknown): string {
     case 'table_header':
     case 'table_cell': {
       try {
-        const html = generateHTML(n as never, [...sharedExtensions] as any)
+        const html = generateHTMLWithCachedSchema(n as object)
         return htmlToMarkdown(html)
       } catch {
         return ''
@@ -276,7 +306,7 @@ function jsonTreeToMarkdown(node: unknown): string {
  */
 export function editorJSONToHTML(json: object): string {
   try {
-    return generateHTML(json as any, [...sharedExtensions] as any)
+    return generateHTMLWithCachedSchema(json)
   } catch (err) {
     console.error('[serializer] editorJSONToHTML failed', err)
     return ''

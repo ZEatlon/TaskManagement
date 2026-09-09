@@ -169,9 +169,22 @@ function computeStreaks(
   todayKey: string,
 ): { currentStreak: number; longestStreak: number } {
   const days: boolean[] = []
-  for (let t = userStart.getTime(); t <= userEnd.getTime(); t += 86400000) {
-    const key = toISODate(new Date(t))
+  // L7 修复 (low correctness)：原版用 `t += 86400000`（24h）循环 —— 跨
+  // DST 切换日（春令前 / 秋令后各一小时）时本地日期会偏移：
+  //   - 春令跳 1 小时（本地 23h → 次日 01h），同一 t 落在两个本地日期
+  //     → key 算两次 + 漏一个中间日
+  //   - 秋令重 1 小时（本地 01h 重复）→ key 漏一天
+  // 中国大陆没有 DST 几乎不可见；观察 DST 的用户（美 / 欧）热力图
+  // 在切换日附近会少 1 天或重 1 天，连续天数算错。
+  // 修复：用 setDate(getDate() + 1) 一天一天推进，Date 内部按本地日期
+  // 自然吸收 DST（getDate 在春令/秋令日返回正确日编号）。
+  const cursor = new Date(userStart)
+  cursor.setHours(0, 0, 0, 0)
+  const endMs = userEnd.getTime()
+  while (cursor.getTime() <= endMs) {
+    const key = toISODate(cursor)
     days.push((dailyCounts[key] ?? 0) > 0)
+    cursor.setDate(cursor.getDate() + 1)
   }
 
   let longest = 0

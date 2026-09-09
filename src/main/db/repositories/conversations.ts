@@ -16,6 +16,36 @@
 import { dbClient } from '../client'
 import type { AiConversation, AiMessage } from '@shared/types/ai'
 
+/**
+ * H6 修复 (medium data-integrity)：原版 `messages = parsed as AiMessage[]`
+ * 对每个元素不做形状校验，直接强转。损坏记录（人工改库、磁盘 bit flip、
+ * 升级期 schema drift）会让某个元素的 `content` 是 number / object 而
+ * 非 string，渲染端 `message.content` 调用 .length / .trim() 时
+ * TypeError 把整条对话 UI 渲染崩掉。
+ *
+ * 修复：用一个轻量 schema-shape 校验过滤掉破损元素（保留可挽救的兄弟）。
+ * 每个保留下来的元素仍 as AiMessage 强转 —— 这是「信任 caller」的 type
+ * 契约，但运行时不再传 None 错的元素。
+ */
+function looksLikeAiMessage(value: unknown): value is AiMessage {
+  if (!value || typeof value !== 'object') return false
+  const v = value as { id?: unknown; role?: unknown; content?: unknown; ts?: unknown }
+  if (typeof v.id !== 'string' || v.id.length === 0) return false
+  if (typeof v.role !== 'string') return false
+  if (v.content !== null && typeof v.content !== 'string') return false
+  if (typeof v.ts !== 'string') return false
+  // role 仅放行已知枚举
+  if (
+    v.role !== 'system' &&
+    v.role !== 'user' &&
+    v.role !== 'assistant' &&
+    v.role !== 'tool'
+  ) {
+    return false
+  }
+  return true
+}
+
 const convStmtCache = new Map<string, number>()
 let convInvalidatorRegistered = false
 
@@ -370,7 +400,8 @@ export class ConversationsRepository {
       try {
         const parsed = JSON.parse(raw)
         if (Array.isArray(parsed)) {
-          messages = parsed as AiMessage[]
+          // H6 修复：逐元素 schema-shape 校验，过滤破损元素
+          messages = parsed.filter(looksLikeAiMessage) as AiMessage[]
         }
       } catch (_) {
         // 单条记录损坏不应影响整个列表读取

@@ -50,6 +50,15 @@ export class DbClient {
   // （COMMIT 或 ROLLBACK）前不会启动。非事务调用（普通 prepare/run/get）
   // 不受影响。
   private txLock: Promise<unknown> = Promise.resolve()
+  // H7 修复 (high data integrity)：原 txLock 是 Promise 链，非可重入。
+  // stream.ts 的 persist 流「外层 runInTransaction 套内层 appendMessage→
+  // runInTransaction」会造成**死锁**：outer 的 txLock.then(work) 已经把
+  // 锁交给 outer，inner 再次调用 runInTransaction 时把 txLock 覆盖成
+  // outer.then(innerWork) —— 但 outer 此刻正在 await innerWork，永远不会
+  // resolve，inner 永远拿不到锁。
+  // 修复：加 txDepth 计数，已在外层事务内的嵌套调用直接跑 work，不再抢锁
+  // —— 外层 BEGIN/COMMIT 已经覆盖原子性，嵌套只是 work 的一部分。
+  private txDepth = 0
 
   // R25-DI-5 修复 (high cache-stale-after-respawn)：主进程侧的 Repository.stmtCache
   // 是按 SQL 文本缓存 stmtId 的 Map。worker 进程被 scheduleRespawn 重生后，
@@ -269,12 +278,24 @@ export class DbClient {
    * 不会传播给后续 work —— 它们各自独立 try/catch）。
    */
   runInTransaction<T>(work: () => Promise<T>): Promise<T> {
+    // 嵌套调用：已在事务内，无需重复抢锁；外层 BEGIN/COMMIT 覆盖原子性。
+    // 直接跑 work，避免与外层相互等待导致死锁。
+    if (this.txDepth > 0) {
+      return work()
+    }
+    this.txDepth += 1
     const next = this.txLock.then(work, work)
     // 锁的释放只看"本 work 是否完成"，不再串接其结果——避免 work 抛错后
     // 后续 work 永远拿不到锁（Promise 链一断就截断）。
     this.txLock = next.then(
-      () => undefined,
-      () => undefined,
+      () => {
+        this.txDepth -= 1
+        return undefined
+      },
+      () => {
+        this.txDepth -= 1
+        return undefined
+      },
     )
     return next
   }

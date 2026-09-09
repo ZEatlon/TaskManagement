@@ -310,14 +310,32 @@ class NotesWatcher {
       let entries: string[]
       try {
         entries = await readdir(dir)
-      } catch {
+      } catch (err) {
+        // M2 修复 (medium security)：原版 `catch {}` 完全吞错 —— readdir
+        // 失败（权限拒绝 / 临时 IO 错误 / 符号链接到不存在的目标）会让
+        // hydrate 静默退出该子树，用户少看到一批笔记却不报错。改为
+        // 记 warn，循环继续（其他目录不受影响）。
+        log.warn(`[notes-watcher] readdir failed for ${dir}:`, (err as Error).message)
         continue
       }
       for (const name of entries) {
         if (name.startsWith('.') || name.startsWith('~')) continue
         const full = join(dir, name)
-        const statRes = await stat(full).catch(() => null)
+        // M2 修复 (medium security)：原版用 stat()（默认 follow symlinks）
+        // —— 攻击者在 notesDir 下放 notes/secret -> C:\Users\james 的
+        // 软链 / 硬链，hydrate 跟着 readlink 解析，秘密文件内容被
+        // upsertFromFile 写入 notes 表 + frontmatter 解析 + DB 落盘 +
+        // fs-event IPC 把绝对路径广播到 renderer。chokidar 已经
+        // followSymlinks:false（watch 路径），但 hydrate 走 readdir + stat
+        // 不走 chokidar，必须自己防。改用 lstat 不 follow；遇到 symlink
+        // 跳过 readFile。
+        const { lstat } = await import('node:fs/promises')
+        const statRes = await lstat(full).catch(() => null)
         if (!statRes) continue
+        if (statRes.isSymbolicLink()) {
+          log.warn(`[notes-watcher] skipping symlink during hydrate: ${full}`)
+          continue
+        }
         if (statRes.isDirectory()) {
           stack.push(full)
         } else if (EXT_FILTER.test(name)) {

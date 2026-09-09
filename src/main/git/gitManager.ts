@@ -47,6 +47,32 @@ export class GitError extends Error {
 }
 
 /**
+ * H11 修复 (high data integrity)：原版没有「git 操作之间的进程级互斥」。
+ * 表面上 autoSync.ts 内部有 syncInFlight，但 git-handlers.ts 的
+ * GIT_PULL / GIT_PUSH / GIT_COMMIT 直接调 gitManager 的 export 函数，
+ * 完全绕过 autoSync 的锁。后果：
+ *   - 用户在 UI 上点「立即拉取」的同时 cron tick 自动 push → 两条
+ *     isomorphic-git 操作并发跑 → .git/index 写入竞争 → index.lock
+ *     stale / pack 损坏
+ *   - commit 和 push 分开调用时，commit 期间 push 先跑（auto push
+ *     触发）→ push 推的是「老 HEAD」，本地 commit 落不到远端
+ *
+ * 修复：在本文件加一个 module-level 的 mutexPromise，所有 mutating
+ * 操作（commit / pull / push / commitAndPush）都串行进入；读操作
+ * （isRepo / getStatus / getLog / getRemote）不抢锁，避免正常 UI
+ * 显示被互斥阻塞。
+ */
+let gitMutex: Promise<unknown> = Promise.resolve()
+function withGitMutex<T>(work: () => Promise<T>): Promise<T> {
+  const next = gitMutex.then(work, work)
+  gitMutex = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  return next
+}
+
+/**
  * 检测指定目录是否已是 Git 仓库
  *
  * 通过检查 `.git` 入口（目录或文件，worktree 场景下是文件）来判断。
@@ -371,32 +397,34 @@ export async function commit(
   message: string,
   author: { name: string; email: string } = DEFAULT_AUTHOR,
 ): Promise<string | null> {
-  if (!(await isRepo(dir))) {
-    throw new GitError('not-repo', `not a git repository: ${dir}`)
-  }
+  return withGitMutex(async () => {
+    if (!(await isRepo(dir))) {
+      throw new GitError('not-repo', `not a git repository: ${dir}`)
+    }
 
-  const status = await getLocalStatus(dir)
-  if (!status.dirty) {
-    log.info('[git] commit skipped: working tree clean')
-    return null
-  }
+    const status = await getLocalStatus(dir)
+    if (!status.dirty) {
+      log.info('[git] commit skipped: working tree clean')
+      return null
+    }
 
-  // 把所有变更文件加入 index（modified + untracked + 删除）
-  const all = Array.from(
-    new Set([...status.modified, ...status.untracked, ...status.deleted]),
-  )
-  for (const filepath of all) {
-    await git.add({ fs, dir, filepath })
-  }
+    // 把所有变更文件加入 index（modified + untracked + 删除）
+    const all = Array.from(
+      new Set([...status.modified, ...status.untracked, ...status.deleted]),
+    )
+    for (const filepath of all) {
+      await git.add({ fs, dir, filepath })
+    }
 
-  const sha = await git.commit({
-    fs,
-    dir,
-    message,
-    author,
+    const sha = await git.commit({
+      fs,
+      dir,
+      message,
+      author,
+    })
+    log.info(`[git] committed ${sha.slice(0, 7)}: ${message}`)
+    return sha
   })
-  log.info(`[git] committed ${sha.slice(0, 7)}: ${message}`)
-  return sha
 }
 
 /**
@@ -405,38 +433,40 @@ export async function commit(
  * 流程：fetch → merge（fast-forward only）
  */
 export async function pull(dir: string): Promise<{ oid: string; summary: string } | null> {
-  if (!(await isRepo(dir))) {
-    throw new GitError('not-repo', `not a git repository: ${dir}`)
-  }
-  const remote = await getRemote(dir)
-  if (!remote) {
-    throw new GitError('no-remote', 'no remote configured')
-  }
-
-  try {
-    const token = await resolveAuth()
-    await git.fetch({
-      fs,
-      http,
-      dir,
-      singleBranch: true,
-      onAuth: makeOnAuth(remote.url, token),
-    })
-    // fast-forward merge
-    const result = await git.merge({
-      fs,
-      dir,
-      theirs: remote.remote,
-      fastForwardOnly: true,
-    })
-    log.info(`[git] pulled from ${remote.remote}: ${JSON.stringify(result)}`)
-    return {
-      oid: (result as { oid?: string }).oid ?? '',
-      summary: (result as { mergeCommit?: { message?: string } }).mergeCommit?.message ?? 'fast-forward',
+  return withGitMutex(async () => {
+    if (!(await isRepo(dir))) {
+      throw new GitError('not-repo', `not a git repository: ${dir}`)
     }
-  } catch (err) {
-    throw mapGitError(err, 'pull')
-  }
+    const remote = await getRemote(dir)
+    if (!remote) {
+      throw new GitError('no-remote', 'no remote configured')
+    }
+
+    try {
+      const token = await resolveAuth()
+      await git.fetch({
+        fs,
+        http,
+        dir,
+        singleBranch: true,
+        onAuth: makeOnAuth(remote.url, token),
+      })
+      // fast-forward merge
+      const result = await git.merge({
+        fs,
+        dir,
+        theirs: remote.remote,
+        fastForwardOnly: true,
+      })
+      log.info(`[git] pulled from ${remote.remote}: ${JSON.stringify(result)}`)
+      return {
+        oid: (result as { oid?: string }).oid ?? '',
+        summary: (result as { mergeCommit?: { message?: string } }).mergeCommit?.message ?? 'fast-forward',
+      }
+    } catch (err) {
+      throw mapGitError(err, 'pull')
+    }
+  })
 }
 
 /**
@@ -447,36 +477,38 @@ export async function pull(dir: string): Promise<{ oid: string; summary: string 
   这里改成查询 currentBranch()，detached HEAD 时降级回 DEFAULT_BRANCH。
  */
 export async function push(dir: string): Promise<void> {
-  if (!(await isRepo(dir))) {
-    throw new GitError('not-repo', `not a git repository: ${dir}`)
-  }
-  const remote = await getRemote(dir)
-  if (!remote) {
-    throw new GitError('no-remote', 'no remote configured')
-  }
+  return withGitMutex(async () => {
+    if (!(await isRepo(dir))) {
+      throw new GitError('not-repo', `not a git repository: ${dir}`)
+    }
+    const remote = await getRemote(dir)
+    if (!remote) {
+      throw new GitError('no-remote', 'no remote configured')
+    }
 
-  let branchToPush = DEFAULT_BRANCH
-  try {
-    const cur = await git.currentBranch({ fs, dir })
-    if (cur && cur !== 'HEAD') branchToPush = cur
-  } catch (err) {
-    log.warn(`[git] push: currentBranch failed, fallback to ${DEFAULT_BRANCH}:`, (err as Error).message)
-  }
+    let branchToPush = DEFAULT_BRANCH
+    try {
+      const cur = await git.currentBranch({ fs, dir })
+      if (cur && cur !== 'HEAD') branchToPush = cur
+    } catch (err) {
+      log.warn(`[git] push: currentBranch failed, fallback to ${DEFAULT_BRANCH}:`, (err as Error).message)
+    }
 
-  try {
-    const token = await resolveAuth()
-    await git.push({
-      fs,
-      http,
-      dir,
-      remote: remote.remote,
-      ref: branchToPush,
-      onAuth: makeOnAuth(remote.url, token),
-    })
-    log.info(`[git] pushed to ${remote.remote}/${branchToPush}`)
-  } catch (err) {
-    throw mapGitError(err, 'push')
-  }
+    try {
+      const token = await resolveAuth()
+      await git.push({
+        fs,
+        http,
+        dir,
+        remote: remote.remote,
+        ref: branchToPush,
+        onAuth: makeOnAuth(remote.url, token),
+      })
+      log.info(`[git] pushed to ${remote.remote}/${branchToPush}`)
+    } catch (err) {
+      throw mapGitError(err, 'push')
+    }
+  })
 }
 
 /**
@@ -495,17 +527,19 @@ export async function commitAndPush(dir: string, message: string): Promise<{
   pushed: boolean
   sha: string | null
 }> {
-  const sha = await commit(dir, message)
-  if (!sha) {
-    // 无变更：committed=false, pushed=false（明确表示"没推"而非"推成功"）
-    return { committed: false, pushed: false, sha: null }
-  }
-  try {
-    await push(dir)
-    return { committed: true, pushed: true, sha }
-  } catch (err) {
-    return { committed: true, pushed: false, sha }
-  }
+  return withGitMutex(async () => {
+    const sha = await commit(dir, message)
+    if (!sha) {
+      // 无变更：committed=false, pushed=false（明确表示"没推"而非"推成功"）
+      return { committed: false, pushed: false, sha: null }
+    }
+    try {
+      await push(dir)
+      return { committed: true, pushed: true, sha }
+    } catch (err) {
+      return { committed: true, pushed: false, sha }
+    }
+  })
 }
 
 /**

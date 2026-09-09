@@ -1,6 +1,7 @@
 /**
  * 设置仓储（key-value）
  */
+import log from '../../log'
 import { dbClient } from '../client'
 
 /** R28-Perf-4 修复 (medium perf)：withStatement 仍每次 prepare + finalize，
@@ -40,9 +41,21 @@ export class SettingsRepository {
       })) as { value: string } | null
       if (!row) return null
       try {
+        // H5 修复 (medium data-integrity)：原版 JSON.parse 失败时
+        // `return row.value as unknown as T` —— 直接把字符串塞回去当作
+        // 「调用方期望的 T」返回。调用方若期望 object / array（T 是结构
+        // 类型），实际拿到 string 会让 .field 访问变成 undefined、序列化
+        // JSON.stringify 时丢字段。修复：parse 失败也明确告知调用方：
+        // 返回 null（与 row 缺失语义一致）。调用方已有 null fallback 路径。
+        // 若 row.value 是合法 JSON 但不是 T（schema drift / 旧版数据），
+        // 仍然按 as T 透传 —— 这是 type-only 的「信任 caller」契约。
         return JSON.parse(row.value) as T
-      } catch (_) {
-        return row.value as unknown as T
+      } catch (err) {
+        log.warn(
+          `[settings] key '${key}' has malformed JSON; treating as missing:`,
+          (err as Error).message,
+        )
+        return null
       }
     })
   }

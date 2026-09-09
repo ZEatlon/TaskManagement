@@ -586,61 +586,61 @@ export async function runStream(
       // work 仍自行发 BEGIN/COMMIT，但互斥锁保证前一个事务完全收尾前 work
       // 不会启动。
       await dbClient.runInTransaction(async () => {
-        await dbClient.call('exec', { sql: 'BEGIN' })
-        try {
-          // R20 修复 (medium data-integrity)：循环外捕获的 `now` 在所有新消息上
-          // 复用 → 一批 6 轮多工具调用产出 18 条 row 共享同一 `ts`，未来按 ts 排
-          // 序或区间过滤的查询（"最近一小时消息"、"批处理导入去重"）会把它们
-          // 折叠到同一瞬时。改成每次迭代取一个新 ISO，保证 messages_json 内顺序
-          // 与 ts 顺序严格一致。
-          for (const m of newMessages) {
-            const now = new Date().toISOString()
-            if (m.role === 'assistant') {
-              await conversationsRepo.appendMessage(req.conversationId, {
-                id: crypto.randomUUID(),
-                role: 'assistant',
-                content: m.content,
-                ...(m.toolCalls && m.toolCalls.length > 0
-                  ? {
-                      toolCalls: m.toolCalls.map((tc) => ({
-                        id: tc.id,
-                        name: tc.name,
-                        arguments: tc.arguments,
-                      })),
-                    }
-                  : {}),
-                ts: now,
-              })
-            } else if (m.role === 'tool') {
-              // 工具结果消息：必须带上 toolCallId 让前端能匹配回 assistant.toolCalls
-              await conversationsRepo.appendMessage(req.conversationId, {
-                id: crypto.randomUUID(),
-                role: 'tool',
-                content: m.content,
-                toolCallId: m.toolCallId,
-                toolName: m.name,
-                toolResult: safeParseToolResult(m.content),
-                ts: now,
-              })
-            }
+        // C2 修复 (CRITICAL deadlock)：appendMessage 内部**已经**走
+        // dbClient.runInTransaction + 自行 BEGIN/COMMIT（FIFO trim 的原子
+        // 边界要求）；原版在这里又发 BEGIN 形成「嵌套事务死锁」—— 外层
+        // 把 txLock 抢走后 await appendMessage，内层 runInTransaction 又
+        // 等外层释放 txLock，永远等不到。
+        // 修复：去掉外层 BEGIN/COMMIT/ROLLBACK，让每条 appendMessage 走
+        // 自己的事务（已被 txLock 串行化保证不并发）。代价：消息集合 vs
+        // token 计数不再是单事务原子——假定 18 条消息写到一半崩溃可能丢
+        // 最后几条但 token 已部分累计，这是可接受的 tradeoff（vs. 完全
+        // 死锁）；token delta 用 SQL 原子增量，崩在 appendMessage 之前
+        // token delta 还没发出，崩在 delta 之后 token 多算几条不破坏不变量。
+        // R20 修复 (medium data-integrity)：循环外捕获的 `now` 在所有新消息上
+        // 复用 → 一批 6 轮多工具调用产出 18 条 row 共享同一 `ts`，未来按 ts 排
+        // 序或区间过滤的查询（"最近一小时消息"、"批处理导入去重"）会把它们
+        // 折叠到同一瞬时。改成每次迭代取一个新 ISO，保证 messages_json 内顺序
+        // 与 ts 顺序严格一致。
+        for (const m of newMessages) {
+          const now = new Date().toISOString()
+          if (m.role === 'assistant') {
+            await conversationsRepo.appendMessage(req.conversationId, {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: m.content,
+              ...(m.toolCalls && m.toolCalls.length > 0
+                ? {
+                    toolCalls: m.toolCalls.map((tc) => ({
+                      id: tc.id,
+                      name: tc.name,
+                      arguments: tc.arguments,
+                    })),
+                  }
+                : {}),
+              ts: now,
+            })
+          } else if (m.role === 'tool') {
+            // 工具结果消息：必须带上 toolCallId 让前端能匹配回 assistant.toolCalls
+            await conversationsRepo.appendMessage(req.conversationId, {
+              id: crypto.randomUUID(),
+              role: 'tool',
+              content: m.content,
+              toolCallId: m.toolCallId,
+              toolName: m.name,
+              toolResult: safeParseToolResult(m.content),
+              ts: now,
+            })
           }
-          // token 累计走 SQL 原子增量（conversationsRepo.updateTokensDelta），
-          // 避免 read-modify-write 与并发流竞争导致计数丢失。
-          if (totalInput > 0 || totalOutput > 0) {
-            await conversationsRepo.updateTokensDelta(
-              req.conversationId,
-              totalInput,
-              totalOutput,
-            )
-          }
-          await dbClient.call('exec', { sql: 'COMMIT' })
-        } catch (txErr) {
-          try {
-            await dbClient.call('exec', { sql: 'ROLLBACK' })
-          } catch {
-            /* rollback 失败吞掉 */
-          }
-          throw txErr
+        }
+        // token 累计走 SQL 原子增量（conversationsRepo.updateTokensDelta），
+        // 避免 read-modify-write 与并发流竞争导致计数丢失。
+        if (totalInput > 0 || totalOutput > 0) {
+          await conversationsRepo.updateTokensDelta(
+            req.conversationId,
+            totalInput,
+            totalOutput,
+          )
         }
       })
     } catch (err) {

@@ -43,6 +43,21 @@ import {
 
 const CONFIG_KEY = 'pomodoro.config'
 
+/**
+ * H9 修复 (high correctness)：原版 handlePhaseComplete 是 fire-and-forget
+ * —— startPomodoroService 内 `void handlePhaseComplete(...)` 启动异步链
+ * 但没有 generation token。如果用户在 phase 完成 → DB 写完 → IPC 推送前
+ * 调 stopPomodoroService() / 重启服务，新一轮 phase 也会调
+ * handlePhaseComplete，老一轮的 await 仍然继续把「已停止服务」的 phase
+ * 落 DB + 给用户发通知 → 用户看到的记录 / 通知对应一个他们认为已经
+ * 取消的服务。
+ *
+ * 维护 generation 计数器；startPomodoroService 时自增；handlePhaseComplete
+ * 入口捕获快照，每个 await 之后校验是否仍为当前 generation —— 不一致
+ * 直接 return，所有副作用都被截断。
+ */
+let pomodoroGeneration = 0
+
 /** 在内存中缓存 stickyNoteId -> stickyTitle（避免每次都查 DB）
  *
  * R11 修复 (high #11)：原版 cacheStickyTitleAsync 只在 findById 之后写入缓存，
@@ -60,11 +75,15 @@ export function invalidateStickyTitle(stickyNoteId: string): void {
 
 /** 启动 service：把 engine 回调绑到 service/通知 上 */
 export function startPomodoroService(): void {
+  // H9 修复：每次 start 自增 generation，让任何在 stop/start 间隙起跑的
+  // handlePhaseComplete 在下一个 await 校验处直接 return。
+  pomodoroGeneration += 1
   timerEngine.onTick = (state) => emitTick(state)
   timerEngine.onStateChanged = (state) => emitStateChanged(state)
   timerEngine.onStopped = (state) => emitStopped(state)
   timerEngine.onPhaseComplete = (finished, next, prevMode) => {
-    void handlePhaseComplete(finished, next, prevMode)
+    const gen = pomodoroGeneration
+    void handlePhaseComplete(finished, next, prevMode, gen)
   }
   // 异步加载配置（不阻塞启动）
   void loadConfigIntoEngine()
@@ -73,6 +92,9 @@ export function startPomodoroService(): void {
 
 /** 关闭时清理（保留 engine 实例，但停止计时器） */
 export function stopPomodoroService(): void {
+  // H9 修复：让任何在 stop 时仍在飞行的 handlePhaseComplete 在下一个
+  // await 校验处停止写 DB / 推 IPC。
+  pomodoroGeneration += 1
   timerEngine.stop()
   stickyTitleCache.clear()
   log.info('[pomodoro] service stopped')
@@ -295,7 +317,13 @@ async function handlePhaseComplete(
   },
   nextState: PomodoroState,
   prevMode: PomodoroMode,
+  // H9 修复：传入 generation 快照，每个 await 后校验；不一致直接 return，
+  // 避免 stopPomodoroService() 之后仍在飞行的副作用写 DB / 推 IPC。
+  gen: number,
 ): Promise<void> {
+  // generation 守卫 helper —— 闭包内多 await 都用同一个 gen。
+  const guard = (): boolean => gen === pomodoroGeneration
+  if (!guard()) return
   const now = new Date().toISOString()
   const startedAt = finished.startedAt ?? now
   // 真实专注时长：按 elapsedSeconds 折算（避免 skip 时把整阶段算作完成）
@@ -361,6 +389,8 @@ async function handlePhaseComplete(
           throw txErr
         }
       })
+      // H9 修复：事务完成后再次校验 generation；已被 stop 替换则不再发通知。
+      if (!guard()) return
       // 3. 通知（系统 + IPC 推送）
       // R11 修复 (high #10)：原来用 finished.totalSec（配置的整段时间）算出
       // durationMin → 用户 30 秒就 skip，系统通知仍报"25 分钟"。现在按真实
@@ -395,6 +425,7 @@ async function handlePhaseComplete(
       )
     }
     // 4. 如果自动开始下一阶段（且是 break 开始时，给个静默提醒）
+    if (!guard()) return
     if (nextState.running && nextState.mode !== 'focus') {
       await notifyAutoStart(nextState)
     }

@@ -63,9 +63,26 @@ export async function getSecret(key: string): Promise<string | null> {
   const store = await getStore()
   const raw = store.get(key) as EncryptedSecret | undefined
   if (!raw) return null
+  // H16 修复 (high data-integrity)：原版仅校验 `algo` 字段，没校验 `cipher`
+  // 字段类型 / 非空。被 OS keyring 状态变更 / 手动编辑破坏的 json
+  // （cipher 为 null、空字符串、数字、对象）会直接传给 Buffer.from，
+  // 行为未定义；safeStorage.decryptString 后续又会抛「unable to
+  // decrypt」。现在加 schema-shape 校验：cipher 必须是非空 string
+  // 且能被 base64 解码出非空 buffer。任何不匹配视为「槽位损坏」，
+  // 删除并返回 null（与原版 catch 路径行为一致，避免循环触发）。
   if (raw.algo !== 'safeStorage-v1') return null
+  if (typeof raw.cipher !== 'string' || raw.cipher.length === 0) {
+    log.warn(`[security] secret '${key}' has invalid cipher payload; clearing slot`)
+    store.delete(key)
+    return null
+  }
   try {
     const buf = Buffer.from(raw.cipher, 'base64')
+    if (buf.length === 0) {
+      log.warn(`[security] secret '${key}' cipher decoded to empty buffer; clearing slot`)
+      store.delete(key)
+      return null
+    }
     return safeStorage.decryptString(buf)
   } catch (err) {
     log.warn(`[security] failed to decrypt '${key}': ${err}`)

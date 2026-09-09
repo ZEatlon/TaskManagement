@@ -224,13 +224,31 @@ export function NoteEditor({ path, onSaved }: Props) {
   // 卸载清 timer
   useEffect(() => {
     return () => {
-      if (autosaveTimer.current) clearTimeout(autosaveTimer.current)
+      // H18 修复 (high data-integrity)：原版仅 clearTimeout(autosaveTimer)，
+      // 组件卸载前若用户敲了字符但 1.5s autosave 还没触发 → timer 直接被
+      // 清掉 → 那段字符永远没机会落盘。修复：清理 timer **之前** 先把
+      // pending 内容同步落盘（fire-and-forget，cleanup 不能 await）。调用
+      // autosave.flush 走 IndexedDB 草稿 store（同步函数实现，cleanup
+      // 里可同步完成），同时 doSave 走笔记文件 IPC（异步，promise 保留
+      // 在事件循环里跑）。两条路都覆盖：即便 IPC 失败，至少 IndexedDB
+      // 草稿还在，下次打开同一笔记还能恢复。
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current)
+        autosaveTimer.current = null
+        // 把最新内容刷成 IndexedDB 草稿 —— 即便 unmount 也保留在 disk。
+        try {
+          void autosave.flush(draftMd)
+        } catch (err) {
+          console.warn('[NoteEditor] autosave flush on unmount failed', err)
+        }
+      }
       // R7F-5：顺手清掉 reportEdit debounce，避免组件卸载后还触发陈旧 IPC
       if (reportEditTimerRef.current !== null) {
         window.clearTimeout(reportEditTimerRef.current)
         reportEditTimerRef.current = null
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // AI 集成：当用户打开笔记时把 ID 同步给主进程（summarizeNote 工具据此决定是否返回正文）；
