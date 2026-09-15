@@ -544,11 +544,22 @@ export async function commitAndPush(dir: string, message: string): Promise<{
 
 /**
  * 读取最近 N 条提交记录
+ *
+ * R-Fix-GIT_LOG-depth-unbounded (low)：与 IPC handler 同步在仓库层
+ * 钳 depth 到 [1, MAX_LOG_DEPTH]。handler 钳 + 这里再钳 = 纵深防御：
+ * 未来若有非 IPC 调用方（autoSync / 测试 / 命令行工具）忘走 handler
+ * 校验也不会触发全历史遍历。
  */
+const MAX_LOG_DEPTH = 500
+
 export async function getLog(dir: string, depth = 20): Promise<GitLogEntry[]> {
   if (!(await isRepo(dir))) {
     return []
   }
+  const safeDepth =
+    typeof depth === 'number' && Number.isFinite(depth)
+      ? Math.min(MAX_LOG_DEPTH, Math.max(1, Math.floor(depth)))
+      : 20
   try {
     // R28-Corr-2 修复 (medium correctness)：原版硬编码 `ref: DEFAULT_BRANCH`
     // ('main')，与 push() 已经在用的 currentBranch() 模式不一致 —— 仓库
@@ -565,7 +576,7 @@ export async function getLog(dir: string, depth = 20): Promise<GitLogEntry[]> {
         (err as Error).message,
       )
     }
-    const commits = await git.log({ fs, dir, depth, ref })
+    const commits = await git.log({ fs, dir, depth: safeDepth, ref })
     return commits.map((c) => ({
       sha: c.oid,
       message: c.commit.message,

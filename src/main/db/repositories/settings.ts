@@ -3,33 +3,19 @@
  */
 import log from '../../log'
 import { dbClient } from '../client'
+import { withCached } from '../cachedStmt'
 
 /** R28-Perf-4 修复 (medium perf)：withStatement 仍每次 prepare + finalize，
  * 即便 SQL 是常量。settings get/set/getAll/delete 在 settings 页 mount /
- * scheduler 通知等路径高频调用，每分钟都付一次 IPC。引入 per-repo
- * stmtCache 命中后直接拿 stmtId，不再 finalize。
+ * scheduler 通知等路径高频调用，每分钟都付一次 IPC。改为走 module-scope
+ * `withCached` 共享 cache：相同 SQL 文本命中即拿 stmtId，不再 finalize。
+ * worker respawn 时 cache 由 cachedStmt 的 invalidator 自动清空。
  */
-const settingsStmtCache = new Map<string, number>()
-let settingsInvalidatorRegistered = false
-
 async function withStatement<T>(
   sql: string,
   run: (stmtId: number) => Promise<T>,
 ): Promise<T> {
-  if (!settingsInvalidatorRegistered) {
-    dbClient.registerStmtCacheInvalidator(() => {
-      settingsStmtCache.clear()
-    })
-    settingsInvalidatorRegistered = true
-  }
-  let stmtId = settingsStmtCache.get(sql)
-  if (stmtId === undefined) {
-    stmtId = (
-      await dbClient.call<{ stmtId: number }>('prepare', { sql })
-    ).stmtId
-    settingsStmtCache.set(sql, stmtId)
-  }
-  return run(stmtId)
+  return withCached(sql, run)
 }
 
 export class SettingsRepository {

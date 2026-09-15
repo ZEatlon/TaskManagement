@@ -14,7 +14,7 @@
  *   - 触底/触顶 → 窗口向外扩 14 天
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useStickyNotesStore } from '../../stores/stickyNotes'
+import { useStickyNotesStore, buildNoteDayIndex } from '../../stores/stickyNotes'
 import { stickyNotesApi } from '../../lib/ipc'
 import {
   addDays,
@@ -24,12 +24,14 @@ import {
 } from '../../lib/date'
 import { useDayRollover } from '../../lib/useDayRollover'
 import { StickyDaySection } from './StickyDaySection'
+import { announce } from '../common/AriaAnnouncer'
 import type {
   StickyNote,
   StickyNoteUpdate,
   StickyNoteStepPatch,
   Priority,
 } from '@shared/types'
+import { PRIORITIES, PRIORITY_LABEL } from '@shared/lib/priorities'
 
 /** 默认窗口半径（前后天数）。
  *  说明：实际渲染的「日 section」数量由 `renderDays` 动态计算（基础 3 天 + 有便签的日期），
@@ -37,6 +39,22 @@ import type {
 const INITIAL_RADIUS = 7
 /** 每次扩展的步长 */
 const EXPAND_RADIUS = 7
+/**
+ * R-fix-sectionPropsByDate-ref-instability (medium perf)：搜索 / 优先级
+ * 过滤切换时，filteredByDate 不再返回 byDate 引用而是构造一个全新的
+ * out 记录，对过滤命中的日期用新数组、对「基础 2 天（今天 / 明天）但
+ * 过滤后空」的日期不会写键 → sectionPropsByDate 内 `?? []` 会每次
+ * 都新建一个 `[]` 字面量，导致 StickyDaySection memo 浅比较 `notes`
+ * 永远失败、整棵子树被 reconcile。
+ *
+ * 用 module-level 冻结的 EMPTY_NOTES 常量替代 `?? []`：跨 render / 跨
+ * 过滤切换都是同一个引用，StickyDaySection 默认 React.memo 的
+ * Object.is 直接命中、无 props 变更跳过 re-render。类型断言为
+ * StickyNote[] 是因为下游 StickyDaySection 的 notes 类型仍是可变数组
+ * —— StickyDaySection 自身只读访问（.length / .map），无变异，运行时
+ * 安全；冻结保证任何意外 push/splice 在开发态立即抛错。
+ */
+const EMPTY_NOTES: StickyNote[] = Object.freeze([]) as unknown as StickyNote[]
 
 interface Props {
   /** 可选：传入固定的今日键（默认 = 当前日期），方便测试 */
@@ -71,9 +89,36 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
   }
   const [toast, setToast] = useState<ToastEntry | null>(null)
   const toastTimerRef = useRef<number | null>(null)
+  // R-Fix1 (high correctness)：mirror 当前活动 toast 引用。state 在闭包
+  // / 卸载路径下拿不到（unmount 后 setState 已无法 dispatch），ref 才能让
+  // 链式切换 / 卸载清理拿到"上一个 toast 对应的便签 id"，从而补发硬删
+  // IPC，避免上一个便签被遗忘在 archived=true 状态。
+  const currentToastRef = useRef<ToastEntry | null>(null)
 
   const startToast = useCallback(
     (entry: ToastEntry) => {
+      // R-Fix1 (high correctness)：上一个 toast 的 5s 硬删 timer 即将被清掉，
+      // 但其便签在 DB 已是 archived=true。若不补一次硬删 IPC，上一个便签
+      // 会永久停留在 archived 状态（既不在撤销 toast 里，也不会被
+      // hard-delete IPC 清掉）。改为：开始新 toast 前先给上一个 toast 对应的
+      // 便签补一次 hard-delete + 从 store 剔除。store.remove 同时发 IPC
+      // remove 并做本地剔除，正好对应当前语义。skip 同 noteId 自链。
+      const prev = currentToastRef.current
+      if (prev && prev.noteId !== entry.noteId) {
+        // R-fix-toast-remove-silent (medium)：链式切换 toast 时，上一个
+        // 便签的 hard-delete IPC 失败会让它永久停在 archived 状态。store
+        // 内部已 rollback byDate / all，但上层必须留痕便于排查 —— 不再
+        // 静默吞错。
+        void useStickyNotesStore
+          .getState()
+          .remove(prev.noteId)
+          .catch((err) => {
+            console.warn('[sticky-timeline] forced remove (toast chain) failed', {
+              noteId: prev.noteId,
+              err,
+            })
+          })
+      }
       if (toastTimerRef.current !== null) {
         // R20 修复 (high memory-leak)：toastTimerRef 是 setTimeout handle，
         // 必须 clearTimeout —— 用 clearInterval 不报错但什么也不清，导致
@@ -81,6 +126,7 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
         // 触发（甚至在组件卸载后调用 setState 触发 React warning）。三处都改。
         window.clearTimeout(toastTimerRef.current)
       }
+      currentToastRef.current = entry
       setToast(entry)
       // R12 修复 (medium)：5s 倒计时由 DeleteToast 子组件本地 state 维护，
       // 这里仅启动到期清理定时器 —— 不再 setInterval 触发父组件重渲染。
@@ -89,7 +135,23 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
           window.clearTimeout(toastTimerRef.current)
           toastTimerRef.current = null
         }
-        stickyNotesApi.remove(entry.noteId).catch(() => {})
+        currentToastRef.current = null
+        // R-Fix3 (medium correctness)：5s 到期后不仅要把 DB 行删掉，还要
+        // 把 store 里的 row 也剔除 —— 否则 UI 会等到下次 fetchRange /
+        // loadAllFiltered 才看到卡片消失，期间用户可能误以为删除失败。
+        // store.remove 既做本地剔除也发 IPC remove，正好对应"撤销窗口结束 → 删"的语义。
+        void useStickyNotesStore
+          .getState()
+          .remove(entry.noteId)
+          .catch((err) => {
+            // R-fix-toast-remove-silent (medium)：5s 到期硬删 IPC 失败时
+            // 必须留痕（store 已 rollback UI 状态，但用户看不到便签被删，
+            // 排查无 console 会很费劲）。
+            console.warn('[sticky-timeline] hard-delete on toast expiry failed', {
+              noteId: entry.noteId,
+              err,
+            })
+          })
         setToast(null)
       }, Math.max(0, entry.expiresAt - Date.now()))
     },
@@ -101,31 +163,31 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
       if (toastTimerRef.current !== null) {
         window.clearTimeout(toastTimerRef.current)
       }
+      // R-Fix2 (medium correctness)：组件卸载时如果还有未到期的 toast，
+      // 5s 硬删 timer 不会触发（clearTimeout 后无人补发），那个便签就被
+      // 遗忘在 archived 状态。补发一次 hard-delete IPC + store 剔除，
+      // 让用户意图（"5s 后删"）即使在卸载路径下也得到尊重。fire-and-forget
+      // 即可 —— 卸载后 setState 无意义，不需 await。
+      const pending = currentToastRef.current
+      if (pending) {
+        currentToastRef.current = null
+        // R-fix-toast-remove-silent (medium)：组件卸载时补发的硬删 IPC
+        // 失败需要留痕 —— 此时无 UI 可观察，无 console 会无法追溯。
+        void useStickyNotesStore
+          .getState()
+          .remove(pending.noteId)
+          .catch((err) => {
+            console.warn('[sticky-timeline] hard-delete on unmount failed', {
+              noteId: pending.noteId,
+              err,
+            })
+          })
+      }
     }
   }, [])
 
-  const handleSoftDelete = useCallback(
-    async (note: { id: string; title: string; archived: boolean }) => {
-      // 软删除：先 archive(true)，5s 后真正删；期间可撤销
-      const wasArchived = note.archived
-      try {
-        await stickyNotesApi.archive(note.id, true)
-      } catch (err) {
-        // R5-1：archive 失败时不要继续排定硬删 —— 用户会以为撤销窗口还有效，
-        // 但 5s 后便签会神秘消失。改为直接退出并提示。
-        console.warn('[sticky-timeline] archive failed; skip soft-delete toast', err)
-        return
-      }
-      startToast({
-        id: `toast-${Date.now()}`,
-        noteId: note.id,
-        noteTitle: note.title,
-        previousArchived: wasArchived,
-        expiresAt: Date.now() + 5_000,
-      })
-    },
-    [startToast],
-  )
+  // 注意：handleSoftDelete 在文件下方声明（依赖同 scope 的 applyServerNote，
+  // const 声明有 TDZ，必须等 applyServerNote 先初始化才能放进 deps）。
 
   const handleUndo = useCallback(() => {
     if (!toast) return
@@ -133,8 +195,24 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
       window.clearTimeout(toastTimerRef.current)
       toastTimerRef.current = null
     }
+    currentToastRef.current = null
     // 撤销 = 取消 archive
-    stickyNotesApi.archive(toast.noteId, toast.previousArchived).catch(() => {})
+    // R-fix-undo-archive-silent (high)：undo 失败时便签仍停留在
+    // archived=true，但 UI 已关闭 toast、看起来撤销成功 —— 必须留痕 +
+    // 公告，并主动重新拉取该便签以让 UI 反映真实 DB 状态。
+    stickyNotesApi
+      .archive(toast.noteId, toast.previousArchived)
+      .then((updated) => {
+        if (updated) applyServerNote(updated)
+      })
+      .catch((err) => {
+        console.warn('[sticky-timeline] undo archive failed', {
+          noteId: toast.noteId,
+          previousArchived: toast.previousArchived,
+          err,
+        })
+        announce('撤销失败，请稍后重试', 'assertive')
+      })
     setToast(null)
   }, [toast])
 
@@ -145,6 +223,69 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
 
   const [hasScrolledToToday, setHasScrolledToToday] = useState(false)
   const [showJump, setShowJump] = useState(false)
+
+  // R-fix-focus-sticky-noop：navigateBridge 在 router.navigate() 完成后
+  // 通过 `taskpilot:focus-sticky` CustomEvent 透传 LLM 的「跳到这条便签」
+  // 意图（registry.ts:965-975 focusStickyId 字段）。监听事件 → 在当前
+  // byDate 中定位 → scrollIntoView + 加 is-highlight 类 2.5s，自动清掉。
+  //
+  // 找不到的原因通常是：便签不在当前 ±7 天窗口（需手动展开）；或 id 已被
+  // 删除。这两种都是正常 no-op，不报错，只 console.warn 便于排查。
+  //
+  // R-fix-focus-sticky-feedback：querySelector 同步执行，结果立即通过
+  // `taskpilot:focus-sticky-result` CustomEvent 回给 navigateBridge（后者
+  // 在 ackNavigate payload 里透传给主进程，navigateTo 结果多出 focusApplied
+  // 字段），让 LLM 能区分「高亮命中」和「便签不在当前窗口」——避免之前
+  // 永远 ok:true 让 LLM 自信告诉用户"已跳转并高亮"而实际啥都没动。
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const highlightTimerRef = useRef<number | null>(null)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ stickyNoteId?: unknown }>).detail
+      const id = detail && typeof detail === 'object' ? detail.stickyNoteId : null
+      if (typeof id !== 'string' || !id) return
+      // 取消上一个 highlight 计时器，避免重叠
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current)
+        highlightTimerRef.current = null
+      }
+      // 同步 querySelector：data-note-id 是无条件渲染的属性（StickyNoteCard
+      // 不依赖 highlight 状态），所以「现在 DOM 里有没有这张卡」与
+      // setHighlightId 是否已 commit 无关——可以同步判定，不阻塞 ack。
+      const target = document.querySelector<HTMLElement>(
+        `.sticky-note-card[data-note-id="${CSS.escape(id)}"]`,
+      )
+      const applied = target !== null
+      window.dispatchEvent(
+        new CustomEvent('taskpilot:focus-sticky-result', {
+          detail: { stickyNoteId: id, applied },
+        }),
+      )
+      if (!target) {
+        console.warn('[sticky-timeline] focus-sticky: note not in current window', id)
+        // 没命中就不挂高亮计时器，避免给一个不存在的卡加类造成视觉噪声
+        return
+      }
+      setHighlightId(id)
+      // 下一帧再 scrollIntoView：setHighlightId 已触发 React 调度，但
+      // 真实 DOM 可能还在 commit。rAF 确保滚动时目标已挂载。
+      window.requestAnimationFrame(() => {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      })
+      highlightTimerRef.current = window.setTimeout(() => {
+        highlightTimerRef.current = null
+        setHighlightId((cur) => (cur === id ? null : cur))
+      }, 2500)
+    }
+    window.addEventListener('taskpilot:focus-sticky', handler)
+    return () => {
+      window.removeEventListener('taskpilot:focus-sticky', handler)
+      if (highlightTimerRef.current !== null) {
+        window.clearTimeout(highlightTimerRef.current)
+        highlightTimerRef.current = null
+      }
+    }
+  }, [])
   // P0-2：搜索 + 优先级过滤（前端二次过滤）
   const [query, setQuery] = useState('')
   // R12 修复 (low)：搜索输入 + 过滤 useMemo 会在每次 keystroke 时对所有
@@ -365,19 +506,33 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
   )
   const handleAddStep = useCallback(
     (noteId: string, content: string) => {
-      addStep(noteId, content).catch(() => {})
+      addStep(noteId, content).catch((err) => {
+        // R-fix-step-handlers-silent-fail (high)：用户主动的 step 增删改若
+        // IPC / DB 失败，store 已自动 rollback，但 UI 不能假装成功 —— 留
+        // 日志 + assertive 公告，便于排查 + 让 SR 用户也能感知到失败。
+        console.warn('[sticky-timeline] addStep failed', { noteId, err })
+        announce('新增步骤失败，请稍后重试', 'assertive')
+      })
     },
     [addStep],
   )
   const handleUpdateStep = useCallback(
     (noteId: string, stepId: string, patch: StickyNoteStepPatch) => {
-      updateStep(noteId, stepId, patch).catch(() => {})
+      updateStep(noteId, stepId, patch).catch((err) => {
+        // R-fix-step-handlers-silent-fail (high)：见 handleAddStep。
+        console.warn('[sticky-timeline] updateStep failed', { noteId, stepId, patch, err })
+        announce('更新步骤失败，请稍后重试', 'assertive')
+      })
     },
     [updateStep],
   )
   const handleRemoveStep = useCallback(
     (noteId: string, stepId: string) => {
-      removeStep(noteId, stepId).catch(() => {})
+      removeStep(noteId, stepId).catch((err) => {
+        // R-fix-step-handlers-silent-fail (high)：见 handleAddStep。
+        console.warn('[sticky-timeline] removeStep failed', { noteId, stepId, err })
+        announce('删除步骤失败，请稍后重试', 'assertive')
+      })
     },
     [removeStep],
   )
@@ -405,6 +560,14 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
       // 状态 / heatmap / UI 三方脱钩。改为：byDate 始终 patch；all 找不到时
       // 不 patch（store 后续 reload 会拉进来），但 byDate 的所有 day section
       // 会被重建，filter 把这张卡显示出来时它已是新值。
+      // R-fix-applyServerNote-blanket-rebuild (high perf)：原版遍历所有桶
+      // 并对每个桶做 .map(...) → 即使桶里压根没这张便签，也会得到一个新数组
+      // ref。下游按日期订阅的 selector（byDate['2026-09-14']）ref 一变就触
+      // 发 StickyDaySection memo 失效 → 全窗口 60 个 section 全部重渲染。
+      // 改为「定向 patch」：只对包含该便签的旧桶和新桶各重建一次；其余 59
+      // 个桶 ref 保持不变，day-keyed selector 直接 Object.is 命中、整棵
+      // memo 子树跳过 reconcile。对齐 stores/stickyNotes.ts:applyNotePatch
+      // 的「同 date 桶内按 id 替换」语义。
       const state = useStickyNotesStore.getState()
       const all = state.all
       const byDate = state.byDate
@@ -414,16 +577,77 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
         nextAll = all.slice()
         nextAll[idx] = note
       }
-      const nextByDate: Record<string, StickyNote[]> = {}
-      for (const dk of Object.keys(byDate)) {
-        nextByDate[dk] = byDate[dk].map((n) => (n.id === note.id ? note : n))
+      // 找出便签当前所在的旧桶（cross-day move / 刚被 un-archived 等场景
+      // 下 oldDate 可能 !== note.date）。
+      // R36-fix-applyServerNote-reverse-index (low perf)：原版对每个桶都
+      // 跑 .some((n) => n.id === ...)，最坏 O(总便签数)；改用 buildNoteDayIndex
+      // 一次建 Map<id, dayKey> 反向索引，单次定位降到 O(1)。与 stores/stickyNotes.ts
+      // 的 mergeByDate 复用同一个 helper，避免两份实现漂移。
+      const noteDayIdx = buildNoteDayIndex(byDate)
+      const oldDate = noteDayIdx.get(note.id) ?? null
+      const newDate = note.date
+      // 构造 nextByDate：先浅拷贝外层键引用，未涉及的桶沿用同一 ref。
+      const nextByDate: Record<string, StickyNote[]> = { ...byDate }
+      // 1) 旧桶剔除（仅当旧桶 ≠ 新桶时执行；同桶的情况走第 2 步替换）。
+      if (oldDate !== null && oldDate !== newDate) {
+        const oldArr = byDate[oldDate] ?? []
+        const filtered = oldArr.filter((n) => n.id !== note.id)
+        if (filtered.length === 0) {
+          delete nextByDate[oldDate]
+        } else {
+          nextByDate[oldDate] = filtered
+        }
       }
-      if (!nextByDate[note.date]) {
-        nextByDate[note.date] = [note]
-      }
-      useStickyNotesStore.setState({ all: nextAll, byDate: nextByDate })
+      // 2) 新桶按 id 替换或追加（保持 stores/stickyNotes.ts:applyNotePatch
+      //    的「同 date 桶内按 id 替换」语义；旧桶就是新桶时 .map 一次替换，
+      //    旧桶不在新桶时若有旧副本先剔除再追加，避免重复 row）。
+      const curNewArr = byDate[newDate] ?? []
+      const replaced = curNewArr.map((n) => (n.id === note.id ? note : n))
+      nextByDate[newDate] =
+        replaced.some((n) => n.id === note.id) || curNewArr.length === 0
+          ? replaced
+          : [...replaced, note]
+      // R-fix-applyServerNote-bypass-wrapped-set (medium perf/correctness)：
+      // 走 store 暴露的 patchByDateAndAll，让 wrapped set 跑 syncNoteIdIndex，
+      // 否则 noteIdIndex 留陈旧 row，下游 updateStep/addStep 的 lookupNoteById
+      // 会拿到 applyServerNote 之前的旧值（典型：un-archive 后 byDate 有新 row、
+      // Map 仍是 archived=true → 下一次 step toggle 走到 fallback 全桶扫描）。
+      useStickyNotesStore.getState().patchByDateAndAll(nextByDate, nextAll)
     },
     [],
+  )
+  // 软删除：先 archive(true)，5s 后真正删；期间可撤销。
+  // 必须放在 applyServerNote 之后声明 —— 同 scope 的 const 有 TDZ，
+  // 放进 deps 时需要 applyServerNote 已被绑定。
+  //
+  // R-Fix3 (medium correctness)：原版 await archive 后丢掉返回值，
+  // store 没被更新 → 卡片在 5s 撤销窗口里停留在 archived=false 视觉，
+  // 没有 is-archived class / 没有 is-removing 渐隐提示。修复：拿到
+  // IPC 返回的最新 row 后用 applyServerNote 写回 store（同 status /
+  // archive 路径的既有合约：handleStatusChange 也是同样写法）。
+  // 5s 硬删超时由 startToast 内部用 store.remove 兜底（既删 DB 行也
+  // 剔除 store），这里不再重复发 IPC remove。
+  const handleSoftDelete = useCallback(
+    async (note: { id: string; title: string; archived: boolean }) => {
+      const wasArchived = note.archived
+      try {
+        const updated = await stickyNotesApi.archive(note.id, true)
+        if (updated) applyServerNote(updated)
+      } catch (err) {
+        // R5-1：archive 失败时不要继续排定硬删 —— 用户会以为撤销窗口还有效，
+        // 但 5s 后便签会神秘消失。改为直接退出并提示。
+        console.warn('[sticky-timeline] archive failed; skip soft-delete toast', err)
+        return
+      }
+      startToast({
+        id: `toast-${Date.now()}`,
+        noteId: note.id,
+        noteTitle: note.title,
+        previousArchived: wasArchived,
+        expiresAt: Date.now() + 5_000,
+      })
+    },
+    [startToast, applyServerNote],
   )
   const handleStatusChange = useCallback(
     (id: string, status: StickyNoteUpdate['status']) => {
@@ -431,10 +655,37 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
       const apply = (updated: StickyNote | null) => {
         if (updated) applyServerNote(updated)
       }
+      // R-fix-status-change-silent (high)：complete / setStatus 失败会让
+      // 卡片视觉停留旧 status，但 DB 已迁移（completions 写表）—— dashboard
+      // / heatmap 视图与 sticky 卡片永久脱钩。失败时记录日志 + 公告，并
+      // 重新拉取当前窗口，避免 UI 与 DB 状态机错位。store 无单条 fetch，
+      // 退而求其次 refetch 当前时间线窗口（范围已知，over-fetch 范围小）。
+      const resyncRange = () => {
+        const { rangeStart: rs, rangeEnd: re } = useStickyNotesStore.getState()
+        if (!rs || !re) return
+        void useStickyNotesStore
+          .getState()
+          .fetchRange(rs, re)
+          .catch((fetchErr) =>
+            console.warn('[sticky-timeline] resync fetchRange after status change failed', {
+              id,
+              status,
+              err: fetchErr,
+            }),
+          )
+      }
       if (status === 'done') {
-        stickyNotesApi.complete(id).then(apply).catch(() => {})
+        stickyNotesApi.complete(id).then(apply).catch((err) => {
+          console.warn('[sticky-timeline] complete failed', { id, err })
+          announce('标记完成失败，请稍后重试', 'assertive')
+          resyncRange()
+        })
       } else {
-        stickyNotesApi.setStatus(id, status).then(apply).catch(() => {})
+        stickyNotesApi.setStatus(id, status).then(apply).catch((err) => {
+          console.warn('[sticky-timeline] setStatus failed', { id, status, err })
+          announce('状态更新失败，请稍后重试', 'assertive')
+          resyncRange()
+        })
       }
     },
     [applyServerNote],
@@ -456,6 +707,13 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
   // R12 修复 (high)：按日期 memo StickyDaySection 的 props 包。renderDays
   // 数组变化、filteredByDate 引用变化或 isToday 判定变化时才重算 prop 包，
   // 循环内不再每次 render 重新 new 对象，StickyDaySection memo 重新生效。
+  // R-fix-sectionPropsByDate-empty-array-ref (medium perf)：过滤切换时
+  // filteredByDate 是个全新的 out 记录，对过滤命中的日期用新数组、对
+  // 「renderDays 里的基础 2 天（今天 / 明天）但过滤后空」的日期没有键。
+  // 原 `?? []` 每次新建空数组字面量 → StickyDaySection memo 浅比较失败
+  // → 整棵子树 reconcile。改用 module-level 冻结 EMPTY_NOTES 复用同一引用，
+  // 配合 isToday/isTomorrow 始终渲染的天：notes 引用跨过滤切换恒为
+  // EMPTY_NOTES，Object.is 命中、section 跳过 re-render。
   const sectionPropsByDate = useMemo(() => {
     const m = new Map<string, {
       dateKey: string
@@ -469,11 +727,13 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
       onCreateEmpty: typeof handleCreateEmpty
       onStatusChange: typeof handleStatusChange
       onSoftDelete: typeof handleSoftDelete
+      highlightId: string | null
     }>()
     for (const dk of renderDays) {
+      const arr = filteredByDate[dk]
       m.set(dk, {
         dateKey: dk,
-        notes: filteredByDate[dk] ?? [],
+        notes: arr ?? EMPTY_NOTES,
         isToday: dk === todayKey,
         onUpdate: handleUpdate,
         onDelete: handleDelete,
@@ -483,6 +743,9 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
         onCreateEmpty: handleCreateEmpty,
         onStatusChange: handleStatusChange,
         onSoftDelete: handleSoftDelete,
+        // R-fix-focus-sticky-noop：传给 StickyDaySection → StickyNoteCard，
+        // 让目标便签 2.5s 内带 is-highlight 类（CSS 高亮动画）。
+        highlightId,
       })
     }
     return m
@@ -498,6 +761,7 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
     handleCreateEmpty,
     handleStatusChange,
     handleSoftDelete,
+    highlightId,
   ])
 
   return (
@@ -516,14 +780,18 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
           <span className="kbd" aria-hidden>/</span>
         </div>
         <div className="sticky-timeline-filters" role="group" aria-label="按优先级过滤">
-          {(['p0', 'p1', 'p2', 'p3'] as Priority[]).map((p) => (
+          {PRIORITIES.map((p) => (
             <button
               key={p}
               type="button"
               className={`sticky-timeline-chip priority-${p}${activePriorities.has(p) ? ' is-active' : ''}`}
               onClick={() => togglePriority(p)}
               aria-pressed={activePriorities.has(p)}
-              aria-label={`优先级 ${p.toUpperCase()}`}
+              // R-3 修复 (low a11y)：原版 `优先级 ${p.toUpperCase()}` 读出
+              // 「优先级 P 一」毫无意义。改用 @shared/lib/priorities 的
+              // PRIORITY_LABEL（"P0 紧急" / "P1 高" / "P2 中" / "P3 低"），
+              // 与 StickyPriorityBadge / QuickCaptureOverlay 同源。
+              aria-label={`按优先级过滤：${PRIORITY_LABEL[p]}${activePriorities.has(p) ? '，已选中' : ''}`}
             >
               {p.toUpperCase()}
             </button>
@@ -539,9 +807,15 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
         // 对象，浅比较永远失败 → StickyDaySection memo 失效，每次输入框
         // keystroke 都会重渲染 600+ StickyNoteCard。现在按日期 memo 一次：
         // dateKey 变化才重算 prop 包，回调本身已是 useCallback 稳定引用。
+        // R-fix-sectionPropsByDate-empty-array-ref (medium perf)：理论
+        // 上 sectionPropsByDate 一定含 dk（renderDays 就是它的构造源），
+        // 兜底分支不可达；保留 `?? {...}` 仅作防御性 fail-safe，且用
+        // EMPTY_NOTES 替代 inline `filteredByDate[dk] ?? []`，避免极端
+        // 路径（renderDays 与 sectionPropsByDate 偶发不一致）下又踩同一
+        // 个新 ref 陷阱。
         const sectionProps = sectionPropsByDate.get(dk) ?? {
           dateKey: dk,
-          notes: filteredByDate[dk] ?? [],
+          notes: EMPTY_NOTES,
           isToday,
           onUpdate: handleUpdate,
           onDelete: handleDelete,
@@ -551,6 +825,7 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
           onCreateEmpty: handleCreateEmpty,
           onStatusChange: handleStatusChange,
           onSoftDelete: handleSoftDelete,
+          highlightId,
         }
         if (isToday) {
           return (

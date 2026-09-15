@@ -59,7 +59,7 @@ src/
 ├── main/                # 主进程（Node）
 │   ├── index.ts         # 入口 + 全局 IPC 注册 + 安全网关
 │   ├── window/          # BrowserWindow 生命周期
-│   ├── ipc/             # 17 个 IPC handler 模块（白名单 channel）
+│   ├── ipc/             # 21 个 IPC handler（17 个模块 + router 内 4 个 system/mock/error 通道）
 │   ├── db/              # better-sqlite3 + 子进程 worker
 │   ├── git/             # isomorphic-git 封装
 │   ├── ai/              # AI provider 路由 + 工具调用 + 自动标题
@@ -77,8 +77,8 @@ src/
 │       ├── router.tsx   # TanStack Router 配置
 │       ├── routes/      # 5 个页面（dashboard / today / notes / settings / ai）
 │       ├── components/  # layout / sticky-notes / notes / ai / dashboard / ...
-│       ├── stores/      # Zustand（stickyNotes / notes / ai / pomodoro / settings / git / heatmap / draft）
-│       ├── lib/         # 工具（ipc / 日期 / fuzzy / ipc channels）
+│       ├── stores/      # Zustand（ai / app / git / heatmap / notes / pomodoro / settings / stickyNotes / tags / treeExpansion）
+│       ├── lib/         # 工具（ipc / 日期 / fuzzy / ipc channels / draftStore）
 │       └── styles/      # CSS + Tailwind
 └── shared/              # 主/渲染进程共用（type + ipc channel 常量）
     ├── ipc/

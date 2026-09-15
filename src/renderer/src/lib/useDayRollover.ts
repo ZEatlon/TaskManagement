@@ -19,14 +19,7 @@
  * - 调用方组件卸载时自动取消订阅。
  */
 import { useEffect, useRef, useState } from 'react'
-
-/** 把 Date 转成 'YYYY-MM-DD'，用于"今天"判定 */
-export function dayKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
+import { dayKeyOf as dayKey } from './date'
 
 type Listener = (dateKey: string) => void
 

@@ -10,8 +10,10 @@
  * - 点击 ▼ 展开自定义下拉（包含 native date input 和快捷按钮）
  * - 点击外部区域自动收起
  */
-import { useEffect, useRef, useState } from 'react'
-import { solarToLunar, weekdayName } from '../../lib/lunar'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { solarToLunar } from '../../lib/lunar'
+import { getCalendarMessages, getRelativeTimeMessages } from '@shared/i18n/locales'
+import { useSettingsStore } from '../../stores/settings'
 
 interface FocusDateHeaderProps {
   date: Date
@@ -22,9 +24,20 @@ interface FocusDateHeaderProps {
 
 export function FocusDateHeader({ date, onChangeDate, isRunning }: FocusDateHeaderProps) {
   const lunar = solarToLunar(date)
-  const weekday = weekdayName(date, 1) // 周一为首
+  // R-fix-i18n-lunar-shortdate (medium)：weekday / 月日 文案改走 i18n
+  // registry —— 不再调 lunar.ts 的 weekdayName / shortDate 硬编码字典。
+  // - weekdayFull 在 RelativeTimeMessages（Sunday-first 全称 7 项），
+  //   直接 weekdayFull[date.getDay()] 即得「周一/二/…」（不依赖
+  //   firstDayOfWeek 旋转，因为这是单点日期显示而非表头）。
+  // - dayLabel(month, day) 在 CalendarMessages，是「M月D日」模板。
+  // 集中到 registry 后未来加 en-US 时本组件零改动。
+  const language = useSettingsStore((s) => s.language)
+  const calendarMessages = useMemo(() => getCalendarMessages(language), [language])
+  const relativeTimeMessages = useMemo(() => getRelativeTimeMessages(language), [language])
+  const weekday = relativeTimeMessages.weekdayFull[date.getDay()] ?? ''
   const month = date.getMonth() + 1
   const day = date.getDate()
+  const dateLabel = calendarMessages.dayLabel(month, day)
 
   const [open, setOpen] = useState(false)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -111,7 +124,7 @@ export function FocusDateHeader({ date, onChangeDate, isRunning }: FocusDateHead
       <div className="focus-date-main">
         <div className="focus-date-row1">
           <span className="focus-date-md">
-            {month}月{day}日
+            {dateLabel}
           </span>
           <span className="focus-date-weekday">{weekday}</span>
         </div>

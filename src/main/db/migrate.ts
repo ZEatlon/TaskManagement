@@ -23,14 +23,33 @@ interface MigrationFile {
 }
 
 /** 由 Vite 打包时注入：键是相对路径，值是 SQL 文本 */
-const MIGRATION_MODULES = import.meta.glob<string>('./migrations/*.sql', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-})
+function loadDefaultMigrationModules(): Record<string, string> {
+  // 装在函数里：调用方显式传 `modules` 时（=测试场景）这条 import.meta.glob
+  // 永不求值，Node 测试环境不需要 Vite；生产路径由 Vite 在打包时静态替换
+  // import.meta.glob 调用，等价于旧版顶层 const 行为。
+  return import.meta.glob<string>('./migrations/*.sql', {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  })
+}
 
-function discoverMigrations(): MigrationFile[] {
-  return Object.entries(MIGRATION_MODULES)
+/**
+ * 从模块 map 里抽出所有迁移并按 version 升序排。
+ *
+ * 模块 map 形态：键是相对路径（形如 './migrations/001-initial.sql'），值是
+ * SQL 文本。生产路径由 Vite import.meta.glob 在打包时注入；测试可通过
+ * `modules` 注入自构造 map（避免 import.meta.glob 在 Node 环境跑不
+ * 起来 + 注入失败 / 成功 / 顺序可控）。
+ *
+ * R-test-suite-migrate (test-coverage)：拆出 modules 参数让单测能
+ * 验证：(a) 路径正则匹配 / 非数字前缀 / 错扩展名抛错；(b) version
+ * 排序正确；(c) discoverMigrations 与 runMigrations 之间的衔接。
+ */
+export function discoverMigrations(
+  modules: Record<string, string> = loadDefaultMigrationModules(),
+): MigrationFile[] {
+  return Object.entries(modules)
     .map(([path, sql]) => {
       // 路径形如 './migrations/001-initial.sql'
       const match = path.match(/\/(\d+)-([^/]+)\.sql$/)
@@ -52,7 +71,10 @@ function wrapInTransaction(sql: string): string {
   return `BEGIN;\n${sql}\nCOMMIT;\n`
 }
 
-export async function runMigrations(): Promise<void> {
+export async function runMigrations(opts?: {
+  /** 测试用：注入自构造的 migrations map（绕过 Vite import.meta.glob） */
+  modules?: Record<string, string>
+}): Promise<void> {
   // 确保 schema_migrations 表存在
   await dbClient.call('exec', {
     sql: `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -71,7 +93,7 @@ export async function runMigrations(): Promise<void> {
   )
   await dbClient.call('finalize', { stmtId })
 
-  const all = discoverMigrations()
+  const all = discoverMigrations(opts?.modules)
   const pending = all.filter((m) => !applied.includes(m.version))
 
   if (pending.length === 0) {

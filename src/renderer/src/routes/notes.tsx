@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react'
 import { useSearch } from '@tanstack/react-router'
 import { useNotesStore } from '../stores/notes'
 import { useAppStore } from '../stores/app'
+import { announce } from '../components/common/AriaAnnouncer'
 import {
   NotesTree,
   NoteEditor,
@@ -47,7 +48,16 @@ export function NotesRoute() {
   // 初次挂载：拉取列表 + 启动监听
   useEffect(() => {
     void fetch()
-    void window.api.invoke('note:watch-start', undefined).catch(() => {})
+    // R-fix-watch-start-silent (low)：监听启动失败（如 libraryPath 未配 /
+    // DB 锁 / permission denied）时，进入「能读但外部改动不通知」状态，
+    // 用户拖入新 .md 或外部编辑器保存都不会刷新列表。可降级，但必须告知
+    // 用户「为什么新文件不出现在列表里」。
+    void window.api
+      .invoke('note:watch-start', undefined)
+      .catch((err) => {
+        console.warn('[notes] watch-start failed', err)
+        announce('外部文件监听启动失败，新文件改动不会自动同步')
+      })
   }, [fetch])
 
   // 订阅文件事件：add/change/unlink 时刷新列表

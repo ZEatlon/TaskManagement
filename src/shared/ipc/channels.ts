@@ -3,6 +3,7 @@
  * 主进程、preload、渲染进程三方共用
  * 新增通道时在此处集中声明
  */
+import type { LocaleValue } from '../i18n/locales'
 
 /**
  * 设置仓库中的 sub-key 常量
@@ -121,6 +122,13 @@ export const IPC_CHANNELS = {
   NOTE_FOLDER_UPDATE: 'note-folder:update',
   NOTE_FOLDER_DELETE: 'note-folder:delete',
   NOTE_LIST_BY_FOLDER: 'note:list-by-folder',
+  /**
+   * 批量按多文件夹拉笔记：sidebar / 多文件夹预览场景用，单 SQL 走
+   * `folder_id IN (...)` 减少 N 轮 round-trip。
+   * 入参 { folderIds: (string|null)[], archived?, limit? }
+   * 出参 Record<string|null, NoteMeta[]>（key = folderId；null = 未分类）
+   */
+  NOTE_LIST_BY_FOLDERS: 'note:list-by-folders',
   NOTE_MOVE_TO_FOLDER: 'note:move-to-folder',
 
   // 完成日志（热力图）
@@ -183,6 +191,33 @@ export const IPC_CHANNELS = {
   // main process 据此决定 summarizeNote 是否返回正文。
   NOTE_OPENED: 'note:opened',
   NOTE_CLOSED: 'note:closed',
+  /**
+   * InlineAIButton 上下文同步：StickyNoteCard mount/unmount 时调用，
+   * 把当前便签 ID 推到主进程的 aiContextByWebContents 供 stream.ts
+   * 注入 system prompt。仅 advisory —— 不参与权限校验。
+   */
+  AI_SET_CURRENT_STICKY_ID: 'ai:set-current-sticky-id',
+  /**
+   * R33 修复 (medium #2)：compare-and-clear 通道。
+   * StickyNoteCard unmount 时调用，传入当前 noteId；主进程仅在 stickyId
+   * 仍等于 noteId 时才清空，避免多卡同挂时 A 卸载把 B 推过来的 stickyId
+   * 误清。详见 src/main/ai/tools.ts:clearStickyIdIfMatches。
+   */
+  AI_CLEAR_STICKY_ID_IF_MATCHES: 'ai:clear-sticky-id-if-matches',
+  /**
+   * InlineAIButton 上下文同步：PomodoroTimerPanel 订阅 mode / running /
+   * stickyNoteId 变化时调用，把番茄钟状态推到主进程。仅 advisory。
+   */
+  AI_SET_CURRENT_POMODORO_CONTEXT: 'ai:set-current-pomodoro-context',
+  /**
+   * R33-fix：AI 工具 navigate() 跳路由时主进程主动推送给渲染端的事件通道。
+   * payload: { route: string, focusStickyId: string | null }。
+   * 渲染端 preload 监听后桥接到 react-router 的 navigate()。
+   * 配套的 AI_NAVIGATE_ACK 是渲染端回执：应用路由后再回送 ack，主进程
+   * 端 await ack 才返回 ok:true，避免「事件已发出但页面没动」的乐观成功。
+   */
+  AI_NAVIGATE: 'app:navigate',
+  AI_NAVIGATE_ACK: 'app:navigate-ack',
 
   // Git 同步（模块 P0-12）
   GIT_STATUS: 'git:status',
@@ -225,6 +260,24 @@ export const IPC_CHANNELS = {
   // 主进程主动推送到渲染进程的事件
   STICKY_NOTE_DUE: 'sticky-note:due',
   NOTIFY_REMINDER: 'notify:reminder',
+  /**
+   * R-fix-notify-persist-failed (medium silent-error)：notifications 表 INSERT
+   * 失败（SQLITE_FULL / SQLITE_BUSY / schema 漂移导致 no such column 等）时
+   * 主进程推送，渲染端可弹一次性 sticky diagnostic「通知写入失败：<reason>」。
+   * payload: { title: string, stickyNoteId?: string, reason: string }
+   * 与 NOTIFY_DISPATCH 互斥：本通道失败时不派发 in-app banner（历史表里也
+   * 没记录），所以 UI 需要另一条独立通道告知用户。
+   */
+  NOTIFY_PERSIST_FAILED: 'notify:persist-failed',
+  /**
+   * R-fix-notify-toast-failed (medium silent-error)：OS toast 弹失败
+   * （Windows Focus Assist / 通知被组策略关闭 / macOS 通知权限被拒 /
+   * Linux libnotify 缺失）时主进程推送，渲染端写入诊断 bundle。语义是
+   * 「系统 toast 这一个渠道失败」，不影响 in-app banner（NOTIFY_DISPATCH）
+   * —— 所以本通道不替代 NOTIFY_DISPATCH，只是给支持 bundle 多一条线索。
+   * payload: { title: string, reason: string }
+   */
+  NOTIFY_TOAST_FAILED: 'notify:toast-failed',
 
   // 番茄钟（模块 P1-Pomodoro）
   POMODORO_START: 'pomodoro:start',
@@ -238,10 +291,41 @@ export const IPC_CHANNELS = {
   POMODORO_UPDATE_CONFIG: 'pomodoro:update-config',
   POMODORO_TODAY: 'pomodoro:today',
   POMODORO_DAILY: 'pomodoro:daily',
+  /**
+   * 最近 N 条 focus 完成记录（默认 50）。渲染端「历史专注」/ 调试面板可
+   * 用其替代 listToday 拿全量窗口。补齐 pomodoroService.listRecent
+   * 的 IPC 暴露面（详见 R-fix-pomodoro-listrecent-unexposed）。
+   * payload: PomodoroRecord[]
+   */
+  POMODORO_RECENT: 'pomodoro:recent',
   // 主进程主动推送到渲染进程的事件
   POMODORO_TICK: 'pomodoro:tick',
   POMODORO_PHASE_COMPLETE: 'pomodoro:phase-complete',
   POMODORO_STATE_CHANGED: 'pomodoro:state-changed',
+  /**
+   * R-fix-pomodoro-persist-silent-fail (medium error-handling)：phase
+   * 完成写入 pomodoros 表失败（且单次重试仍失败）时主进程推送，渲染
+   * 端弹 toast「本次专注未记录：<原因>」让用户知情。原本只在 log
+   * 里报错，用户看不到失败现象（计时停了但通知/热力图/统计都没更新）。
+   * payload: { phase: 'focus' | 'shortBreak' | 'longBreak', durationMin: number, reason: string }
+   */
+  POMODORO_PERSIST_FAILED: 'pomodoro:persist-failed',
+  /**
+   * 专注模式（focus mode overlay）状态变更：主进程在 start/stop/完成时根据
+   * config.autoEnterFocusMode 推送，渲染端 store 订阅后切 overlay。
+   * payload: { focusMode: boolean, reason: 'start' | 'stop' | 'complete' | 'manual' }
+   */
+  POMODORO_FOCUS_MODE_CHANGED: 'pomodoro:focus-mode-changed',
+  /**
+   * 主进程要求渲染端启动 / 停止白噪音（Web Audio 在渲染端跑）。
+   * payload: { kind: PomodoroWhiteNoise }
+   */
+  POMODORO_AUDIO_SET: 'pomodoro:audio-set',
+  /**
+   * 主进程要求渲染端播放「阶段完成」音效（清脆一声）。
+   * payload: { mode: 'focus' | 'shortBreak' | 'longBreak' }
+   */
+  POMODORO_AUDIO_PLAY_SOUND: 'pomodoro:audio-play-sound',
 
   // 附件（模块 P0-6）
   ATTACHMENT_UPLOAD: 'attachment:upload',
@@ -261,7 +345,9 @@ export interface PingResponse {
 
 export interface AppSettings {
   libraryPath: string | null
-  language: 'zh-CN'
+  /** 界面语言：值来自 src/shared/i18n/locales.ts 的 LOCALE_OPTIONS，
+   *  通过 LocaleValue 联合类型保持单一来源。加新 locale 不用改本字段。 */
+  language: LocaleValue
   theme: 'auto' | 'light' | 'dark'
   /** 强调色（CSS 颜色值，对应 --accent 变量） */
   accentColor: string
@@ -378,8 +464,20 @@ export interface GitSyncState {
 /**
  * 番茄钟（模块 P1-Pomodoro）共享类型
  */
-/** 白噪音类型 */
-export type PomodoroWhiteNoise = 'none' | 'rain' | 'forest'
+/**
+ * 白噪音类型
+ *
+ * 历史值：'none' | 'rain' | 'forest'
+ * v2 扩展：'brown'（1/f^2）、'pink'（1/f）、'ocean'（brown + LFO 调制）
+ * 'forest' 保留为别名 → 映射到 pink + chirp，与旧实现行为一致。
+ */
+export type PomodoroWhiteNoise =
+  | 'none'
+  | 'brown'
+  | 'pink'
+  | 'rain'
+  | 'ocean'
+  | 'forest'
 
 export interface PomodoroConfig {
   /** 专注时长（分钟），默认 25 */
@@ -398,6 +496,8 @@ export interface PomodoroConfig {
   dailyGoal: number
   /** focus 阶段的白噪音，默认 none */
   whiteNoise: PomodoroWhiteNoise
+  /** 自动进入专注模式（focus mode overlay） */
+  autoEnterFocusMode: boolean
 }
 
 export const DEFAULT_POMODORO_CONFIG: PomodoroConfig = {
@@ -409,7 +509,85 @@ export const DEFAULT_POMODORO_CONFIG: PomodoroConfig = {
   soundEnabled: true,
   dailyGoal: 8,
   whiteNoise: 'none',
+  autoEnterFocusMode: false,
 }
+
+/**
+ * focusMin / break 时长（分钟）的合法区间与 UI 步长。
+ *
+ * R-fix-focus-controls-boundary-drift (HIGH dead-code)：原 FocusControls 在
+ * 渲染端硬编码 MIN_MINUTES=5 / MAX_MINUTES=90 / STEP_MINUTES=5，但主进程
+ * validatePomodoroConfigPatch（pomodoroService.ts:120-124）认的合法区间是
+ * [1, 180] —— 通过 AI 工具 startPomodoro({ minutes: 120 }) 持久化进
+ * focusMin=120 后，UI 显示「120 分钟」，但 + 按钮因 displayMinutes >= 90
+ * 被永久禁用，用户无法调回 90 以下，造成「主进程合法 / 渲染端禁用」的
+ * 隐式漂移（与 fsOpen-flag-mismatch 同根：契约边界 ≠ 实现边界）。
+ *
+ * 改：把 [min, max] / step 作为单一权威源放在 @shared/ipc/channels，与主
+ * 进程 validator 同源（同一文件 import），避免渲染端再各自 hardcode。
+ *
+ * 注意：step 与 validator 无直接关系（validator 只判整型 + 边界，step 是
+ * UI +/- 的步长）；但放进同一个常量组便于维护，且便于后续 main 进程若
+ * 想限制 step（如 shortBreakMin 也走同样按钮）时复用。
+ */
+export const POMODORO_FOCUS_MIN_LIMITS = {
+  min: 1,
+  max: 180,
+  /** UI +/- 按钮步长（分钟） */
+  step: 5,
+} as const
+
+/**
+ * cycleCount（每 N 个 focus 后进入长休）的 UI 边界。
+ *
+ * Validator（pomodoroService.ts validatePomodoroConfigPatch）允许 [1, 12]；
+ * UI 故意只暴露 [2, 6]，避免用户配出 cycleCount=1（永远不休息）或
+ * cycleCount=12（极少长休）这种几乎无实际收益的边界值。
+ *
+ * 设计约定（与 POMODORO_FOCUS_MIN_LIMITS 一致）：UI 边界 ⊆ validator
+ * 边界。底层 validator 必须保留宽区间，用于 AI 工具 / 配置迁移 / 历史
+ * 数据兼容。两层边界都从本文件单一源读，渲染端不再各自 hardcode。
+ */
+export const POMODORO_CYCLE_LIMITS = {
+  min: 2,
+  max: 6,
+} as const
+
+/**
+ * dailyGoal（每日目标完成的番茄钟数量）的 UI 边界。
+ *
+ * 当前范围 [1, 20] 与 validator 一致；保留 UI 常量是为了与
+ * POMODORO_CYCLE_LIMITS 等保持单一源契约，避免后续若缩小 UI 范围
+ * （如「新手最多 4」）时出现与 validator 的隐式漂移。
+ */
+export const POMODORO_DAILY_GOAL_LIMITS = {
+  min: 1,
+  max: 20,
+} as const
+
+/**
+ * shortBreakMin（短休息时长，分钟）的 UI 边界。
+ *
+ * Validator 允许 [1, 180]；UI 故意只暴露 [3, 10]，避免用户配出
+ * shortBreakMin=1（不够喘气）或 shortBreakMin=180（破坏「短」休
+ * 语义）这种无意义的边界值。
+ */
+export const POMODORO_SHORT_BREAK_LIMITS = {
+  min: 3,
+  max: 10,
+} as const
+
+/**
+ * longBreakMin（长休息时长，分钟）的 UI 边界。
+ *
+ * Validator 允许 [1, 180]；UI 故意只暴露 [10, 30]，避免用户配出
+ * longBreakMin=1（不是真正的长休）或 longBreakMin=180（破坏番茄
+ * 节奏）这种无意义的边界值。
+ */
+export const POMODORO_LONG_BREAK_LIMITS = {
+  min: 10,
+  max: 30,
+} as const
 
 /** 番茄钟当前模式 */
 export type PomodoroMode = 'focus' | 'shortBreak' | 'longBreak'

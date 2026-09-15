@@ -341,6 +341,27 @@
   transform: rotate(90deg);
 }
 
+/* R37 修复：chevron 现在是真 <button>，去掉默认按钮样式并保持原视觉尺寸。
+   旋转动画作用在内层 .ai-folder-chevron (svg) 上。 */
+.ai-folder-chevron-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: inherit;
+  flex-shrink: 0;
+  border-radius: 4px;
+}
+
+.ai-folder-chevron-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .ai-folder-color-dot {
   width: 10px;
   height: 10px;
@@ -2369,4 +2390,151 @@
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ============================================================
+ * InlineAIButton —— 便签 / 笔记 / 番茄钟上的紧凑 ✨ 按钮
+ *   - 直接复用 .btn .ghost / .btn .primary 的样式骨架（color / padding /
+ *     hover 状态），这里只补 AI 专属的 sparkle glow
+ * ============================================================ */
+.inline-ai-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border-radius: 6px;
+}
+.inline-ai-btn:hover {
+  /* hover 时给 sparkle 加一点点 glow，提示用户这是个 AI 操作 */
+  background: color-mix(in srgb, var(--ai-glow, var(--accent)) 14%, transparent);
+}
+.inline-ai-sparkles {
+  filter: drop-shadow(0 0 4px var(--ai-glow, color-mix(in srgb, var(--accent) 22%, transparent)));
+  transition: transform 0.15s var(--ease-out, ease-out);
+}
+.inline-ai-btn:hover .inline-ai-sparkles {
+  transform: rotate(8deg) scale(1.08);
+}
+.inline-ai-btn-text {
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* sm 尺寸：纯图标按钮；md 尺寸：图标 + "AI" 文案 */
+.inline-ai-btn-sm { min-width: 24px; height: 22px; }
+.inline-ai-btn-md { min-width: 32px; height: 28px; }
+
+/* ============================================================
+ * InlineAIMenu —— 浮层菜单
+ *   - position: fixed（按钮父级可能 overflow:hidden / transform，
+ *     fixed 不会被截断；见 InlineAIMenu.tsx 关于 transform 容器的注释）
+ *   - 与 CommandBar 的 cb-card 视觉一致（深底 + 边 + shadow）保持单点真源
+ * ============================================================ */
+.inline-ai-menu {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  background: var(--bg-elevated, #1c1f24);
+  color: var(--text-primary, #e6e6e6);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 8px;
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.32),
+    0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.inline-ai-menu-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  transition: background 0.12s var(--ease-out, ease-out);
+}
+.inline-ai-menu-item.is-active,
+.inline-ai-menu-item:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.inline-ai-menu-item:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.inline-ai-menu-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+  margin-top: 1px;
+  filter: drop-shadow(0 0 3px var(--ai-glow, var(--accent)));
+}
+.inline-ai-menu-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.inline-ai-menu-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #e6e6e6);
+}
+.inline-ai-menu-hint {
+  font-size: 11px;
+  color: var(--text-secondary, #9aa0a6);
+  line-height: 1.35;
+}
+
+/* ============================================================
+ * AIInsightCard —— dashboard widget
+ * ============================================================ */
+.ai-insight-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated, transparent));
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border, transparent));
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.15s var(--ease-out, ease-out),
+    border-color 0.15s var(--ease-out, ease-out);
+  text-align: left;
+  width: 100%;
+}
+.ai-insight-card:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated, transparent));
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border, transparent));
+}
+.ai-insight-icon {
+  flex-shrink: 0;
+  font-size: 18px;
+  line-height: 1;
+  margin-top: 1px;
+  filter: drop-shadow(0 0 4px var(--ai-glow, var(--accent)));
+}
+.ai-insight-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ai-insight-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary, #9aa0a6);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ai-insight-message {
+  font-size: 13px;
+  color: var(--text-primary, #e6e6e6);
+  line-height: 1.45;
+}
+.ai-insight-cta {
+  font-size: 11px;
+  color: var(--accent, #58a6ff);
+  margin-top: 2px;
 }

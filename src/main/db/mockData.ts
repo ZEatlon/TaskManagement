@@ -37,16 +37,9 @@ import log from '../log'
 import { notesManager } from '../notes/notesManager'
 import type { NoteFolder, StickyNoteCreate } from '@shared/types'
 import { getCurrentLibrary } from '../lib/libraryManager'
+import { localDayKeyOf as toLocalDayKey } from '@shared/lib/dayKey'
 
 const SEED_FLAG_KEY = 'mock.seed.v1'
-
-/** YYYY-MM-DD 本地日（与渲染端 dayKeyOf 一致） */
-function toLocalDayKey(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
 
 // ============================================================
 // folders

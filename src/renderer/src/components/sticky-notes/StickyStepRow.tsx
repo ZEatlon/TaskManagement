@@ -21,6 +21,7 @@
  */
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { StickyNoteStep, StickyNoteStepPatch } from '@shared/types'
+import { isImeComposing } from '../../lib/useImeGuard'
 
 interface Props {
   step: StickyNoteStep
@@ -196,15 +197,12 @@ function StickyStepRowInner({
       // IME 守卫：中文输入法选词时按 Enter 会先触发 compositionend，
       // 此时 keyCode === 229，且 nativeEvent.isComposing === true。
       // 此场景下不应触发 onAdd（否则输入法的拼音/上屏都会被当成新步骤）。
-      const isComposing =
-        e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229
-
       if (
         e.key === 'Enter' &&
         !e.shiftKey &&
         !e.metaKey &&
         !e.ctrlKey &&
-        !isComposing
+        !isImeComposing(e)
       ) {
         e.preventDefault()
         onAdd?.()

@@ -10,6 +10,8 @@
  * - level（0~4）按最大值的比例四等分（GitHub 风格）
  * - 每个月第一周额外标记 monthStarts，用于渲染月份分隔
  */
+import { startOfDayLocal, localDayKeyOf } from '@shared/lib/dayKey'
+import { fromDayKey } from '../../lib/date'
 
 /** 单元格强度等级：0=空，4=最高 */
 export type HeatmapLevel = 0 | 1 | 2 | 3 | 4
@@ -74,26 +76,33 @@ export interface HeatmapData {
 /** 一周起始：0=周日，1=周一 */
 export type FirstDayOfWeek = 0 | 1
 
-/** 中文月份短标签 */
-const MONTH_LABELS_ZH = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月']
+/** 月份短标签默认值（zh-CN）—— 与 R-fix-i18n-weekday-label 同模式：未传
+ *  时回退到历史硬编码字典，保持向后兼容；新 caller 从 getCalendarMessages
+ *  取出 monthShort 传入。 */
+const DEFAULT_MONTH_SHORT_ZH = [
+  '1月', '2月', '3月', '4月', '5月', '6月',
+  '7月', '8月', '9月', '10月', '11月', '12月',
+] as const
 
 /**
  * 把 Date / 时间戳转换为 YYYY-MM-DD（本地时区）
+ * 本函数保留为 backward-compatible alias —— 实质实现下沉到
+ * @shared/lib/dayKey.localDayKeyOf，避免与 main 端 statsBridge /
+ * backfill 等 inline 实现分叉。
  */
 export function toISODate(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  return localDayKeyOf(d)
 }
 
 /**
  * 解析 YYYY-MM-DD 为本地时区 Date（时:分:秒=0）
+ *
+ * R32-Corr-1 (low duplication)：原版函数体（s.split('-').map(parseInt) +
+ * new Date(y, m-1, d)）与 lib/date.ts:fromDayKey 完全相同；两个名字两份
+ * 实现让规则微调（如允许紧凑 YYYYMMDD）容易 drift。改为 re-export，
+ * HeatmapTooltip 等既有 import 路径不变，与 lib/date.ts 同一权威源。
  */
-export function fromISODate(s: string): Date {
-  const [y, m, d] = s.split('-').map((n) => parseInt(n, 10))
-  return new Date(y, (m ?? 1) - 1, d ?? 1)
-}
+export const fromISODate = fromDayKey
 
 /**
  * 根据 count 与 max 计算 5 档颜色等级
@@ -178,8 +187,7 @@ function computeStreaks(
   // 在切换日附近会少 1 天或重 1 天，连续天数算错。
   // 修复：用 setDate(getDate() + 1) 一天一天推进，Date 内部按本地日期
   // 自然吸收 DST（getDate 在春令/秋令日返回正确日编号）。
-  const cursor = new Date(userStart)
-  cursor.setHours(0, 0, 0, 0)
+  const cursor = startOfDayLocal(userStart)
   const endMs = userEnd.getTime()
   while (cursor.getTime() <= endMs) {
     const key = toISODate(cursor)
@@ -234,6 +242,7 @@ export function buildHeatmap(
   startDate: Date,
   endDate: Date,
   firstDayOfWeek: FirstDayOfWeek = 0,
+  monthShort: readonly string[] = DEFAULT_MONTH_SHORT_ZH,
 ): HeatmapData {
   // 归一化起止日期
   const userStart = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate())
@@ -251,20 +260,36 @@ export function buildHeatmap(
   let maxCount = 0
   let totalCount = 0
   let activeDays = 0
-  for (let t = userStart.getTime(); t <= userEnd.getTime(); t += 86400000) {
-    const date = new Date(t)
-    const key = toISODate(date)
+  // L-Fix (low correctness)：与同文件 computeStreaks 对齐。原版用
+  // `t += 86400000`（24h UTC 步进），在本地 DST 切换日（春令 23h / 秋令 25h）
+  // 会让某一天要么算两次要么漏一天，导致 maxCount / totalCount / activeDays
+  // 错算，level 颜色档位整体偏移。改用 cursor.setDate() 一天一天推进，
+  // Date 内部按本地日期自然吸收 DST 偏移。
+  const cursor = new Date(userStart)
+  const endMs = userEnd.getTime()
+  while (cursor.getTime() <= endMs) {
+    const key = toISODate(cursor)
     const c = dailyCounts[key] ?? 0
     if (c > maxCount) maxCount = c
     totalCount += c
     if (c > 0) activeDays += 1
+    cursor.setDate(cursor.getDate() + 1)
   }
 
   // 构建周列表 + 月份标签
   const weeks: HeatmapWeek[] = []
   const monthLabels: HeatmapMonthLabel[] = []
-  const totalDays =
-    Math.round((gridEnd.getTime() - gridStart.getTime()) / 86400000) + 1
+  // L-Fix (low correctness)：同上 —— 用 cursor.setDate() 推进，避免 Math.round
+  // 在跨 DST 切换日时假设"每天恰好 86400000ms"而引入 ±1 天误差（实践中
+  // 单纯 ±1h 偏移靠 Math.round(+1) 仍能 round 到正确整数，但与上面 cursor
+  // 模式不一致更难审计；这里换成同样的 cursor 推进，逻辑统一也更稳）。
+  const gridCursor = new Date(gridStart)
+  const gridEndMs = gridEnd.getTime()
+  let totalDays = 0
+  while (gridCursor.getTime() <= gridEndMs) {
+    totalDays += 1
+    gridCursor.setDate(gridCursor.getDate() + 1)
+  }
   const weekCount = totalDays / 7
 
   let lastMonthIdx = -1
@@ -277,7 +302,7 @@ export function buildHeatmap(
     // 标记"该周首日为月份 1~7 号"为该月第一周 → 顶部显示月份
     const isFirstWeekOfMonth = firstDateOfWeek.getDate() <= 7 && monthIdx !== lastMonthIdx
     if (isFirstWeekOfMonth) {
-      monthLabels.push({ weekIndex: w, label: MONTH_LABELS_ZH[monthIdx] ?? '' })
+      monthLabels.push({ weekIndex: w, label: monthShort[monthIdx] ?? '' })
       lastMonthIdx = monthIdx
     }
 
@@ -342,6 +367,7 @@ export function buildHeatmapLastNDays(
   days = 365,
   endDate: Date = new Date(),
   firstDayOfWeek: FirstDayOfWeek = 0,
+  monthShort: readonly string[] = DEFAULT_MONTH_SHORT_ZH,
 ): HeatmapData {
   const ref = new Date(endDate.getFullYear(), endDate.getMonth(), endDate.getDate())
   let start: Date
@@ -355,14 +381,34 @@ export function buildHeatmapLastNDays(
     start = new Date(ref)
     start.setDate(start.getDate() - (days - 1))
   }
-  return buildHeatmap(dailyCounts, start, end, firstDayOfWeek)
+  return buildHeatmap(dailyCounts, start, end, firstDayOfWeek, monthShort)
 }
 
 /**
- * 工具：把周内的索引（0~6）转成周几标签（中文）
+ * 工具：把周内的索引（0~6）转成周几标签。
+ *
+ * 历史：原版硬编码返回 ['日','一',…,'六']，与 settings.language 完全脱钩。
+ * R-fix-i18n-weekday-label (medium)：增加第三个可选参数 weekdayShort
+ * （长度固定 7 的字符串数组，Sunday=0 → Saturday=6），由调用方从
+ * @shared/i18n/locales.getCalendarMessages().weekdayShort 传入，实现
+ * 跟随 locale 切换（zh-CN: ['日','一',…,'六']；未来 en-US:
+ * ['Sun','Mon',…,'Sat']）。
+ *
+ * 保持向后兼容：第三个参数可选，未传时回退原版中文 7 项 —— 历史 callers
+ * 与单元测试不必改一行代码；新 caller（Heatmap / HeatmapWidget /
+ * FocusCalendar）从 getCalendarMessages 取字典传入。
  */
-export function weekdayLabel(weekdayIndex: number, firstDayOfWeek: FirstDayOfWeek = 0): string {
-  const labels = ['日', '一', '二', '三', '四', '五', '六']
+export function weekdayLabel(
+  weekdayIndex: number,
+  firstDayOfWeek: FirstDayOfWeek = 0,
+  weekdayShort?: readonly string[],
+): string {
+  const labels = weekdayShort ?? DEFAULT_WEEKDAY_SHORT_ZH
   const idx = (weekdayIndex + firstDayOfWeek) % 7
-  return labels[idx]
+  return labels[idx] ?? ''
 }
+
+/** 与 R-fix-i18n-weekday-label (medium) 同时新增：原硬编码字典的内部 alias，
+ *  拆出 const 是为了让可选参数 `??` 有一个明确默认值（避免在签名里写
+ *  array literal 引起 lint 重复）。 */
+const DEFAULT_WEEKDAY_SHORT_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const

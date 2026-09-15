@@ -53,10 +53,17 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   },
   {
     id: 'sticky.new',
-    label: '新建便签',
+    label: '新建便签（聚焦标题）',
     category: '便签',
     defaultBinding: 'mod+n',
-    description: '在今日新建一条便签（聚焦标题）',
+    description: '在今日页按 Cmd/Ctrl+N 新建便签并聚焦标题',
+  },
+  {
+    id: 'sticky.newGlobal',
+    label: '新建便签（全局浮层）',
+    category: '便签',
+    defaultBinding: 'n',
+    description: '任意页面按 N 唤起新建便签浮层（不依赖 /today 路由）',
   },
   {
     id: 'sticky.today',

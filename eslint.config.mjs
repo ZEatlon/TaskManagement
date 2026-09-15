@@ -36,6 +36,9 @@ export default [
       '*.config.cjs',
       '*.config.mjs',
       '*.config.js',
+      // 仓库根的 index.cjs 是 CommonJS 入口脚本，tsc / typescript-eslint 都不管它，
+      // 否则对 `require('electron')` 等合法调用报 25 个 no-undef / no-require。
+      'index.cjs',
     ],
   },
   js.configs.recommended,
@@ -84,7 +87,7 @@ export default [
     },
   },
   {
-    files: ['src/main/**/*.ts', 'src/preload/**/*.ts', 'scripts/**/*.ts'],
+    files: ['src/main/**/*.ts', 'src/preload/**/*.ts', 'scripts/**/*.ts', 'scripts/**/*.mts'],
     rules: {
       'no-undef': 'off',
       '@typescript-eslint/no-unused-vars': [

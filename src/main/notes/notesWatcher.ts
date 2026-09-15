@@ -26,7 +26,7 @@ import { noteEventsRepo } from '../db/repositories/completions'
 import { notesRepo } from '../db/repositories/notes'
 import { parseFrontmatter } from './frontmatter'
 import { IPC_CHANNELS } from '@shared/ipc/channels'
-import { localDayKeyOf } from '../lib/localDayKey'
+import { localDayKeyOf } from '@shared/lib/dayKey'
 
 /** 文件系统事件类型 */
 export type FsEventType = 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir' | 'ready'

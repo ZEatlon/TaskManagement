@@ -51,6 +51,15 @@ export async function setSecret(key: string, plaintext: string): Promise<void> {
   if (!isAvailable()) {
     throw new Error('safeStorage not available on this system')
   }
+  // Defense-in-depth：与 IPC 层同样的字节上限。任意调用方（含未来的内部
+  // 模块、测试、迁移脚本）都不能绕过这个护栏把超长明文喂给 safeStorage。
+  const MAX_SECRET_VALUE_BYTES = 4 * 1024
+  const bytes = Buffer.byteLength(plaintext, 'utf8')
+  if (bytes > MAX_SECRET_VALUE_BYTES) {
+    throw new Error(
+      `setSecret: plaintext exceeds ${MAX_SECRET_VALUE_BYTES} byte cap (got ${bytes} bytes)`
+    )
+  }
   const cipher = safeStorage.encryptString(plaintext).toString('base64')
   const payload: EncryptedSecret = { cipher, algo: 'safeStorage-v1' }
   const store = await getStore()

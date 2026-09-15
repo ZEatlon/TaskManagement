@@ -25,14 +25,32 @@ const GENERATED_TITLE_MAX_CHARS = 30
 /**
  * 判断是否应该触发自动标题生成。
  * 条件：
- *  - 对话标题为 null / 空 / 「新对话」占位（前端默认 placeholder）
+ *  - 对话标题是系统占位（titleIsAuto === true）或未设（title 为 null / 空）
+ *    —— 见 R-fix-i18n-conv-title-placeholder-flag。原版用 prefix-match
+ *    中文字面量『新对话』，切到非 zh-CN locale 后永远 false → 自动重命名
+ *    失效。现以 stable flag 列为准：渲染端 newConversation 时显式置
+ *    titleIsAuto=true；updateTitle 自动把 flag 置 0。历史迁移见
+ *    migrations/015-ai-conv-title-is-auto.sql 的 backfill。
  *  - 至少有 1 条 user + 1 条 assistant
+ *
+ * 注意：conv.titleIsAuto 字段是 optional —— 旧调用方可能仍传无 flag
+ * 的 conv 对象（如测试 mock）。在 optional 的情况下回退到『title 为
+ * null / 空 / 占位前缀』的旧判定，保证向后兼容。
  */
 export function shouldAutoTitle(conv: {
   title: string | null
+  titleIsAuto?: boolean
   messages: AiMessage[]
 }): boolean {
-  if (conv.title && !conv.title.startsWith('新对话')) return false
+  if (conv.titleIsAuto === true) {
+    // 新路径：稳定 flag 已置位，直接放行
+  } else if (conv.titleIsAuto === false) {
+    return false
+  } else {
+    // 旧路径兼容：titleIsAuto 字段缺失（pre-015 渲染端 / 旧 mock）
+    // —— 退化到前缀匹配
+    if (conv.title && !conv.title.startsWith('新对话')) return false
+  }
   let userCount = 0
   let assistantCount = 0
   for (const m of conv.messages) {

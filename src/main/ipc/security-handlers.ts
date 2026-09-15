@@ -14,6 +14,13 @@ import {
 /** 允许的 secret key 白名单 —— 防止任意字符串写入 secrets.json / 解密任意键 */
 const ALLOWED_SECRET_KEYS: ReadonlySet<string> = new Set(Object.values(SECRET_KEYS))
 
+/**
+ * 单个 secret value 的字节上限 —— API key / token 实际都 < 1KB，
+ * 4KB 给富余。防止 IPC 层把数百 MB 字符串直接喂给 safeStorage.encryptString，
+ * 阻塞主进程（local DoS）。
+ */
+const MAX_SECRET_VALUE_BYTES = 4 * 1024
+
 function isAllowedKey(key: unknown): key is SecretKey {
   return typeof key === 'string' && ALLOWED_SECRET_KEYS.has(key)
 }
@@ -27,6 +34,13 @@ export function registerSecurityHandlers(): void {
     }
     if (typeof args?.value !== 'string' || !args.value) {
       throw new Error('security:set: value 必须是非空字符串')
+    }
+    // 防止被利用的渲染端把超长字符串喂给 safeStorage.encryptString 阻塞主进程
+    const bytes = Buffer.byteLength(args.value, 'utf8')
+    if (bytes > MAX_SECRET_VALUE_BYTES) {
+      throw new Error(
+        `security:set: value exceeds ${MAX_SECRET_VALUE_BYTES} byte cap (got ${bytes} bytes)`
+      )
     }
     await setSecret(args.key, args.value)
     return { ok: true }

@@ -21,7 +21,10 @@ import {
   type FirstDayOfWeek,
   type HeatmapDay,
 } from '../heatmap/heatmapData'
-import { dayKeyOf } from '../../lib/date'
+import { dayKeyOf, fromDayKey } from '../../lib/date'
+import { useTodayKey } from '../../lib/useDayRollover'
+import { useSettingsStore } from '../../stores/settings'
+import { getCalendarMessages, getHeatmapMessages } from '@shared/i18n/locales'
 
 const FIRST_DOW: FirstDayOfWeek = 1 // 周一首（与中文月历对齐）
 const DAYS_WINDOW = 90 // 近三月
@@ -48,31 +51,12 @@ export function HeatmapWidget() {
     pomodoros: false,
   })
 
-  // 当前日期引用 —— 跨午夜时推进；用于重新计算 heatmap 起始日 + 拉取 IPC
-  const [today, setToday] = useState<Date>(() => new Date())
-  useEffect(() => {
-    function check() {
-      const now = new Date()
-      // 仅在跨过 00:00 时推进（不依赖 monthRef）
-      if (
-        now.getFullYear() !== today.getFullYear() ||
-        now.getMonth() !== today.getMonth() ||
-        now.getDate() !== today.getDate()
-      ) {
-        setToday(now)
-      }
-    }
-    // 每分钟检查一次（精度足够，避免与系统时间漂移）
-    const id = window.setInterval(check, 60_000)
-    function onVisibility() {
-      if (document.visibilityState === 'visible') setToday(new Date())
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      window.clearInterval(id)
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [today])
+  // 当前日期引用 —— 跨午夜时推进；用于重新计算 heatmap 起始日 + 拉取 IPC。
+  // 复用 lib/useDayRollover 提供的 useTodayKey（事件驱动，模块级共享
+  // 60s 轮询 + visibilitychange），避免与 TodaySummary / StickyNotesWidget
+  // 各挂一份 setInterval 重复唤醒。
+  const todayKey = useTodayKey()
+  const today = useMemo(() => fromDayKey(todayKey), [todayKey])
 
   const windowStart = useMemo(() => {
     const d = new Date(today)
@@ -81,14 +65,24 @@ export function HeatmapWidget() {
   }, [today])
   const windowEnd = today
 
-  // 仅在数据源开启时拉取对应 IPC（避免无意义请求）
+  // 仅在数据源开启时拉取对应 IPC（避免无意义请求）。
+  // R37-fix-high (perf)：拆成三路独立 effect，每个 deps 只含对应 boolean +
+  // 窗口边界。toggleSource 只生成新 sources 对象、单一 boolean 翻转 → 仅该路
+  // effect 重跑，避免切换一路时把另两路 IPC + DB 查询白白重拉（每路 30-80ms）。
   useEffect(() => {
-    const start = dayKeyOf(windowStart)
-    const end = dayKeyOf(windowEnd)
-    if (sources.stickies) void fetch(start, end)
-    if (sources.notes) void fetchNoteEvents(start, end)
-    if (sources.pomodoros) void fetchPomodoros(start, end)
-  }, [sources, fetch, fetchNoteEvents, fetchPomodoros, windowStart, windowEnd])
+    if (!sources.stickies) return
+    void fetch(dayKeyOf(windowStart), dayKeyOf(windowEnd))
+  }, [sources.stickies, fetch, windowStart, windowEnd])
+
+  useEffect(() => {
+    if (!sources.notes) return
+    void fetchNoteEvents(dayKeyOf(windowStart), dayKeyOf(windowEnd))
+  }, [sources.notes, fetchNoteEvents, windowStart, windowEnd])
+
+  useEffect(() => {
+    if (!sources.pomodoros) return
+    void fetchPomodoros(dayKeyOf(windowStart), dayKeyOf(windowEnd))
+  }, [sources.pomodoros, fetchPomodoros, windowStart, windowEnd])
 
   // 合并数据：按来源相加（stickies 已包含「完成便签」事件，无需再加）
   const merged: Record<string, number> = useMemo(() => {
@@ -121,22 +115,39 @@ export function HeatmapWidget() {
     setSources((prev) => ({ ...prev, [src]: !prev[src] }))
   }
 
+  // R-fix-i18n-weekday-label (medium)：左侧 weekday 标签跟随 settings.language 切换。
+  // 只订阅 language 字段避免 settings store 其它字段变化触发整 widget 重渲染。
+  const language = useSettingsStore((s) => s.language)
+  const calendarMessages = useMemo(() => getCalendarMessages(language), [language])
+  // R-fix-i18n-heatmap-widget-strings (medium)：图例 5 档量化描述 /
+  // period 标题 / 长 summary / 图例两端「少」「多」从 HeatmapMessages 取
+  // —— 之前是硬编码中文，与 HeatmapMessages 已有字段走同一套 i18n 注册表
+  // 的结构不一致（Heatmap.tsx 已接 getHeatmapMessages，本 widget 未接）。
+  const heatmapMessages = useMemo(() => getHeatmapMessages(language), [language])
   // 完整 7 行 weekday 标签（周一~周日）
   const weekdayLabels = useMemo(
     () =>
-      Array.from({ length: 7 }).map((_, i) => weekdayLabel(i, FIRST_DOW)),
-    [],
+      Array.from({ length: 7 }).map((_, i) =>
+        weekdayLabel(i, FIRST_DOW, calendarMessages.weekdayShort),
+      ),
+    [calendarMessages],
   )
 
-  // 月份标签：windowStart / windowEnd 所在月份短标签
-  const monthLabelRange = useMemo(() => {
-    const start = windowStart.getMonth() + 1
-    const end = windowEnd.getMonth() + 1
-    return start === end ? `${start}月` : `${start}月 - ${end}月`
-  }, [windowStart, windowEnd])
+  // 月份标签：windowStart / windowEnd 所在月份短标签由 i18n 模板自己
+  // 拼装（periodLabelTemplate 内部决定 startMonth === endMonth 时是否
+  // 合并显示），这里只负责传 raw 数字进去。
 
-  const periodLabel = `近三月 · ${monthLabelRange}`
-  const sub = `近三月完成 ${heatmap.totalCount} 次 · 活跃 ${heatmap.activeDays} 天 · 连续 ${heatmap.currentStreak} 天 · 日均 ${heatmap.avgPerDay.toFixed(1)} 次`
+  // period / sub 文案走 i18n 模板，避免硬编码「近三月 · 」、「· 连续 」等分隔符。
+  const periodLabel = heatmapMessages.periodLabelTemplate({
+    startMonth: windowStart.getMonth() + 1,
+    endMonth: windowEnd.getMonth() + 1,
+  })
+  const sub = heatmapMessages.subTemplate({
+    total: heatmap.totalCount,
+    activeDays: heatmap.activeDays,
+    streak: heatmap.currentStreak,
+    avgPerDay: heatmap.avgPerDay.toFixed(1),
+  })
 
   return (
     <div className="dashboard-heatmap-widget" aria-label="近期活动热力图">
@@ -199,20 +210,24 @@ export function HeatmapWidget() {
             })}
           </div>
 
-          {/* cells 网格：每列代表周，每行代表周一~周日 */}
-          <div className="dashboard-heatmap-grid" role="grid">
+          {/* cells 网格：每列代表周，每行代表周一~周日
+              R37 修复 (high a11y)：原版用 role=grid/row/gridcell 但 cells 不可
+              focus / 不可点击 —— SR 宣告完整 grid 结构但键盘无任何 cell 可达，
+              隐式承诺的交互性破坏。改为纯展示列表：父容器 role="list"，
+              每个 cell role="listitem" + aria-label，单 cell 不再做 gridcell。 */}
+          <div className="dashboard-heatmap-grid" role="list" aria-label="近期活动单元格">
             {heatmap.weeks.map((week, colIdx) => (
               <div
                 key={colIdx}
                 className="dashboard-heatmap-col"
-                role="row"
+                role="presentation"
               >
                 {week.days.map((day: HeatmapDay, dayIdx) => (
                   <div
                     key={`${colIdx}-${dayIdx}-${day.date}`}
                     className={`dashboard-heatmap-cell level-${day.level} ${day.inRange ? '' : 'out-of-range'} ${day.isToday ? 'is-today' : ''}`}
                     title={`${day.date}：${day.count} 次`}
-                    role="gridcell"
+                    role="listitem"
                     aria-label={`${day.date}：${day.count} 次`}
                   />
                 ))}
@@ -224,17 +239,28 @@ export function HeatmapWidget() {
 
       {/* 图例 */}
       <div className="dashboard-heatmap-legend muted small">
-        <span>少</span>
-        <span className="dashboard-heatmap-legend-cells" aria-hidden>
+        <span aria-hidden>{heatmapMessages.lessLabel}</span>
+        {/*
+          R36 修复 (medium a11y)：原版在外层套 `aria-hidden=true`、又在内层 5
+          个 span 挂 `aria-label="level N"`。aria-label 在 aria-hidden 子树内
+          时多数 SR 直接跳过，导致色块完全没声音反馈 —— 视障用户听到「少 □□□□□
+          多」但中间 5 块是哑的。改为：外层不再 aria-hidden，让色块的 aria-label
+          能被 SR 读出；同时把 level 翻译成量化描述（与 HeatmapCell.data-count
+          同语义），给 SR 用户「活动 0 次 / 1-3 次起 / …」式的可听反馈。
+          「少 / 多」两端用 aria-hidden 因为它们是无障碍标签文本（每个色块的
+          aria-label 已经自含量级），避免重复念出。
+        */}
+        <span className="dashboard-heatmap-legend-cells" role="list" aria-label="活动量图例">
           {[0, 1, 2, 3, 4].map((lvl) => (
             <span
               key={lvl}
               className={`dashboard-heatmap-legend-cell level-${lvl}`}
-              aria-label={`level ${lvl}`}
+              role="listitem"
+              aria-label={heatmapMessages.legendLabels[lvl]}
             />
           ))}
         </span>
-        <span>多</span>
+        <span aria-hidden>{heatmapMessages.moreLabel}</span>
       </div>
     </div>
   )

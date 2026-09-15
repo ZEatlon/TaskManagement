@@ -6,6 +6,7 @@ import type {
   ID,
   Tag,
   BackfillResult,
+  Note,
   NoteFolder,
   NoteFolderColor,
   NoteMeta,
@@ -35,43 +36,43 @@ async function invoke<TReq, TRes>(channel: string, req?: TReq): Promise<TRes> {
 
 // ===== 标签 =====
 export const tagsApi = {
-  list: () => invoke<undefined, Tag[]>('tag:list'),
-  get: (id: string) => invoke<string, Tag | null>('tag:get', id),
+  list: () => invoke<undefined, Tag[]>(IPC_CHANNELS.TAG_LIST),
+  get: (id: string) => invoke<string, Tag | null>(IPC_CHANNELS.TAG_GET, id),
   create: (input: { name: string; parentId?: string | null; color?: string | null }) =>
-    invoke<typeof input, Tag>('tag:create', input),
-  update: (id: string, patch: Partial<Tag>) => invoke<{ id: string; patch: Partial<Tag> }, Tag | null>('tag:update', { id, patch }),
-  delete: (id: string) => invoke<string, boolean>('tag:delete', id),
-  findByName: (name: string) => invoke<string, Tag | null>('tag:find-by-name', name),
+    invoke<typeof input, Tag>(IPC_CHANNELS.TAG_CREATE, input),
+  update: (id: string, patch: Partial<Tag>) => invoke<{ id: string; patch: Partial<Tag> }, Tag | null>(IPC_CHANNELS.TAG_UPDATE, { id, patch }),
+  delete: (id: string) => invoke<string, boolean>(IPC_CHANNELS.TAG_DELETE, id),
+  findByName: (name: string) => invoke<string, Tag | null>(IPC_CHANNELS.TAG_FIND_BY_NAME, name),
 }
 
 // ===== 设置 =====
 export const settingsApi = {
-  get: <T = unknown>(key: string) => invoke<string, T | null>('setting:get', key),
+  get: <T = unknown>(key: string) => invoke<string, T | null>(IPC_CHANNELS.SETTING_GET, key),
   set: (key: string, value: unknown) =>
-    invoke<{ key: string; value: unknown }, { ok: true }>('setting:set', { key, value }),
-  getAll: () => invoke<undefined, Record<string, unknown>>('setting:get-all'),
-  delete: (key: string) => invoke<string, { ok: true }>('setting:delete', key),
+    invoke<{ key: string; value: unknown }, { ok: true }>(IPC_CHANNELS.SETTING_SET, { key, value }),
+  getAll: () => invoke<undefined, Record<string, unknown>>(IPC_CHANNELS.SETTING_GET_ALL),
+  delete: (key: string) => invoke<string, { ok: true }>(IPC_CHANNELS.SETTING_DELETE, key),
 }
 
 // ===== 数据库 =====
 export const dbApi = {
-  status: () => invoke<undefined, { initialized: boolean; version: number; path: string; sizeBytes: number }>('db:status'),
-  vacuum: () => invoke<undefined, { ok: true }>('db:vacuum'),
+  status: () => invoke<undefined, { initialized: boolean; version: number; path: string; sizeBytes: number }>(IPC_CHANNELS.DB_STATUS),
+  vacuum: () => invoke<undefined, { ok: true }>(IPC_CHANNELS.DB_VACUUM),
 }
 
 // ===== 安全 / API Key =====
 export const securityApi = {
-  isAvailable: () => invoke<undefined, boolean>('security:is-available'),
+  isAvailable: () => invoke<undefined, boolean>(IPC_CHANNELS.SECURITY_IS_AVAILABLE),
   set: (key: 'openai.apiKey' | 'anthropic.apiKey' | 'minimax.apiKey' | 'git.token', value: string) =>
-    invoke<{ key: typeof key; value: string }, { ok: true }>('security:set', { key, value }),
+    invoke<{ key: typeof key; value: string }, { ok: true }>(IPC_CHANNELS.SECURITY_SET, { key, value }),
   // R5S-6：安全 IPC 只返回 `{ present: true; length: number } | null`，
   // 不解密明文。renderer 之前声明成 `string | null` 与主进程契约不符，
   // 一旦有调用方误调 `.startsWith()` 等 string 操作就会运行时崩溃。
   get: (key: 'openai.apiKey' | 'anthropic.apiKey' | 'minimax.apiKey' | 'git.token') =>
-    invoke<typeof key, { present: true; length: number } | null>('security:get', key),
+    invoke<typeof key, { present: true; length: number } | null>(IPC_CHANNELS.SECURITY_GET, key),
   delete: (key: 'openai.apiKey' | 'anthropic.apiKey' | 'minimax.apiKey' | 'git.token') =>
-    invoke<typeof key, { ok: true }>('security:delete', key),
-  listKeys: () => invoke<undefined, string[]>('security:list-keys'),
+    invoke<typeof key, { ok: true }>(IPC_CHANNELS.SECURITY_DELETE, key),
+  listKeys: () => invoke<undefined, string[]>(IPC_CHANNELS.SECURITY_LIST_KEYS),
 }
 
 // ===== AI 对话 =====
@@ -81,20 +82,20 @@ export const conversationsApi = {
     limitOrOpts: number | { limit?: number; folderId?: string | null } = 100,
   ) =>
     typeof limitOrOpts === 'number'
-      ? invoke<number, AiConversation[]>('ai:list-conversations', limitOrOpts)
+      ? invoke<number, AiConversation[]>(IPC_CHANNELS.AI_LIST_CONVERSATIONS, limitOrOpts)
       : invoke<typeof limitOrOpts, AiConversation[]>(
-          'ai:list-conversations',
+          IPC_CHANNELS.AI_LIST_CONVERSATIONS,
           limitOrOpts,
         ),
-  get: (id: string) => invoke<string, AiConversation | null>('ai:get-conversation', id),
-  create: (input: { provider: string; model: string; title?: string | null; folderId?: string | null }) =>
-    invoke<typeof input, AiConversation>('ai:create-conversation', input),
+  get: (id: string) => invoke<string, AiConversation | null>(IPC_CHANNELS.AI_GET_CONVERSATION, id),
+  create: (input: { provider: string; model: string; title?: string | null; folderId?: string | null; titleIsAuto?: boolean | null }) =>
+    invoke<typeof input, AiConversation>(IPC_CHANNELS.AI_CREATE_CONVERSATION, input),
   appendMessage: (id: string, message: AiMessage) =>
-    invoke<{ id: string; message: AiMessage }, { ok: true }>('ai:append-message', { id, message }),
+    invoke<{ id: string; message: AiMessage }, { ok: true }>(IPC_CHANNELS.AI_APPEND_MESSAGE, { id, message }),
   updateTokens: (id: string, input: number, output: number) =>
-    invoke<{ id: string; input: number; output: number }, { ok: true }>('ai:update-tokens', { id, input, output }),
+    invoke<{ id: string; input: number; output: number }, { ok: true }>(IPC_CHANNELS.AI_UPDATE_TOKENS, { id, input, output }),
   updateTitle: (id: string, title: string) =>
-    invoke<{ id: string; title: string }, { ok: true }>('ai:update-title', { id, title }),
+    invoke<{ id: string; title: string }, { ok: true }>(IPC_CHANNELS.AI_UPDATE_TITLE, { id, title }),
   delete: (id: string) =>
     invoke<string, { ok: true }>(IPC_CHANNELS.AI_DELETE_CONVERSATION, id),
   /**
@@ -148,30 +149,30 @@ export const aiConvFoldersApi = {
 export const completionsApi = {
   record: (stickyNoteId: string | null, date: string, count = 1) =>
     invoke<{ stickyNoteId: string | null; date: string; count?: number }, { id: string; stickyNoteId: string | null; date: string; count: number; createdAt: string }>(
-      'completion:record',
+      IPC_CHANNELS.COMPLETION_RECORD,
       { stickyNoteId, date, count },
     ),
   daily: (startDate: string, endDate: string) =>
-    invoke<{ startDate: string; endDate: string }, Record<string, number>>('completion:daily', { startDate, endDate }),
+    invoke<{ startDate: string; endDate: string }, Record<string, number>>(IPC_CHANNELS.COMPLETION_DAILY, { startDate, endDate }),
   total: (startDate: string, endDate: string) =>
-    invoke<{ startDate: string; endDate: string }, number>('completion:total', { startDate, endDate }),
+    invoke<{ startDate: string; endDate: string }, number>(IPC_CHANNELS.COMPLETION_TOTAL, { startDate, endDate }),
 }
 
 export const noteEventsApi = {
   record: (noteId: string | null, date: string, type: 'create' | 'edit' | 'delete' = 'edit') =>
     invoke<{ noteId: string | null; date: string; type?: 'create' | 'edit' | 'delete' }, { ok: true }>(
-      'note-event:record',
+      IPC_CHANNELS.NOTE_EVENT_RECORD,
       { noteId, date, type },
     ),
   daily: (startDate: string, endDate: string) =>
-    invoke<{ startDate: string; endDate: string }, Record<string, number>>('note-event:daily', { startDate, endDate }),
+    invoke<{ startDate: string; endDate: string }, Record<string, number>>(IPC_CHANNELS.NOTE_EVENT_DAILY, { startDate, endDate }),
 }
 
 // ===== 番茄钟（热力图专用） =====
 export const pomodorosDailyApi = {
   /** 区间内每日专注分钟数（YYYY-MM-DD → minutes） */
   daily: (startDate: string, endDate: string) =>
-    invoke<{ start: string; end: string }, Record<string, number>>('pomodoro:daily', { start: startDate, end: endDate }),
+    invoke<{ start: string; end: string }, Record<string, number>>(IPC_CHANNELS.POMODORO_DAILY, { start: startDate, end: endDate }),
 }
 
 // ===== AI（模块 P1-AI）=====
@@ -184,9 +185,9 @@ export interface AiProviderInfo {
 // AiStreamEvent 从 @shared/types/ai 引入
 
 export const aiApi = {
-  listProviders: () => invoke<undefined, AiProviderInfo[]>('ai:list-providers'),
+  listProviders: () => invoke<undefined, AiProviderInfo[]>(IPC_CHANNELS.AI_LIST_PROVIDERS),
   listModels: (providerId: 'openai' | 'anthropic' | 'minimax') =>
-    invoke<typeof providerId, string[]>('ai:list-models', providerId),
+    invoke<typeof providerId, string[]>(IPC_CHANNELS.AI_LIST_MODELS, providerId),
   testConnection: (
     providerId: 'openai' | 'anthropic' | 'minimax',
     model?: string,
@@ -194,11 +195,11 @@ export const aiApi = {
     invoke<
       { providerId: typeof providerId; model?: string } | typeof providerId,
       { ok: boolean; message?: string }
-    >('ai:test-connection', model ? { providerId, model } : providerId),
-  systemPrompt: () => invoke<undefined, string>('ai:system-prompt'),
+    >(IPC_CHANNELS.AI_TEST_CONNECTION, model ? { providerId, model } : providerId),
+  systemPrompt: () => invoke<undefined, string>(IPC_CHANNELS.AI_SYSTEM_PROMPT),
   estimateTokens: (
     messages: Array<{ role: string; content: string; name?: string }>,
-  ) => invoke<typeof messages, number>('ai:estimate-tokens', messages),
+  ) => invoke<typeof messages, number>(IPC_CHANNELS.AI_ESTIMATE_TOKENS, messages),
   stream: (req: {
     callId: string
     conversationId: string
@@ -211,8 +212,8 @@ export const aiApi = {
     }>
     model?: string
     temperature?: number
-  }) => invoke<typeof req, { ok: true; callId: string }>('ai:stream', req),
-  abort: (callId: string) => invoke<typeof callId, { ok: boolean }>('ai:abort', callId),
+  }) => invoke<typeof req, { ok: true; callId: string }>(IPC_CHANNELS.AI_STREAM, req),
+  abort: (callId: string) => invoke<typeof callId, { ok: boolean }>(IPC_CHANNELS.AI_ABORT, callId),
 
   /**
    * 用户在 UI 明确同意后，真正落盘 AI createNote 工具请求的笔记。
@@ -243,6 +244,47 @@ export const aiApi = {
     invoke<{ noteId: string }, { ok: true }>(IPC_CHANNELS.NOTE_OPENED, { noteId }),
   noteClosed: (noteId: string) =>
     invoke<{ noteId: string }, { ok: true }>(IPC_CHANNELS.NOTE_CLOSED, { noteId }),
+
+  /**
+   * 把"用户当前正在操作的便签 ID"推到主进程。仅用作 system prompt
+   * 上下文提示（advisory），不参与权限校验。卸载便签时传 null。
+   * 失败的 IPC 不可阻塞 UI；调用方 fire-and-forget 即可。
+   */
+  setCurrentStickyId: (stickyId: string | null) =>
+    invoke<typeof stickyId, { ok: true }>(
+      IPC_CHANNELS.AI_SET_CURRENT_STICKY_ID,
+      stickyId,
+    ),
+
+  /**
+   * R33 修复 (medium #2)：compare-and-clear。
+   * StickyNoteCard unmount 时调用，传入当前 noteId；主进程仅在 stickyId
+   * 仍等于 noteId 时才清空。避免多张同 id 卡同挂时 A 卸载把 B 推过来的
+   * stickyId 误清。失败的 IPC 不可阻塞 UI；调用方 fire-and-forget 即可。
+   */
+  clearStickyIdIfMatches: (noteId: string) =>
+    invoke<{ noteId: string }, { ok: true; cleared: boolean }>(
+      IPC_CHANNELS.AI_CLEAR_STICKY_ID_IF_MATCHES,
+      { noteId },
+    ),
+
+  /**
+   * 把"番茄钟当前阶段"推到主进程。仅用作 system prompt 上下文提示
+   * （advisory），不参与权限校验。停止时传 null。
+   */
+  setCurrentPomodoroContext: (
+    payload:
+      | {
+          running: boolean
+          mode: 'focus' | 'shortBreak' | 'longBreak'
+          stickyNoteId: string | null
+        }
+      | null,
+  ) =>
+    invoke<typeof payload, { ok: true }>(
+      IPC_CHANNELS.AI_SET_CURRENT_POMODORO_CONTEXT,
+      payload,
+    ),
 
   /**
    * R8I-2：通用副作用确认（createSticky / updateSticky / completeSticky 等）。
@@ -298,7 +340,7 @@ export const heatmapApi = {
     invoke<{ force?: boolean }, {
       completions: BackfillResult
       noteEvents: BackfillResult
-    }>('completion:backfill', { force }),
+    }>(IPC_CHANNELS.COMPLETION_BACKFILL, { force }),
 }
 
 // ===== 便签（多级待办 / 时间线 / 统一任务实体） =====
@@ -400,19 +442,19 @@ export interface LibraryMigrateResult {
 }
 
 export const libraryApi = {
-  selectDirectory: () => invoke<undefined, string | null>('lib:select-directory'),
-  getCurrent: () => invoke<undefined, string | null>('lib:get-current'),
+  selectDirectory: () => invoke<undefined, string | null>(IPC_CHANNELS.LIB_SELECT_DIRECTORY),
+  getCurrent: () => invoke<undefined, string | null>(IPC_CHANNELS.LIB_GET_CURRENT),
   setCurrent: (path: string) =>
-    invoke<{ path: string }, { ok: true; path: string }>('lib:set-current', { path }),
+    invoke<{ path: string }, { ok: true; path: string }>(IPC_CHANNELS.LIB_SET_CURRENT, { path }),
   initialize: (path: string) =>
     invoke<{ path: string }, { ok: true; path: string; taskpilotDir: string }>(
-      'lib:initialize',
+      IPC_CHANNELS.LIB_INITIALIZE,
       { path },
     ),
   validate: (path: string) =>
-    invoke<{ path: string }, LibraryValidation>('lib:validate', { path }),
-  isFirstRun: () => invoke<undefined, boolean>('lib:is-first-run'),
-  clear: () => invoke<undefined, { ok: true }>('lib:clear'),
+    invoke<{ path: string }, LibraryValidation>(IPC_CHANNELS.LIB_VALIDATE, { path }),
+  isFirstRun: () => invoke<undefined, boolean>(IPC_CHANNELS.LIB_IS_FIRST_RUN),
+  clear: () => invoke<undefined, { ok: true }>(IPC_CHANNELS.LIB_CLEAR),
   /**
    * 扫描指定路径：返回 .taskpilot 子目录的数据现状（笔记数 / 附件数 /
    * 占用字节 / 子目录数 / error）。
@@ -448,11 +490,11 @@ export interface AttachmentUploadResponse {
 
 export const attachmentsApi = {
   upload: (req: { base64: string; mime: string; filename?: string }) =>
-    invoke<typeof req, AttachmentUploadResponse>('attachment:upload', req),
+    invoke<typeof req, AttachmentUploadResponse>(IPC_CHANNELS.ATTACHMENT_UPLOAD, req),
   delete: (url: string) =>
-    invoke<string, { ok: boolean }>('attachment:delete', url),
+    invoke<string, { ok: boolean }>(IPC_CHANNELS.ATTACHMENT_DELETE, url),
   exists: (url: string) =>
-    invoke<string, { exists: boolean }>('attachment:exists', url),
+    invoke<string, { exists: boolean }>(IPC_CHANNELS.ATTACHMENT_EXISTS, url),
 }
 
 // ===== 笔记文件夹 =====
@@ -480,10 +522,91 @@ export const noteFoldersApi = {
       { folderId?: string | null; archived?: boolean; limit?: number },
       NoteMeta[]
     >(IPC_CHANNELS.NOTE_LIST_BY_FOLDER, { folderId, archived: opts?.archived, limit: opts?.limit }),
+  /**
+   * 批量按多 folderId 拉笔记：sidebar 多文件夹预览场景。单 IPC + 单 SQL
+   * 比连点 listByFolder 节省 N-1 轮 round-trip（20 个文件夹 ≈ 20-60ms）。
+   * 返回 Record<folderId, NoteMeta[]>；null（未分类）以 key `'null'` 返回。
+   */
+  listByFolders: (
+    folderIds: Array<string | null>,
+    opts?: { archived?: boolean; limit?: number },
+  ) =>
+    invoke<
+      { folderIds: Array<string | null>; archived?: boolean; limit?: number },
+      Record<string, NoteMeta[]>
+    >(IPC_CHANNELS.NOTE_LIST_BY_FOLDERS, {
+      folderIds,
+      archived: opts?.archived,
+      limit: opts?.limit,
+    }),
 }
 
 // ===== 笔记 =====
+// 笔记模块的本地端 IPC 三态（与主进程 ConflictResolution / notesManager 共享）
+type NoteLocalFileState = 'clean' | 'modified' | 'conflict'
+type NoteConflictResolution = 'keepLocal' | 'keepRemote' | 'merge'
+
 export const notesApi = {
+  /**
+   * 列出笔记（按 archived / starred / limit 过滤）。
+   * R39-fix-notes-store-typed-wrapper (high structure)：stores/notes.ts 原先
+   * 三处裸调 `window.api.invoke('note:list', ...)`，绕过 lib/ipc.ts 类型
+   * 安全网，主进程 handler 入参 schema 变更时无法编译报错暴露调用方。
+   * 全部 11 处裸调用收敛到本对象后，wrapper 成为 single source of truth。
+   */
+  list: (opts?: { archived?: boolean; starred?: boolean; limit?: number }) =>
+    invoke<typeof opts, NoteMeta[]>(IPC_CHANNELS.NOTE_LIST, opts),
+  /** 读取完整笔记（按绝对 path），未找到返回 null */
+  read: (path: string) =>
+    invoke<string, Note | null>(IPC_CHANNELS.NOTE_READ, path),
+  /**
+   * 写入或新建笔记：传 path = 覆盖已有；只传 filename / content = 新建；
+   * frontmatter（tags / starred / archived）会落到 YAML frontmatter。
+   * 主进程 MAX_CONTENT_BYTES = 5 MiB 上限在此不重复校验，handler 内已做。
+   */
+  write: (payload: {
+    path?: string
+    filename?: string
+    content: string
+    frontmatter?: Record<string, unknown>
+    folderId?: string | null
+  }) =>
+    invoke<typeof payload, Note>(IPC_CHANNELS.NOTE_WRITE, payload),
+  /** 按绝对 path 删除笔记，返回成功与否（主进程 handler 不抛错） */
+  remove: (path: string) =>
+    invoke<string, boolean>(IPC_CHANNELS.NOTE_DELETE, path),
+  /**
+   * 模糊搜索：query + limit + folderId 收窄。folderId = string 收窄到该文件夹；
+   * folderId = null 仅在「未分类」；folderId 缺省跨文件夹搜。
+   */
+  search: (payload: { query: string; limit?: number; folderId?: string | null }) =>
+    invoke<typeof payload, NoteMeta[]>(IPC_CHANNELS.NOTE_SEARCH, payload),
+  /** 按 tag 列出（folderId 收窄语义同上） */
+  listByTag: (payload: { tag: string; folderId?: string | null }) =>
+    invoke<typeof payload, NoteMeta[]>(IPC_CHANNELS.NOTE_TAG_LIST, payload),
+  /**
+   * 上报内存编辑（驱动 conflict 状态机），返回主进程维护的最新 state。
+   * 失败 IPC 在 stores/notes.ts reportEdit 内仅 console.warn，不阻塞 UI。
+   */
+  reportEdit: (payload: { path: string; content: string }) =>
+    invoke<typeof payload, { state: NoteLocalFileState }>(
+      IPC_CHANNELS.NOTE_REPORT_EDIT,
+      payload,
+    ),
+  /**
+   * 解决冲突（keepLocal / keepRemote / merge + 可选 mergedContent）。
+   * state 在 keepLocal / merge 后续由前端 open() 重读决定，handler 仅返回
+   * `{ state: NoteLocalFileState | null }`，null 通常代表冲突已不存在。
+   */
+  resolve: (payload: {
+    path: string
+    resolution: NoteConflictResolution
+    mergedContent?: string
+  }) =>
+    invoke<typeof payload, { state: NoteLocalFileState | null }>(
+      IPC_CHANNELS.NOTE_RESOLVE,
+      payload,
+    ),
   /** 解析 markdown 里的相对资源路径 → file:// URL（用于 <img>） */
   resolveAsset: (notePath: string, relativePath: string) =>
     invoke<{ notePath: string; relativePath: string }, { fileUrl: string } | null>(

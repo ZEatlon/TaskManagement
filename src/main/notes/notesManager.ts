@@ -24,26 +24,13 @@ import {
   type NoteFrontmatter,
 } from './frontmatter'
 import { getCurrentLibrary } from '../lib/libraryManager'
+import { isPathInside } from './pathSafety'
 import type { NoteMeta, Note } from '@shared/types'
 import type { ParsedNote } from './frontmatter'
 
 /** 写入文件时的安全文件名（去除非法字符） */
 function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, '_').trim() || 'untitled'
-}
-
-/**
- * 校验目标路径是否落在 rootDir 之下（防止目录穿越）。
- * - 解析为绝对路径后再做包含判断，规避 `..`、绝对路径、`\Windows\..` 等手法。
- */
-function isPathInside(rootDir: string, target: string): boolean {
-  const resolvedRoot = resolve(rootDir)
-  const resolvedTarget = resolve(target)
-  const rel = relative(resolvedRoot, resolvedTarget)
-  if (!rel) return true
-  if (rel.startsWith('..')) return false
-  if (isAbsolute(rel)) return false
-  return true
 }
 
 /**

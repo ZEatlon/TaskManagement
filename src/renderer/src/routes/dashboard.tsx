@@ -18,11 +18,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Eye, EyeOff, GripVertical, Pencil, Plus } from 'lucide-react'
 import type { StickyNote, StickyNoteUpdate, StickyNoteStepPatch } from '@shared/types'
 import { GreetingCard } from '../components/dashboard/GreetingCard'
-import { TodaySummary, type TodayStats } from '../components/dashboard/TodaySummary'
-import { StatsCards, type StickyStatusBreakdown } from '../components/dashboard/StatsCards'
+import { TodaySummary } from '../components/dashboard/TodaySummary'
+import { StatsCards } from '../components/dashboard/StatsCards'
+import { aggregateStickies } from '../lib/stickyAggregates'
 import { QuickActions } from '../components/dashboard/QuickActions'
 import { HeatmapWidget } from '../components/dashboard/HeatmapWidget'
 import { RecentNotes } from '../components/dashboard/RecentNotes'
+import { AIInsightCard } from '../components/dashboard/AIInsightCard'
 import { UpcomingStickies } from '../components/dashboard/UpcomingStickies'
 import { PomodoroCalendarPanel } from '../components/pomodoro/PomodoroCalendarPanel'
 import { PomodoroTimerPanel } from '../components/pomodoro/PomodoroTimerPanel'
@@ -46,14 +48,46 @@ interface DragSource {
   widget: DashboardWidgetKey
 }
 
+/**
+ * R-fix-dashboard-handlers-stability (perf, high)：
+ * UpcomingStickies 把每个 handler 透传到内部 memo 化的 StickyNoteCard。
+ * DashboardRoute 每次 render 都新建这 5 个引用 + inline `onSelect={() => undefined}`，
+ * 导致 StickyNoteCard 默认 memo comparator（Object.is）全失败，面板里所有卡片
+ * 跟着 re-render。这里把 5 个 handler 提到 module 顶层（闭包里只用了
+ * useStickyNotesStore.getState()，store action 引用与状态都稳定，不需要 React
+ * 调度感知），并把 NOOP 作为命名常量提供。handler 引用从此跨 render 不变，
+ * StickyNoteCard 的 memo 正常生效。
+ */
+const NOOP = () => undefined
+const handleUpdateSticky = (id: string, patch: StickyNoteUpdate): void => {
+  void useStickyNotesStore.getState().update(id, patch)
+}
+const handleDeleteSticky = (id: string): void => {
+  void useStickyNotesStore.getState().remove(id)
+}
+const handleAddStep = (noteId: string, content: string): void => {
+  void useStickyNotesStore.getState().addStep(noteId, content)
+}
+const handleUpdateStep = (noteId: string, stepId: string, patch: StickyNoteStepPatch): void => {
+  void useStickyNotesStore.getState().updateStep(noteId, stepId, patch)
+}
+const handleRemoveStep = (noteId: string, stepId: string): void => {
+  void useStickyNotesStore.getState().removeStep(noteId, stepId)
+}
+
 export function DashboardRoute() {
   // 数据：便签 / 笔记
   const loadAllFiltered = useStickyNotesStore((s) => s.loadAllFiltered)
-  // Perf-fix #3：只订阅 byDate —— `all` 走 getState() 命令式读。
-  // 原版同时订阅两个字段 → 任何 sticky mutation 都触发两次 store 比较 +
-  // dashboard 子树全部重渲染。loadAllFiltered 把 all 灌到 store 时会同步
-  // 写 byDate，因此 byDate 是 single source of truth。
+  // Perf-fix #3 + R31-corr：byDate 仍是单一数据源，但要同时订阅 `all`。
+  // 原版只读 `byDate`，但 `loadAllFiltered` 路径（stores/stickyNotes.ts
+  // set({ all: finalAll })）只写 `all` 不改 `byDate` 引用 —— 单订阅
+  // `[byDate]` 的 useMemo 拿不到新数据，下游 todayStats / breakdown /
+  // renderWidget 全 stale。修复：把 `all` 提到 selector 层，与 byDate
+  // 一并订阅；stickies useMemo 同时依赖两者，dep 变化即重算。
+  // （两个 selector 各返回引用，sticky mutation 仍只触发一次重渲染 —— 不
+  // 会出现「两次 store 比较 + 全部子树重渲染」的反退化问题。）
   const byDate = useStickyNotesStore((s) => s.byDate)
+  const allStickies = useStickyNotesStore((s) => s.all)
   const stickiesLoading = useStickyNotesStore((s) => s.loading)
 
   const notesLoaded = useNotesStore((s) => s.notes.length > 0)
@@ -64,50 +98,40 @@ export function DashboardRoute() {
   // todayKey 永远停留在昨天，导致"逾期未完成"用错基准日计算。
   const todayKey = useTodayKey()
 
+  // R-fix-dashboard-mount-effect (perf, medium)：原 effect 把 loadAllFiltered
+  // + fetchNotes 放在同一个 useEffect 里，deps 含 notesLoaded/notesLoading。
+  // 首次挂载固定跑 3 次（initial / loading 翻转 / loaded 翻转），每次都发
+  // stickyNotesApi.listFiltered IPC。拆成两个 effect：
+  //   1) mount-once：只跑一次 loadAllFiltered；fetchNotes 守卫内嵌在这里。
+  //   2) 暂留空 —— 后续如需响应外部刷新（IPC 推送等），再单独追加。
   useEffect(() => {
     void loadAllFiltered({ archived: false, limit: 500 })
     if (!notesLoaded && !notesLoading) {
       void fetchNotes()
     }
-  }, [loadAllFiltered, fetchNotes, notesLoaded, notesLoading])
+    // 故意只依赖 mount-once —— loadAllFiltered / fetchNotes 是 store action，
+    // 引用稳定；notesLoaded / notesLoading 翻转不再触发额外的 IPC。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // 派生 —— `all` 走 getState()（不订阅），与上面 selector 收敛一致。
+  // 派生 —— 优先用 `all`（loadAllFiltered 写入，已聚合 + 排序），为空时
+  // 回退 byDate 扁平化（fetchRange 路径）。两者都已订阅：dep 包含
+  // `[byDate, allStickies]`，任一引用变化都重新计算，避免 `loadAllFiltered`
+  // 单写 `all` 时 dashboard 拿到陈旧 stickies。
   const stickies: StickyNote[] = useMemo(() => {
-    const allFallback = useStickyNotesStore.getState().all
-    if (allFallback && allFallback.length > 0) return allFallback
+    if (allStickies && allStickies.length > 0) return allStickies
     return Object.values(byDate).flat()
-  }, [byDate])
+  }, [byDate, allStickies])
 
-  const todayStats: TodayStats = useMemo(() => {
-    let todayStickies = 0
-    let todayDoneSteps = 0
-    let overdue = 0
-    const todayStart = new Date(`${todayKey}T00:00:00.000`).getTime()
-    for (const n of stickies) {
-      if (n.date === todayKey) todayStickies++
-      if (n.date === todayKey) {
-        todayDoneSteps += n.steps.filter((s) => s.done).length
-      }
-      if (n.status !== 'done' && n.dueAt) {
-        const due = new Date(n.dueAt).getTime()
-        if (due < todayStart) overdue++
-      }
-    }
-    return { todayStickies, todayDoneSteps, overdue }
-  }, [stickies, todayKey])
-
-  const breakdown: StickyStatusBreakdown = useMemo(() => {
-    let todo = 0
-    let inProgress = 0
-    let done = 0
-    for (const n of stickies) {
-      if (n.archived) continue
-      if (n.status === 'todo') todo++
-      else if (n.status === 'in_progress') inProgress++
-      else if (n.status === 'done') done++
-    }
-    return { todo, inProgress, done, total: stickies.filter((n) => !n.archived).length }
-  }, [stickies])
+  // R-perf-dashboard-aggregates (perf, low)：把旧 todayStats + breakdown 两个
+  // useMemo 合并为单次 O(N) 遍历。旧版两个 memo 分别迭代 stickies，外加
+  // todayStats 每个 sticky 一次 `new Date(n.dueAt).getTime()`；500 条便签
+  // 软上限下，每个 keystroke（编辑 step 时）触发 2 次完整迭代 + 500 次 Date
+  // 分配。新版走共享 helper `aggregateStickies`，复用 Date.parse 结果。
+  const { todayStats, breakdown } = useMemo(
+    () => aggregateStickies(stickies, todayKey),
+    [stickies, todayKey],
+  )
 
   // ===== 布局与编辑状态 =====
   const { layout: savedLayout, setLayout } = useDashboardLayout()
@@ -128,26 +152,11 @@ export function DashboardRoute() {
     return () => document.removeEventListener('keydown', onKey)
   }, [editing])
 
-  // ===== 便签 CRUD（UpcomingStickies 用）=====
-  const handleUpdateSticky = (id: string, patch: StickyNoteUpdate) => {
-    void useStickyNotesStore.getState().update(id, patch)
-  }
-  const handleDeleteSticky = (id: string) => {
-    void useStickyNotesStore.getState().remove(id)
-  }
-  const handleAddStep = (noteId: string, content: string) => {
-    void useStickyNotesStore.getState().addStep(noteId, content)
-  }
-  const handleUpdateStep = (noteId: string, stepId: string, patch: StickyNoteStepPatch) => {
-    void useStickyNotesStore.getState().updateStep(noteId, stepId, patch)
-  }
-  const handleRemoveStep = (noteId: string, stepId: string) => {
-    void useStickyNotesStore.getState().removeStep(noteId, stepId)
-  }
-
   // ===== widget → 组件 映射 =====
   // Round 6：greeting / quickActions 不再是 widget —— 它们作为顶部固定 chrome
   // 渲染在 dashboard-topbar 里，与布局编辑器无关。
+  // R-fix-dashboard-handlers-stability：5 个 handler + NOOP 已提升到 module 顶层，
+  // 引用稳定，UpcomingStickies 内部的 memo 化 StickyNoteCard 可正确跳过 re-render。
   const renderWidget = (key: DashboardWidgetKey): JSX.Element | null => {
     switch (key) {
       case 'todaySummary':
@@ -157,14 +166,14 @@ export function DashboardRoute() {
       case 'pomodoroCalendar':
         return <PomodoroCalendarPanel embedded />
       case 'pomodoroTimer':
-        return <PomodoroTimerPanel embedded />
+        return <PomodoroTimerPanel />
       case 'heatmap':
         return <HeatmapWidget />
       case 'upcoming':
         return (
           <UpcomingStickies
             stickies={stickies}
-            onSelect={() => undefined}
+            onSelect={NOOP}
             onUpdate={handleUpdateSticky}
             onDelete={handleDeleteSticky}
             onAddStep={handleAddStep}
@@ -174,6 +183,8 @@ export function DashboardRoute() {
         )
       case 'recentNotes':
         return <RecentNotes />
+      case 'aiInsight':
+        return <AIInsightCard todayStats={todayStats} />
       default:
         return null
     }

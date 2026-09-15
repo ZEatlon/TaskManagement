@@ -70,12 +70,23 @@ export function registerAttachmentHandlers(): void {
   )
 
   handle<string, { ok: boolean }>('attachment:delete', async (_e, url) => {
-    if (!url) return { ok: false }
+    // R42-fix (low attachment-no-typeof-string-guard)：与 sibling handler
+    // (attachment:upload) 的 `typeof req.base64 !== 'string'` 守卫对齐。
+    // 原 `if (!url)` 仅挡 falsy，number 0 / 非空对象 / array 都能通过。
+    // resolveAttachmentPath 内部直接 `relativeUrl.startsWith(ATTACHMENT_SCHEME)`
+    // 对非 string 入参会抛 TypeError，被 channels.ts 的 try/catch 转成
+    // IPC reject（不是稳定的 { ok:false } 回执）—— 渲染端日志含注入
+    // 字符串（log forging 面）。守卫收紧到 typeof + trim 非空。
+    if (typeof url !== 'string' || url.trim() === '') return { ok: false }
     const ok = await deleteAttachment(url)
     return { ok }
   })
 
   handle<string, { exists: boolean }>('attachment:exists', async (_e, url) => {
+    // R42-fix：同上，与 attachment:delete 守卫一致；非 string 入参
+    // 让 resolveAttachmentPath 抛 TypeError，破坏稳定的 { exists:false }
+    // 回执契约。守卫后非 string 入参直接回 exists:false。
+    if (typeof url !== 'string' || url.trim() === '') return { exists: false }
     const abs = await resolveAttachmentPath(url)
     return { exists: !!abs && existsSync(abs) }
   })

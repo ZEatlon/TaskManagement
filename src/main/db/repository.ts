@@ -3,31 +3,35 @@
  *
  * 提供预编译 SQL 语句缓存 + 通用 CRUD 辅助方法。
  * 子类只需定义表名与具体 SQL。
+ *
+ * R-FIX-2 (structure dedup)：原基类自己手抄了一份「Map<sql, stmtId> +
+ * constructor 同步注册 invalidate + lookup」样板（与 statsBridge /
+ * pomodoros / completions / settings / conversations / notes 同模式）。
+ * 改为复用 db/cachedStmt 共享 cache + 共享 invalidate 钩子，所有仓库
+ * 按 SQL 文本共享同一 stmtId，worker respawn 时一并清空。
+ *
+ * 行为保持完全兼容：
+ *   - `protected prepare(sql)` 仍然是 Promise<number>、仍然是
+ *     "sql 命中即返回，否则 IPC prepare 后存 cache"。
+ *   - Repository 子类（TagsRepository 等）继承 `prepare` 不需要任何
+ *     改动；它们原本用的就是这个方法。
+ *   - worker respawn 后的 stale stmtId 防护仍然有效 —— invalidate
+ *     现在统一走 prepareCached 的 module-scope invalidator，而不是
+ *     每个 Repository 实例自己的 invalidator。
  */
 import { dbClient } from './client'
+import { prepareCached } from './cachedStmt'
 
 export class Repository<T extends { id: string }> {
-  protected stmtCache = new Map<string, number>()
-  // R25-DI-5 修复 (high cache-stale-after-respawn)：worker 进程被
-  // scheduleRespawn 重启后，新 worker 的 prepareCache 从 nextId=1 起步，
-  // 但主进程持有的 stmtCache 仍指旧 stmtId —— 必须清空。构造时向
-  // dbClient 注册一个 invalidate 回调，worker ready 后会自动触发。
-  // 注意：必须在 super() 内同步注册（不能在异步 effect 里），否则
-  // 第一次 worker 启动（start() 里 ready 后广播 invalidate）时还没注册。
-  constructor(protected tableName: string) {
-    dbClient.registerStmtCacheInvalidator(() => {
-      this.stmtCache.clear()
-    })
-  }
+  // 注意：原版在 constructor 里同步注册 invalidator。改为 prepareCached
+  // 后 invalidate 在 prepare() 首次被调用时 lazy 注册（与 statsBridge /
+  // pomodoros / completions / settings / conversations / notes 一致）。
+  // 这是同质的"首次使用时同步注册"语义，对 worker ready 时 broadcast 的
+  // invalidate 同样有效。
+  constructor(protected tableName: string) {}
 
-  protected async prepare(sql: string): Promise<number> {
-    let id = this.stmtCache.get(sql)
-    if (id !== undefined) return id
-    const res = await dbClient.call<{ stmtId: number }>('prepare', { sql })
-    if (!res) throw new Error('Failed to prepare statement')
-    id = res.stmtId
-    this.stmtCache.set(sql, id)
-    return id
+  protected prepare(sql: string): Promise<number> {
+    return prepareCached(sql)
   }
 
   /**

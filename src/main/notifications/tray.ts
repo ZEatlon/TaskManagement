@@ -7,11 +7,27 @@
  *   - 图标缺省使用一个简单的 PNG 字节数组（Electron 内置 nativeImage.createFromBuffer）
  *
  * 注意：tray 模块对外提供 init() / destroy()，由主进程在合适时机调用。
+ *
+ * R-fix-i18n-tray-menu (high)：右键菜单的「显示窗口 / 隐藏窗口 / 退出」三
+ * 条文案原本 inline 硬编码中文，绕过 @shared/i18n/locales registry。改为
+ * 启动时一次从 settings.language 解析 TrayMessages，缓存到模块作用域，
+ * buildContextMenu() 从缓存取 —— 与 NotificationMessages 同结构（短语 →
+ * 字符串）。
  */
 import { Tray, Menu, nativeImage, BrowserWindow, app, NativeImage } from 'electron'
 import log from '../log'
+import { settingsRepo } from '../db/repositories/settings'
+import { DEFAULT_SETTINGS, type AppSettings } from '@shared/ipc/channels'
+import { getTrayMessages, type TrayMessages } from '@shared/i18n/locales'
 
 let tray: Tray | null = null
+/**
+ * tray 右键菜单文案缓存。initTray() 时一次解析 settings.language 并写入；
+ * refreshTrayMessages(rawLocale) 主动刷新（settings.language 变更路径）。
+ * 未初始化时回退到 toLocaleValue(undefined) → 默认 locale，与
+ * getTrayMessages() 内部回退策略一致。
+ */
+let trayMessages: TrayMessages = getTrayMessages(undefined)
 
 /** 创建一个 16x16 占位图标（深灰色填充 PNG） */
 function buildDefaultIcon(): NativeImage {
@@ -74,20 +90,20 @@ function hideMainWindow(): void {
   win.hide()
 }
 
-/** 构建右键菜单 */
+/** 构建右键菜单 —— 文案从 trayMessages（locale 缓存）取 */
 function buildContextMenu(): Menu {
   return Menu.buildFromTemplate([
     {
-      label: '显示窗口',
+      label: trayMessages.showWindow,
       click: () => showMainWindow(),
     },
     {
-      label: '隐藏窗口',
+      label: trayMessages.hideWindow,
       click: () => hideMainWindow(),
     },
     { type: 'separator' },
     {
-      label: '退出',
+      label: trayMessages.quit,
       click: () => {
         app.quit()
       },
@@ -96,15 +112,43 @@ function buildContextMenu(): Menu {
 }
 
 /**
+ * 用指定 locale 重建右键菜单文案缓存并刷新 tray。
+ *
+ * 设计取舍：tray 模块暴露这个 refresh 接口，让 settings.language 变更路径
+ * （settings store → IPC → 主进程）能主动重渲菜单，避免「用户改了语言，
+ * 但托盘右键菜单仍渲染旧语言」的分裂 UI。调用方只需 await 即可，未初始化
+ * 时仅更新缓存、下次 init 自动生效。
+ */
+export async function refreshTrayMessages(rawLocale: unknown): Promise<void> {
+  trayMessages = getTrayMessages(rawLocale)
+  if (tray && !tray.isDestroyed()) {
+    tray.setContextMenu(buildContextMenu())
+  }
+}
+
+/**
  * 初始化托盘。若已存在则先销毁。
  * 失败（Linux 无系统托盘等）时不抛错，仅记录日志。
+ *
+ * 改为 async：需要 await settingsRepo.get<AppSettings> 解析 language 后
+ * 才能构建右键菜单。settings 读取失败时回退到默认 locale（与
+ * getTrayMessages 内部 toLocaleValue 回退策略一致）。
  */
-export function initTray(): Tray | null {
+export async function initTray(): Promise<Tray | null> {
   if (tray && !tray.isDestroyed()) {
     log.warn('[tray] already initialized')
     return tray
   }
   try {
+    // 一次性解析 locale 缓存到 trayMessages，buildContextMenu() 直接读
+    // 缓存，避免每次右键点击都 await settingsRepo.get。失败回退默认 locale。
+    try {
+      const settings = (await settingsRepo.get<AppSettings>('app.settings')) ?? DEFAULT_SETTINGS
+      trayMessages = getTrayMessages(settings.language)
+    } catch (err) {
+      log.warn('[tray] settings read failed, fallback to default locale:', (err as Error).message)
+      trayMessages = getTrayMessages(undefined)
+    }
     const icon = buildDefaultIcon()
     tray = new Tray(icon)
     tray.setToolTip('TaskPilot')

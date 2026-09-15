@@ -5,9 +5,40 @@
  *   - shell:open-path   调用系统 shell 打开指定路径（文件管理器 / 默认程序）
  */
 import { shell } from 'electron'
-import { extname, isAbsolute, resolve } from 'node:path'
+import { extname, isAbsolute, resolve, sep } from 'node:path'
 import { realpath, stat } from 'node:fs/promises'
 import { handle } from './channels'
+import { settingsRepo } from '../db/repositories/settings'
+
+/** settings 表中 AppSettings 的 key（与 libraryManager.ts 保持一致） */
+const SETTINGS_KEY = 'app.settings'
+
+/**
+ * 读取当前生效 libraryPath；未配置返回 null
+ */
+async function getLibraryPath(): Promise<string | null> {
+  const all = await settingsRepo.getAll()
+  const cfg = (all[SETTINGS_KEY] as Record<string, unknown> | undefined) ?? {}
+  return (cfg.libraryPath as string | null | undefined) ?? null
+}
+
+/**
+ * 路径包含校验：realpath 是否位于 libraryRoot 之内。
+ * - 字符串前缀比较必须带 sep，避免 /foo/bar2 被认作 /foo/bar 的子路径。
+ * - libraryRoot 为 null（未配置库）时不允许任何目录打开，避免绕过。
+ *
+ * R-Fix-SHELL_OPEN_PATH-directory-leak (medium info disclosure)：
+ * 原版目录分支零约束，被攻陷的渲染端可调
+ * `shell:open-path({path: 'C:\\Users\\james\\.ssh'})` 触发系统资源
+ * 管理器打开任何可读目录，泄漏目录结构 / 用户注意力。统一收口到
+ * libraryPath 子树。
+ */
+function isInsideDir(real: string, libraryRoot: string | null): boolean {
+  if (!libraryRoot) return false
+  const normRoot = libraryRoot.endsWith(sep) ? libraryRoot : libraryRoot + sep
+  const normReal = real.endsWith(sep) ? real : real + sep
+  return normReal === normRoot || normReal.startsWith(normRoot)
+}
 
 /** 允许通过 shell.openPath 打开的扩展名（防止被用于执行任意 .bat / .ps1 / .exe） */
 const ALLOWED_EXTS = new Set([
@@ -44,11 +75,19 @@ export function registerShellHandlers(): void {
     } catch {
       throw new Error('shell:open-path: 路径不存在或不可读')
     }
-    // 目录路径（库目录、文件夹）：直接放行，shell.openPath 在系统资源管理器里打开
-    // 这是「打开目录」按钮的真实使用场景（设置页打开库目录）。目录没有扩展名，
-    // 强制走扩展名白名单会让这个按钮永远失败。
+    // 目录路径（库目录、文件夹）：必须落在当前 libraryPath 子树内。
+    // R-Fix-SHELL_OPEN_PATH-directory-leak (medium info disclosure)：
+    // 原版目录分支零约束，任何可读目录都能被打开；现在统一收口。
+    // 设置页「打开库根目录」按钮走的是同样 handler，但 renderer 不应
+    // 信任任何外部 path，应由设置页硬编码从 server 读 libraryPath 后再发。
     const s = await stat(real).catch(() => null)
     if (s?.isDirectory()) {
+      const libRoot = await getLibraryPath()
+      if (!isInsideDir(real, libRoot)) {
+        throw new Error(
+          'shell:open-path: 目录路径必须在 libraryPath 之内（拒绝越界打开任意目录）',
+        )
+      }
       return shell.openPath(real)
     }
     // 文件路径：必须命中扩展名白名单（防 .bat / .ps1 / .exe 等任意代码执行）

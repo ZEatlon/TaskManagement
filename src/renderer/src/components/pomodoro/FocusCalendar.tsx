@@ -23,7 +23,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { solarToLunar, type LunarDate } from '../../lib/lunar'
 import { stickyNotesApi } from '../../lib/ipc'
 import { dayKeyOf } from '../../lib/date'
+import { useDayRollover } from '../../lib/useDayRollover'
 import type { StickyNote } from '@shared/types'
+import { getCalendarMessages } from '@shared/i18n/locales'
+import { useSettingsStore } from '../../stores/settings'
+import { weekdayLabel, type FirstDayOfWeek } from '../heatmap/heatmapData'
 
 interface FocusCalendarProps {
   /** 当前显示的月份（任意一天都代表月份） */
@@ -35,6 +39,12 @@ interface FocusCalendarProps {
   onSelectDate?: (date: Date) => void
   /** 当前选中的日期（高亮显示） */
   selectedDate?: Date | null
+  /**
+   * 一周起始日：0 = 周日（GitHub 风格），1 = 周一（中文月历默认）。
+   * 默认 1 与原版硬编码周一开头保持一致；与 heatmapData.weekdayLabel / alignToWeekStart
+   * 共用同一份语义，未来从 settings 透传过来即可。
+   */
+  firstDayOfWeek?: FirstDayOfWeek
 }
 
 interface DayCellData {
@@ -52,13 +62,16 @@ interface DayCellData {
   hasUrgent: boolean
 }
 
-/** 中文星期缩写（一二三四五六日） */
-const WEEKDAY_HEADERS = ['一', '二', '三', '四', '五', '六', '日']
+/**
+ * WEEKDAY_HEADERS 已下沉到组件内部用 weekdayLabel(firstDayOfWeek) 派生，
+ * 不再使用模块级 const 硬编码（与 heatmapData.weekdayLabel 保持单一来源）。
+ */
 
 /**
  * 生成当前显示月份的 6×7 = 42 个日期单元格。
- * 算法：以本月 1 号为基准，找到它所在周的周一，向后填充 42 天，
- *       保证永远显示 6 周，行首始终对齐周一。
+ * 算法：以本月 1 号为基准，找到它所在周的首日（firstDayOfWeek 决定），
+ *       向后填充 42 天，保证永远显示 6 周，行首对齐 firstDayOfWeek。
+ *       默认 firstDayOfWeek=1 = 周一，与原版行为一致。
  */
 function buildMonthGrid(
   viewMonth: Date,
@@ -67,6 +80,7 @@ function buildMonthGrid(
   // R25-Corr-1：today 从组件 state 传入而非内部 new Date()，让跨午夜的
   // state 更新能透传过来（useMemo deps 包含 today → 重新计算 cells）。
   today: Date = new Date(),
+  firstDayOfWeek: FirstDayOfWeek = 1,
 ): DayCellData[] {
   const todayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`
   const viewYear = viewMonth.getFullYear()
@@ -74,10 +88,11 @@ function buildMonthGrid(
 
   const firstOfMonth = new Date(viewYear, viewMon, 1)
   const weekdayOfFirst = firstOfMonth.getDay()
-  const offsetToMonday = (weekdayOfFirst + 6) % 7 // 0 = 周一
+  // 与 heatmapData.alignToWeekStart 同语义：找到 firstDayOfWeek 之前最近的首日
+  const offsetToFirstDay = (weekdayOfFirst - firstDayOfWeek + 7) % 7
 
   const cells: DayCellData[] = []
-  const gridStart = new Date(viewYear, viewMon, 1 - offsetToMonday)
+  const gridStart = new Date(viewYear, viewMon, 1 - offsetToFirstDay)
 
   for (let i = 0; i < 42; i += 1) {
     const d = new Date(gridStart)
@@ -125,7 +140,14 @@ export function FocusCalendar({
   onNextMonth,
   onSelectDate,
   selectedDate,
+  firstDayOfWeek = 1,
 }: FocusCalendarProps) {
+  // 跟随 settings.language 取所有用户可见文案（monthLabel / tooltip / aria-label / 按钮
+  // 文字等）。只订阅 language 字段避免 settings store 任何变化都触发重渲染
+  // （R-fix-zustand-object-selector：object-selector 会无限循环）。
+  const language = useSettingsStore((s) => s.language)
+  const messages = useMemo(() => getCalendarMessages(language), [language])
+
   // 按 YYYY-MM-DD 分组的便签（只含 dueAt 落在 viewMonth 月内 + buffer 的）
   const [dueByKey, setDueByKey] = useState<Record<string, StickyNote[]>>({})
   const [hover, setHover] = useState<HoverInfo | null>(null)
@@ -179,37 +201,18 @@ export function FocusCalendar({
     }
   }, [viewMonth])
 
-  const monthLabel = `${viewMonth.getFullYear()}年${viewMonth.getMonth() + 1}月`
+  const monthLabel = messages.monthLabel(viewMonth.getFullYear(), viewMonth.getMonth() + 1)
   // R11 修复 (low #2)：跨午夜时 today 推进，cells 重算「今天」高亮与「本月便签」统计。
+  // 改用 useDayRollover 订阅模块级共享轮询（与 StatusBar / TodaySummary /
+  // HeatmapWidget / StickyNotesWidget / dashboard.tsx 共享同一份实现）。
   const [today, setToday] = useState<Date>(() => new Date())
+  useDayRollover(() => setToday(new Date()))
 
   // R25-Corr-1 修复 (high correctness-stale-date)：today 加进 deps。
   const cells = useMemo(
-    () => buildMonthGrid(viewMonth, selectedDate, dueByKey, today),
-    [viewMonth, selectedDate, dueByKey, today],
+    () => buildMonthGrid(viewMonth, selectedDate, dueByKey, today, firstDayOfWeek),
+    [viewMonth, selectedDate, dueByKey, today, firstDayOfWeek],
   )
-  useEffect(() => {
-    let timer: number | null = null
-    function scheduleNextMidnightRefresh() {
-      const now = new Date()
-      const next = new Date(now)
-      next.setHours(24, 0, 5, 0) // 凌晨 00:00:05 触发，避免边界竞争
-      const ms = Math.max(1000, next.getTime() - now.getTime())
-      timer = window.setTimeout(() => {
-        setToday(new Date())
-        scheduleNextMidnightRefresh()
-      }, ms)
-    }
-    scheduleNextMidnightRefresh()
-    function onVisibility() {
-      if (document.visibilityState === 'visible') setToday(new Date())
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      if (timer !== null) window.clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [])
   const isViewingCurrentMonth =
     today.getFullYear() === viewMonth.getFullYear() && today.getMonth() === viewMonth.getMonth()
 
@@ -234,22 +237,24 @@ export function FocusCalendar({
   }
 
   return (
-    <div className="focus-calendar" role="grid" aria-label="月历">
+    <div className="focus-calendar" role="grid" aria-label={messages.gridAriaLabel}>
       {/* 顶部：月份标题 + 切换按钮 + 当月汇总 */}
       <div className="focus-calendar-toolbar">
         <button
           type="button"
           className="focus-calendar-nav"
           onClick={onPrevMonth}
-          aria-label="上个月"
+          aria-label={messages.prevMonth}
         >
           ‹
         </button>
         <div className="focus-calendar-title">
           <span className="focus-calendar-month">{monthLabel}</span>
           {monthStats.count > 0 && (
-            <span className="focus-calendar-monthstat" title="本月截止的便签数">
-              · 本月 <strong>{monthStats.count}</strong> 张待办便签
+            <span className="focus-calendar-monthstat" title={messages.monthStatTitle}>
+              · {messages.monthStatText.before}
+              <strong>{monthStats.count}</strong>
+              {messages.monthStatText.after}
             </span>
           )}
         </div>
@@ -257,7 +262,7 @@ export function FocusCalendar({
           type="button"
           className="focus-calendar-nav"
           onClick={onNextMonth}
-          aria-label="下个月"
+          aria-label={messages.nextMonth}
         >
           ›
         </button>
@@ -267,16 +272,18 @@ export function FocusCalendar({
             className="focus-calendar-today"
             onClick={() => onSelectDate?.(today)}
           >
-            回到今天
+            {messages.backToToday}
           </button>
         )}
       </div>
 
-      {/* weekday 表头 */}
+      {/* weekday 表头 —— 跟随 firstDayOfWeek 派生（与 heatmapData.weekdayLabel 一致）
+         R-fix-i18n-weekday-label (medium)：weekdayShort 从 messages.weekdayShort 取，
+         跟随 settings.language 切换（zh-CN: ['日','一',…,'六']；未来 en-US: 'Sun'…）。 */}
       <div className="focus-calendar-weekdays" role="row">
-        {WEEKDAY_HEADERS.map((w) => (
-          <div key={w} className="focus-calendar-weekday" role="columnheader">
-            {w}
+        {Array.from({ length: 7 }, (_, i) => (
+          <div key={i} className="focus-calendar-weekday" role="columnheader">
+            {weekdayLabel(i, firstDayOfWeek, messages.weekdayShort)}
           </div>
         ))}
       </div>
@@ -358,11 +365,20 @@ export function FocusCalendar({
                       buttonRefs.current.delete(dayKey)
                     }
                   }}
-                  aria-label={
-                    `${cell.date.getFullYear()}年${cell.date.getMonth() + 1}月${cell.solarDay}日，农历${lunar.monthName}${lunar.dayName}${lunar.term ? '，节气' + lunar.term : ''}` +
-                    (cell.dueCount > 0 ? `，${cell.dueCount} 张便签截止` : '')
-                  }
-                  aria-pressed={cell.isSelected}
+                  aria-label={messages.cellAriaLabel({
+                    year: cell.date.getFullYear(),
+                    month: cell.date.getMonth() + 1,
+                    day: cell.solarDay,
+                    lunarMonthName: lunar.monthName,
+                    lunarDayName: lunar.dayName,
+                    term: lunar.term ?? null,
+                    dueCount: cell.dueCount,
+                  })}
+                  // R37 修复 (medium a11y)：gridcell 上的可选状态应使用
+                  // aria-selected，而不是 aria-pressed（后者仅适用于 toggle button）。
+                  // 同时为今天单元格补 aria-current="date"，让 SR 单独念出"今天"。
+                  aria-selected={cell.isSelected}
+                  aria-current={cell.isToday ? 'date' : undefined}
                 >
                   <span className="focus-calendar-solar">{cell.solarDay}</span>
                   <span className="focus-calendar-lunar">{lunarText}</span>
@@ -405,16 +421,20 @@ export function FocusCalendar({
           }}
         >
           <div className="focus-calendar-tooltip-title">
-            {hover.cell.date.getMonth() + 1}月{hover.cell.date.getDate()}日
-            {' · '}
-            {hover.cell.lunar.monthName}
-            {hover.cell.lunar.dayName}
-            {hover.cell.lunar.term ? ` · ${hover.cell.lunar.term}` : ''}
+            {messages.tooltipTitle({
+              month: hover.cell.date.getMonth() + 1,
+              day: hover.cell.date.getDate(),
+              lunarMonthName: hover.cell.lunar.monthName,
+              lunarDayName: hover.cell.lunar.dayName,
+              term: hover.cell.lunar.term ?? null,
+            })}
           </div>
           {hover.cell.dueCount > 0 ? (
             <div className="focus-calendar-tooltip-body">
               <div className="focus-calendar-tooltip-stat">
-                📌 <strong>{hover.cell.dueCount}</strong> 张便签截止
+                {messages.tooltipCount.before}
+                <strong>{hover.cell.dueCount}</strong>
+                {messages.tooltipCount.after}
               </div>
               <ul className="focus-calendar-tooltip-titles">
                 {hover.cell.dueTitles.map((t, i) => (
@@ -424,13 +444,13 @@ export function FocusCalendar({
                 ))}
                 {hover.cell.dueCount > hover.cell.dueTitles.length && (
                   <li className="focus-calendar-tooltip-more muted">
-                    +{hover.cell.dueCount - hover.cell.dueTitles.length} 更多…
+                    {messages.tooltipMore(hover.cell.dueCount - hover.cell.dueTitles.length)}
                   </li>
                 )}
               </ul>
             </div>
           ) : (
-            <div className="focus-calendar-tooltip-empty">当日无待办便签</div>
+            <div className="focus-calendar-tooltip-empty">{messages.tooltipEmpty}</div>
           )}
         </div>
       )}

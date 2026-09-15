@@ -205,7 +205,10 @@ function InitStep({
       <h2>正在初始化库…</h2>
       <p className="muted">库目录：{state.path}</p>
 
-      <div className="init-progress">
+      <div
+        className="init-progress"
+        aria-busy={state.status === 'creating'}
+      >
         {state.status === 'creating' && (
           <div className="spinner" aria-label="加载中" />
         )}
@@ -215,6 +218,15 @@ function InitStep({
             <p>{state.message}</p>
           </div>
         )}
+        {/* R-find-aria-busy-init (medium a11y)：屏幕阅读器需要知道异步
+            任务在进行中 / 已完成 / 已失败。仅靠 spinner 的 aria-label
+            不够 —— 用户 Tab 进去无法感知状态推进。把状态文字放到
+            aria-live="polite" 的 status 区域，状态变化时 SR 自动播报。 */}
+        <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+          {state.status === 'creating' && '正在初始化库，请稍候'}
+          {state.status === 'success' && '库初始化完成'}
+          {state.status === 'error' && (state.message ? `初始化失败：${state.message}` : '初始化失败')}
+        </div>
       </div>
 
       {state.status === 'error' && (

@@ -36,6 +36,14 @@ export function TimerControls({
       : '开始'
     : '暂停'
 
+  // 屏幕阅读器需要明确的「动作」描述（不是仅依赖按钮文本变化判断当前状态）。
+  // aria-pressed 表达 toggle 的「开 / 关」：按下 = running。
+  const primaryAriaLabel = !state.running
+    ? inProgress
+      ? '继续番茄钟'
+      : '开始番茄钟'
+    : '暂停番茄钟'
+
   const handlePrimary = () => {
     if (loading) return
     if (!state.running) {
@@ -52,6 +60,8 @@ export function TimerControls({
         className="btn primary large"
         onClick={handlePrimary}
         disabled={loading}
+        aria-pressed={state.running}
+        aria-label={primaryAriaLabel}
       >
         {primaryLabel}
       </button>

@@ -6,35 +6,21 @@
  *   - 本周完成（番茄完成数）：completionsApi.total(start, end)
  *   - AI Token（input/output 累计）：conversationsApi.getTotalTokens()
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { StickyNote } from '@shared/types'
 import { completionsApi, conversationsApi } from '../../lib/ipc'
 import { dayKeyOf } from '../../lib/date'
+import { useTodayKey } from '../../lib/useDayRollover'
+import { aggregateStickies, type StickyStatusBreakdown } from '../../lib/stickyAggregates'
 
-export interface StickyStatusBreakdown {
-  todo: number
-  inProgress: number
-  done: number
-  total: number
-}
+// R-perf-dashboard-aggregates：StickyStatusBreakdown 类型已收敛到 lib/stickyAggregates.ts，
+// 这里 re-export 保持旧 import 路径继续可用。
+export type { StickyStatusBreakdown }
 
 interface Props {
   stickies: StickyNote[]
   /** 由父组件 useMemo 派生的状态分布；不传时本组件自行遍历 stickies */
   breakdown?: StickyStatusBreakdown
-}
-
-function computeBreakdown(stickies: StickyNote[]): StickyStatusBreakdown {
-  let todo = 0
-  let inProgress = 0
-  let done = 0
-  for (const n of stickies) {
-    if (n.archived) continue
-    if (n.status === 'todo') todo++
-    else if (n.status === 'in_progress') inProgress++
-    else if (n.status === 'done') done++
-  }
-  return { todo, inProgress, done, total: stickies.filter((n) => !n.archived).length }
 }
 
 interface AiTokens {
@@ -49,23 +35,35 @@ function formatToken(n: number | null): string {
   return String(n)
 }
 
+/** 计算「当前 ISO 周的周一」YYYY-MM-DD。跨周日→周一时会变化，
+ *  用作 IPC 重拉依赖，避免与 stickies 长度等无关变化联动。 */
+function computeWeekStartKey(todayKey: string): string {
+  const now = new Date(`${todayKey}T00:00:00`)
+  const day = now.getDay() // 0=Sun..6=Sat
+  const diff = day === 0 ? 6 : day - 1
+  const start = new Date(now)
+  start.setDate(now.getDate() - diff)
+  return dayKeyOf(start)
+}
+
 export function StatsCards({ stickies, breakdown }: Props) {
-  const stats = breakdown ?? computeBreakdown(stickies)
+  // R-perf-dashboard-aggregates：breakdown 计算走共享 helper（与 todayStats / dashboard.tsx
+  // 同一个 aggregateStickies）。todayKey 不参与 breakdown（breakdown 与日期无关），传空字符串
+  // 也安全；这里复用 useDayRollover 同款 dayKeyOf 取今日 key 作为无副作用占位。
+  const todayKey = useTodayKey()
+  const stats = breakdown ?? aggregateStickies(stickies, todayKey).breakdown
 
   // 本周完成（completions 总数）
+  // R40-fix-statscards-weekdone-deps (perf, medium)：原 useEffect 依赖
+  // [stickiesCount]，stickies.length 在搜索/过滤/勾选 step 时都会变，
+  // 导致 IPC 与本组件实际需要的「本周起止日期」完全解耦的多余 roundtrip。
+  // 改为本周 ISO 周一的稳定 key 作为依赖 —— 只有跨周日→周一时才重发 IPC。
   const [weekDone, setWeekDone] = useState<number | null>(null)
-  const stickiesCount = stickies.length
+  const weekStartKey = useMemo(() => computeWeekStartKey(todayKey), [todayKey])
   useEffect(() => {
     let cancelled = false
-    const now = new Date()
-    const day = now.getDay()
-    const diff = day === 0 ? 6 : day - 1
-    const start = new Date(now)
-    start.setDate(now.getDate() - diff)
-    start.setHours(0, 0, 0, 0)
-    const end = new Date(now)
     completionsApi
-      .total(dayKeyOf(start), dayKeyOf(end))
+      .total(weekStartKey, todayKey)
       .then((n) => {
         if (!cancelled) setWeekDone(n ?? 0)
       })
@@ -75,7 +73,7 @@ export function StatsCards({ stickies, breakdown }: Props) {
     return () => {
       cancelled = true
     }
-  }, [stickiesCount])
+  }, [weekStartKey, todayKey])
 
   // AI Token 累计
   const [tokens, setTokens] = useState<AiTokens | null>(null)

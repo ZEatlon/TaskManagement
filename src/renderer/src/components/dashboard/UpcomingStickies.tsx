@@ -7,21 +7,19 @@
  * stickies 与 upcoming 由父组件传入；不传时由组件自行派生。
  */
 import { useMemo } from 'react'
-import type { Priority, StickyNote } from '@shared/types'
+import type { StickyNote } from '@shared/types'
 import { StickyNoteCard } from '../sticky-notes/StickyNoteCard'
+import { PRIORITY_RANK } from '@shared/lib/priorities'
+import { startOfDayLocal } from '@shared/lib/dayKey'
 import type {
   StickyNoteUpdate,
   StickyNoteStepPatch,
 } from '@shared/types'
 
-const PRIORITY_RANK: Record<Priority, number> = { p0: 0, p1: 1, p2: 2, p3: 3 }
-
 /** 把日期格式化为人类可读的相对时间 */
 function formatRelative(iso: string): string {
-  const target = new Date(iso)
-  target.setHours(0, 0, 0, 0)
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const target = startOfDayLocal(new Date(iso))
+  const today = startOfDayLocal(new Date())
   const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000)
   if (diffDays === 0) return '今天'
   if (diffDays === 1) return '明天'

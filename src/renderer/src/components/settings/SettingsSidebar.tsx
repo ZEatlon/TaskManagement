@@ -85,9 +85,14 @@ export function SettingsSidebar({ activeId, onSelect, items }: SettingsSidebarPr
               <button
                 type="button"
                 data-tab-id={item.id}
+                id={`settings-tab-${item.id}`}
                 role="tab"
                 aria-selected={isActive}
                 aria-current={isActive ? 'page' : undefined}
+                // R33-A11y-Tab-Panel 修复 (medium aria-controls-missing)：
+                // 原版 tab 缺 aria-controls 指向右侧 panel。SR 听到「tab 选中」
+                // 之后无法定位到对应 panel，无法播报「tab panel」。补齐。
+                aria-controls="settings-panel"
                 tabIndex={isActive ? 0 : -1}
                 className={`settings-tab ${isActive ? 'active' : ''}`}
                 onClick={() => onSelect(item.id)}

@@ -19,6 +19,7 @@
 import { dbClient } from './client'
 import log from '../log'
 import type { BackfillResult, BackfillSummary } from '@shared/types'
+import { localDayKeyOf } from '@shared/lib/dayKey'
 
 export type { BackfillResult }
 
@@ -43,16 +44,6 @@ async function withPrepared<T>(
       // finalize 失败不影响业务路径
     }
   }
-}
-
-/**
- * 把 Date 转 YYYY-MM-DD
- */
-function toISODateLocal(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
 }
 
 /**
@@ -167,7 +158,7 @@ export async function backfillCompletions(force = false): Promise<BackfillResult
         `[backfill] corrupted sticky id=${r.id} has status=done but completed_at=NULL; backfilling with today`,
       )
     }
-    const date = toISODateLocal(new Date(completionDateIso))
+    const date = localDayKeyOf(new Date(completionDateIso))
     const exists = await withPrepared(
       `SELECT 1 AS x FROM completions WHERE sticky_note_id = ? AND date = ? LIMIT 1`,
       async (stmtId) =>
@@ -247,7 +238,7 @@ export async function backfillNoteEvents(force = false): Promise<BackfillResult>
      )`,
     async (stmtId) => {
       for (const r of rows) {
-        const date = toISODateLocal(new Date(r.mtime))
+        const date = localDayKeyOf(new Date(r.mtime))
         const id = crypto.randomUUID()
         const info = (await dbClient.call('run', {
           stmtId,

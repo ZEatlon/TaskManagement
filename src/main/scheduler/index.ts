@@ -8,7 +8,7 @@
  * reminders 表已 DROP；到点通知由 taskScheduler 统一处理。
  */
 import log from '../log'
-import { startTaskScheduler, stopTaskScheduler, runOnce } from './taskScheduler'
+import { startTaskScheduler, stopTaskScheduler } from './taskScheduler'
 
 let started = false
 
@@ -38,19 +38,4 @@ export function stopAll(): void {
   stopTaskScheduler()
   started = false
   log.info('[scheduler] sticky scheduler stopped')
-}
-
-/** 是否已启动 */
-export function isStarted(): boolean {
-  return started
-}
-
-/** 测试用：手动触发一次到期便签扫描 */
-export async function triggerTaskScan(): Promise<{ hit: number }> {
-  return runOnce()
-}
-
-/** @deprecated reminders 调度已合并入 sticky，到点通知由 taskScheduler 处理 */
-export async function triggerReminderScan(): Promise<{ hit: number }> {
-  return runOnce()
 }

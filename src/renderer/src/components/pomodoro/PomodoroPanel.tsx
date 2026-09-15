@@ -19,7 +19,7 @@ export function PomodoroPanel({ embedded = true }: Props) {
   return (
     <>
       <PomodoroCalendarPanel embedded={embedded} />
-      <PomodoroTimerPanel embedded={embedded} />
+      <PomodoroTimerPanel />
     </>
   )
 }

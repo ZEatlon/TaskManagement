@@ -20,6 +20,7 @@ import type {
 } from '@shared/types'
 import { StickyNoteCard } from './StickyNoteCard'
 import { formatDayHeader } from '../../lib/formatDate'
+import { useSettingsStore } from '../../stores/settings'
 
 interface Props {
   dateKey: string
@@ -39,6 +40,11 @@ interface Props {
   onStatusChange?: (id: string, status: StickyNote['status']) => void
   /** 可选：软删除协调器（P0-3：archive + toast 撤销） */
   onSoftDelete?: (note: StickyNote) => void
+  /**
+   * R-fix-focus-sticky-noop：AI navigate 跳到指定便签时被高亮的 id。
+   * null 表示无高亮目标；为某 id 时该卡渲染 is-highlight 类（CSS pulse 2.5s）。
+   */
+  highlightId?: string | null
 }
 
 /**
@@ -65,11 +71,17 @@ function StickyDaySectionInner(
     onCreateEmpty,
     onStatusChange,
     onSoftDelete,
+    highlightId,
   }: Props,
   ref: React.ForwardedRef<HTMLElement>,
 ) {
   // 记录上一次新建的便签 id → 用于新卡片挂载时自动聚焦标题
   const [newNoteId, setNewNoteId] = useState<string | null>(null)
+
+  // R-fix-i18n-format-date (high)：formatDayHeader 跟随 settings.language
+  // 切换；只订阅 language 字段避免 settings store 其它字段变化触发整日
+  // section 重渲染（day section 在 sticky timeline 里通常会被 memo 包裹）。
+  const language = useSettingsStore((s) => s.language)
 
   const handleCreateEmpty = useCallback(async () => {
     const id = await onCreateEmpty(dateKey)
@@ -90,7 +102,7 @@ function StickyDaySectionInner(
     >
       <header className="sticky-day-header">
         <div className="day-label">
-          <span className="day-text">{formatDayHeader(dateKey)}</span>
+          <span className="day-text">{formatDayHeader(dateKey, language)}</span>
           <span className="day-count">{notes.length} 张便签</span>
         </div>
         <button
@@ -119,6 +131,7 @@ function StickyDaySectionInner(
               onRemoveStep={onRemoveStep}
               onStatusChange={onStatusChange}
               onSoftDelete={onSoftDelete}
+              isHighlight={highlightId === n.id}
             />
           ))}
         </div>

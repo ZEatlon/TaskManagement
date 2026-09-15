@@ -4,15 +4,11 @@
  * 把原本散落在 `today.tsx` / `dashboard.tsx` / `tasks.ts` 里的日期逻辑集中。
  * 注意：所有方法都使用**本地时区**（不转换为 UTC），
  * 与 `dayKeyOf` 的 `YYYY-MM-DD` 字符串语义保持一致。
+ *
+ * `dayKeyOf` 本身已下沉到 `src/shared/lib/dayKey.ts`（与主进程共用），
+ * 这里 re-export 保持既有 import 路径不破坏。
  */
-
-/** 把 Date 转成 'YYYY-MM-DD'（本地时区） */
-export function dayKeyOf(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
+export { localDayKeyOf as dayKeyOf } from '@shared/lib/dayKey'
 
 /** 把 'YYYY-MM-DD' 转成本地时区的 Date（时间设为 00:00:00） */
 export function fromDayKey(s: string): Date {

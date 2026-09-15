@@ -22,6 +22,7 @@ import { useSettingsStore } from '../../stores/settings'
 import { useFocusTrap } from '../../lib/useFocusTrap'
 import { useShortcutBinding } from '../../lib/useShortcut'
 import { formatShortcutForOS } from '../../lib/shortcuts'
+import { isImeComposing } from '../../lib/useImeGuard'
 import { MarkdownView } from './MarkdownView'
 import { StreamingCursor } from './StreamingCursor'
 
@@ -90,10 +91,15 @@ export function CommandBar() {
   }, [messages])
   const isStreaming = streaming && !!activeCallId
 
-  // 全局快捷键：mod+K 触发（受用户覆盖影响）；打开时按 Esc 关闭。
-  // useShortcutBinding 不支持「打开时按 Esc 关闭」的复合语义（Esc 不是 binding），
-  // 所以这里手写一个 keydown 拦截 Esc 即可。
-  useShortcutBinding('mod+k', () => {
+  // 全局快捷键：默认 mod+K，但尊重用户在设置里对 `command-bar.toggle`
+  // 的覆盖 —— 同一个 binding 必须同时用于「实际触发」与「UI 标签」，
+  // 否则用户重映射后按钮上的快捷键提示会与实际生效的键不一致。
+  // 必须把 commandBarBinding 提到 useShortcutBinding 调用之前；hook 自身
+  // 不解析 shortcut id（保持 API 向后兼容），由调用方注入最终 binding 字符串。
+  const commandBarBinding = shortcutOverrides?.['command-bar.toggle'] || 'mod+k'
+  // 打开时按 Esc 关闭 —— 这不是 binding，而是 modal 生命周期的一部分，
+  // useShortcutBinding 不支持这种复合语义，所以手写一个 keydown 拦截 Esc。
+  useShortcutBinding(commandBarBinding, () => {
     if (open) close()
     else void openBar()
   })
@@ -153,20 +159,17 @@ export function CommandBar() {
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // R6A-3：IME 守卫 —— 中文输入法选词时按 Enter 会先触发 compositionend，
     // 此时 keyCode === 229 / isComposing === true，不应触发 onSend。
-    const isComposing =
-      e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229
     if (
       e.key === 'Enter' &&
       !e.shiftKey &&
       (e.metaKey || e.ctrlKey) &&
-      !isComposing
+      !isImeComposing(e)
     ) {
       e.preventDefault()
       onSend()
     }
   }
 
-  const commandBarBinding = shortcutOverrides?.['command-bar.toggle'] || 'mod+k'
   const shortcutLabel = formatShortcutForOS(commandBarBinding)
 
   // AI 未启用时：降级为提示卡片
@@ -365,6 +368,10 @@ export function CommandBar() {
             ref={inputRef}
             className="cb-input"
             placeholder="问 AI 任何事…Shift+Enter 换行"
+            // R33-A11y-Label 修复 (high)：placeholder 不能作为 SR
+            // accessible name（输入即消失、各家 SR 行为不一致），补
+            // aria-label 让 SR 用户能听到「向 AI 提问，编辑」。
+            aria-label="向 AI 提问"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}

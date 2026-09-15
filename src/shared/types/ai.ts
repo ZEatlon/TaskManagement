@@ -57,6 +57,16 @@ export interface AiConversation {
   updatedAt: string
   /** 文件夹 ID（null = 未分类；undefined = 字段未读取，与 null 语义一致） */
   folderId: string | null
+  /**
+   * 标题是否仍是系统占位（true = 等待 AI 在首轮对话结束后自动覆盖 / 等待
+   * 用户手动改名）。R-fix-i18n-conv-title-placeholder-flag：原版用
+   * `title.startsWith('新对话')` 判定占位，与中文字面量绑死。本字段是
+   * stable flag，AI 覆盖或用户改名后置 false，title_updated 事件 handler
+   * 据此判断是否覆盖。详见 migrations/015-ai-conv-title-is-auto.sql。
+   *
+   * 默认 false；新建对话由 newConversation 显式传 true。
+   */
+  titleIsAuto: boolean
 }
 
 /** AI 流事件载荷（preload / renderer / 主进程共用） */
@@ -98,6 +108,29 @@ export interface AiStreamEvent {
    * 持久化，下次重启会丢失」。
    */
   persistError?: string
+  /**
+   * R32-04 修复 (medium error-handling)：error 事件携带的原因分类，
+   * 渲染端据此选择上下文对应的横幅（"AI 已禁用" / "无可用 provider" /
+   * "DNS 拦截"），避免把 AI 配置/安全预检问题误标为"对话未持久化"。
+   *
+   * R-fix-llm-error-vs-persist (high error-handling)：扩展 'llm-error'
+   * 表示 SDK 在 chat() catch 块抛出的真实 LLM 错误（401/403/404/429/
+   * 5xx/fetch failed/aborted 等）。message 已经在 provider 内部走
+   * translateAiError 转中文友好文案，渲染端 banner 直接展示即可。
+   */
+  errorReason?: 'ai-disabled' | 'no-provider' | 'dns-blocked' | 'llm-error'
+  /**
+   * R32-04 修复补齐（high error-handling）：主进程 stream.ts 通过
+   * `webContents.send(AI_CHUNK, e)` 推过来的 error 事件实际字段名是
+   * `reason`（见 src/main/ai/stream.ts:289-305 的 StreamEvent union
+   * 以及 emit() 在 stream.ts:514-519 的写法）。共享 AiStreamEvent 之前
+   * 只声明了 `errorReason`，渲染端 `e.errorReason` 永远是 undefined →
+   * banner 三段分流（ai-disabled / no-provider / dns-blocked）失效，
+   * 全部回退到原始 errMsg。这里加上同义的 `reason` 字段（与上方
+   * `errorReason` 保持完全相同的取值集合），渲染端即可正常读到。
+   * `errorReason` 暂保留以保证历史 IPC 快照/外部 mock 的兼容。
+   */
+  reason?: 'ai-disabled' | 'no-provider' | 'dns-blocked' | 'llm-error'
   /** title_updated 事件专用：自动生成的新标题 */
   title?: string
   /** title_updated 事件专用：目标对话 id */

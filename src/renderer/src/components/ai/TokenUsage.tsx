@@ -47,7 +47,7 @@ function trimZeros(s: string): string {
 /** 完整带单位的标题文字（用于 title 与 aria-label） */
 function describeTokens(n: number): string {
   if (!Number.isFinite(n) || n < 0) return '0 token'
-  return `${n.toLocaleString()} token`
+  return `${n.toLocaleString('zh-CN')} token`
 }
 
 export function TokenUsage({ input, output }: Props) {

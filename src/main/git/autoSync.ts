@@ -17,7 +17,7 @@
  *   - 连续失败 N 次（默认 3）后自动暂停，并通知用户
  */
 import { Cron } from 'croner'
-import { BrowserWindow } from 'electron'
+import { emitToRenderers } from '../ipc/emit'
 import log from '../log'
 import { settingsRepo } from '../db/repositories/settings'
 import {
@@ -135,9 +135,7 @@ let startInFlight: Promise<void> | null = null
  */
 function broadcastState(phase?: GitSyncPhase): void {
   if (phase !== undefined) state.phase = phase
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send(IPC_CHANNELS.GIT_STATE_CHANGED, state)
-  }
+  emitToRenderers(IPC_CHANNELS.GIT_STATE_CHANGED, state)
 }
 
 /**
@@ -150,9 +148,7 @@ function emit(channel: 'start' | 'end' | 'error', payload: unknown): void {
       : channel === 'end'
         ? IPC_CHANNELS.GIT_SYNC_END
         : IPC_CHANNELS.GIT_SYNC_ERROR
-  for (const win of BrowserWindow.getAllWindows()) {
-    win.webContents.send(name, payload)
-  }
+  emitToRenderers(name, payload)
 }
 
 /**

@@ -4,6 +4,11 @@
  * Phase 6 (dashboard-restructure)：从原先的「全宽大卡片 + glow 渐变 + emoji + 浮动动画」
  * 收敛成 Row 1 第三栏的紧凑组件：左侧一句问候 + 日期，右侧静态大字号时钟。
  * 整体风格「静、稳、准」，与今日摘要 / 统计卡片同一高度对齐。
+ *
+ * Perf-fix：原先 GreetingCard 与 GreetingClock 各自挂一个 60s setInterval，
+ * 每个分钟触发两次 setState（且 GreetingClock 还有 setTimeout+setInterval
+ * 两段式对齐）。现统一由 GreetingCard 持有 `now`，向下传给 GreetingClock——
+ * 一棵组件树一次 setState / 分钟。
  */
 import { useEffect, useState } from 'react'
 
@@ -24,22 +29,7 @@ function iconForHour(hour: number): string {
   return '🌙'
 }
 
-function GreetingClock(): JSX.Element {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    // 对齐到整分钟 tick：避免每秒无意义的 setState
-    const msToNextMinute = 60_000 - (Date.now() % 60_000)
-    let intervalId: number | undefined
-    const timeoutId = window.setTimeout(() => {
-      setNow(new Date())
-      intervalId = window.setInterval(() => setNow(new Date()), 60_000)
-    }, msToNextMinute)
-    return () => {
-      window.clearTimeout(timeoutId)
-      if (intervalId !== undefined) window.clearInterval(intervalId)
-    }
-  }, [])
-
+function GreetingClock({ now }: { now: Date }): JSX.Element {
   const hh = String(now.getHours()).padStart(2, '0')
   const mm = String(now.getMinutes()).padStart(2, '0')
 
@@ -55,17 +45,26 @@ function GreetingClock(): JSX.Element {
 }
 
 export function GreetingCard() {
-  const [snapshot, setSnapshot] = useState(() => new Date())
+  const [now, setNow] = useState(() => new Date())
   useEffect(() => {
-    const id = setInterval(() => setSnapshot(new Date()), 60_000)
-    return () => clearInterval(id)
+    // 对齐到整分钟 tick：避免每秒无意义的 setState
+    const msToNextMinute = 60_000 - (Date.now() % 60_000)
+    let intervalId: number | undefined
+    const timeoutId = window.setTimeout(() => {
+      setNow(new Date())
+      intervalId = window.setInterval(() => setNow(new Date()), 60_000)
+    }, msToNextMinute)
+    return () => {
+      window.clearTimeout(timeoutId)
+      if (intervalId !== undefined) window.clearInterval(intervalId)
+    }
   }, [])
 
-  const hour = snapshot.getHours()
+  const hour = now.getHours()
   const greeting = greetingForHour(hour)
   const icon = iconForHour(hour)
 
-  const dateText = snapshot.toLocaleDateString('zh-CN', {
+  const dateText = now.toLocaleDateString('zh-CN', {
     month: 'long',
     day: 'numeric',
     weekday: 'long',
@@ -80,7 +79,7 @@ export function GreetingCard() {
           <div className="greeting-date muted small">{dateText}</div>
         </div>
       </div>
-      <GreetingClock />
+      <GreetingClock now={now} />
     </div>
   )
 }

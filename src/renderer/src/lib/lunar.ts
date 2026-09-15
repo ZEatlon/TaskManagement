@@ -228,7 +228,15 @@ export function getSolarTerm(date: Date): string | null {
   return null
 }
 
-/** 中文星期名（周一、周二…周日） */
+/**
+ * 中文星期名（周一、周二…周日）
+ *
+ * @deprecated 该 helper 硬编码中文字面量，绕过 i18n registry。
+ * 调用方（FocusDateHeader 等）应改为读 useSettingsStore.language → 调
+ * getCalendarMessages(language) → 取 messages.weekdayFull[date.getDay()]
+ * （weekdayFull 是 Sunday-first 全称 7 项，与 firstDayOfWeek 旋转无关）。
+ * 保留本函数仅为向后兼容旧 import 路径与单元测试 —— 不要再新调用。
+ */
 export function weekdayName(date: Date, firstDayOfWeek: 0 | 1 = 0): string {
   const days = firstDayOfWeek === 0
     ? ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
@@ -236,12 +244,24 @@ export function weekdayName(date: Date, firstDayOfWeek: 0 | 1 = 0): string {
   return days[date.getDay()] ?? ''
 }
 
-/** 中文「X月X日」格式 */
+/**
+ * 中文「X月X日」格式
+ *
+ * @deprecated 该 helper 硬编码中文字面量，绕过 i18n registry。
+ * 调用方应改为 getCalendarMessages(language).dayLabel(month, day)。
+ * 保留本函数仅为向后兼容旧 import 路径 —— 不要再新调用。
+ */
 export function shortDate(date: Date): string {
   return `${date.getMonth() + 1}月${date.getDate()}日`
 }
 
-/** 中文「YYYY年M月」格式（用于日历头部） */
+/**
+ * 中文「YYYY年M月」格式（用于日历头部）
+ *
+ * @deprecated 该 helper 硬编码中文字面量，绕过 i18n registry。
+ * 调用方应改为 getCalendarMessages(language).monthLabel(year, month)。
+ * 保留本函数仅为向后兼容旧 import 路径 —— 不要再新调用。
+ */
 export function monthTitle(date: Date): string {
   return `${date.getFullYear()}年${date.getMonth() + 1}月`
 }

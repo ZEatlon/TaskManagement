@@ -54,19 +54,27 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const before = get()
     const next = { ...before, ...patch }
     set(patch)
+    // R37-fix #M7：原本用 `const { loaded: _l, ..., ...persistable } = next`
+    // + `void _l; void _ld; ...` 把"未用变量"哑掉 —— 既冗长又骗过 lint。
+    // 现在显式列出要剥掉的方法名，destructure 取剩下的 spread，更直白。
+    const { loaded, load, update, setLibraryPath, checkLibraryReady, ...persistable } = next
+    void loaded; void load; void update; void setLibraryPath; void checkLibraryReady
     try {
-      // R37-fix #M7：原本用 `const { loaded: _l, ..., ...persistable } = next`
-      // + `void _l; void _ld; ...` 把"未用变量"哑掉 —— 既冗长又骗过 lint。
-      // 现在显式列出要剥掉的方法名，destructure 取剩下的 spread，更直白。
-      const { loaded, load, update, setLibraryPath, checkLibraryReady, ...persistable } = next
-      void loaded; void load; void update; void setLibraryPath; void checkLibraryReady
       await settingsApi.set('app.settings', persistable)
     } catch (err) {
       // R6S-5：IPC 失败时回滚本地 state，避免下次 reload 后本地与 DB 永久不一致。
+      // R37-fix #M9：原版直接 `set(beforePersistable)` 用整个 pre-update 快照覆盖
+      // 当前 state —— 如果期间有并发的 update() 已经乐观 set 了别的字段，
+      // 这次回滚会把那些字段一并擦掉。改成 per-key rollback：只回滚本次 patch
+      // 涉及的字段，其它并发改动的乐观值保留。
       console.error('[settings] save failed', err)
-      const { loaded: loaded2, load: load2, update: update2, setLibraryPath: sl2, checkLibraryReady: cr2, ...beforePersistable } = before
-      void loaded2; void load2; void update2; void sl2; void cr2
-      set(beforePersistable as Partial<AppSettings>)
+      const rollback: Partial<AppSettings> = {}
+      for (const k of Object.keys(patch) as (keyof AppSettings)[]) {
+        // 用 before[k]（pre-call 快照）覆盖；beforePersistable 里的方法/loaded
+        // 字段对 patch 的 key 类型来说根本不存在，无需重新剥离。
+        ;(rollback as Record<string, unknown>)[k] = before[k]
+      }
+      set(rollback)
       throw err
     }
   },

@@ -21,7 +21,10 @@ import { findShortcutDef } from '../../lib/shortcuts'
 import type { Priority } from '@shared/types'
 
 export interface StickyShortcutHandlers {
-  onNew?: () => void
+  /** mod+n —— 在今日页聚焦标题输入框（保留原 /today 'n' 行为） */
+  onNewLocal?: () => void
+  /** n —— 任意页面触发全局 QuickCapture 浮层 */
+  onNewGlobal?: () => void
   onSearch?: () => void
   onJumpToday?: () => void
   /** delta = +1 表下一天；-1 表上一天 */
@@ -42,11 +45,37 @@ const PRIORITY_KEYS: Record<string, Priority> = {
 
 export function useStickyShortcuts(h: StickyShortcutHandlers): void {
   // 必须无条件调用所有 hook（rules-of-hooks）
-  const defStickyNew = findShortcutDef('sticky.new')!
-  const defStickyDup = findShortcutDef('sticky.duplicate')!
+  //
+  // R-FIX-3：之前 `findShortcutDef(...)!` 在 SHORTCUT_DEFS 条目被删 /
+  // 改名（例如 `'sticky.newGlobal'` 重命名为 `'sticky.quickCapture'`）
+  // 时会 throw TypeError，导致整个 useStickyShortcuts 调用方组件
+  // unmount —— 用户失去整个 sticky 页面，不只是快捷键。改为不报错：
+  // 缺失时 useShortcut 直接 no-op（见 lib/useShortcut.ts），并在 dev
+  // 控制台 warn 一次，方便定位 refactor 后没改全 call site 的情况。
+  const defStickyNew = findShortcutDef('sticky.new')
+  const defStickyNewGlobal = findShortcutDef('sticky.newGlobal')
+  const defStickyDup = findShortcutDef('sticky.duplicate')
+  if (import.meta.env.DEV) {
+    for (const [id, def] of [
+      ['sticky.new', defStickyNew],
+      ['sticky.newGlobal', defStickyNewGlobal],
+      ['sticky.duplicate', defStickyDup],
+    ] as const) {
+      if (!def) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[useStickyShortcuts] shortcut "${id}" missing from SHORTCUT_DEFS — hook degraded to no-op for this binding. Update lib/shortcuts.ts or this call site.`,
+        )
+      }
+    }
+  }
 
   // mod+N：新建便签（即便在 input 内也允许 → allowInInputs: true）
-  useShortcut(defStickyNew, () => h.onNew?.(), { allowInInputs: true })
+  useShortcut(defStickyNew, () => h.onNewLocal?.(), { allowInInputs: true })
+
+  // n：全局唤起 QuickCapture 浮层（不需 allowInInputs：hook 默认会在
+  // input/textarea 内忽略；浮层本身也是 input 也要抢焦点，所以走默认即可）
+  useShortcut(defStickyNewGlobal, () => h.onNewGlobal?.())
 
   // sticky.search 的 "/" 走单字母绑定（focusedId 不强制）
   useShortcutBinding('/', () => h.onSearch?.())

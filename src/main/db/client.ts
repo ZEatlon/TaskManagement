@@ -5,6 +5,7 @@
  * 所有 SQL 操作都经由此处转发。
  */
 import { spawn, ChildProcess } from 'node:child_process'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync } from 'node:fs'
 import { resolve as pathResolve } from 'node:path'
 import log from '../log'
@@ -30,6 +31,15 @@ export class DbClient {
   // 在「worker died before ready」路径上 reject 当前 start()。
   private readyReject: ((err: Error) => void) | null = null
   private notificationHandlers = new Set<WorkerNotification>()
+  // R34 修复 (low memory-leak)：start() 内 onReady 闭包在 worker 'ready'
+  // 时自己从 notificationHandlers 删除，但如果 worker 在发 ready 前就退出
+  // （better-sqlite3 ABI 不匹配 / native panic / spawn 即失败），闭包
+  // 没机会运行 → 旧实现用 `h.toString().includes('onReady')` 在 exit handler
+  // 里靠 toString 字符串匹配删除。function 改名 / 转 arrow / 被压缩器脱名 /
+  // TS 编译改名都会让 toString 不再含 'onReady'，删除静默失败 → handler
+  // 泄漏闭包中的 readyReject + 内存。改为用类型化引用：start() 时把 onReady
+  // 存到本字段，exit handler 直接从 Set 里删该引用 —— 不依赖函数名 / toString。
+  private onReadyHandler: WorkerNotification | null = null
   private buffer = ''
   // R15 修复 (high)：worker 崩溃后自动 respawn，避免一次 OOM/native panic 把整个 app 永久打废。
   // 上限 3 次重试；连续失败后转入指数退避（1s / 4s / 16s），避免无谓紧贴 spawn。
@@ -56,9 +66,23 @@ export class DbClient {
   // 锁交给 outer，inner 再次调用 runInTransaction 时把 txLock 覆盖成
   // outer.then(innerWork) —— 但 outer 此刻正在 await innerWork，永远不会
   // resolve，inner 永远拿不到锁。
-  // 修复：加 txDepth 计数，已在外层事务内的嵌套调用直接跑 work，不再抢锁
-  // —— 外层 BEGIN/COMMIT 已经覆盖原子性，嵌套只是 work 的一部分。
+  // 修复（H7）：加 txDepth 计数，已在外层事务内的嵌套调用直接跑 work，不再
+  // 抢锁 —— 外层 BEGIN/COMMIT 已经覆盖原子性，嵌套只是 work 的一部分。
+  //
+  // R-FIX-1（high correctness）：H7 的 `txDepth > 0` 判定并不能区分
+  //   (a) 「同一 async 栈上嵌套调用」与
+  //   (b) 「另一个 top-level caller 的 outer work 正在中途 await」。
+  // case (b) 下并发 caller 会跳过 txLock，两个 caller 同时发 BEGIN → "cannot
+  // start a transaction within a transaction" → catch 块错杀对方事务。
+  // 改为 AsyncLocalStorage token：只有**当前 async 栈本身**已处于某个 outer
+  // runInTransaction 的 work() 内才算嵌套；其它栈上的 top-level caller 无论
+  // txDepth 多大都要排队。txDepth 仍保留供观测 / 调试，不再作为 fast-path。
   private txDepth = 0
+  // ALS 存 true = 当前 async 栈已被某个 outer runInTransaction 的 als.run()
+  // 包住。任何在 outer work() 内（含其 await 链）发起的 inner runInTransaction
+  // 都看到 true → fast-path；并发栈上的 caller 各自走自己的 als.run()，看不到
+  // 对方的 token → 必须排队。
+  private static readonly inOuterTxAls = new AsyncLocalStorage<boolean>()
 
   // R25-DI-5 修复 (high cache-stale-after-respawn)：主进程侧的 Repository.stmtCache
   // 是按 SQL 文本缓存 stmtId 的 Map。worker 进程被 scheduleRespawn 重生后，
@@ -87,15 +111,17 @@ export class DbClient {
     this.shuttingDown = false
     this.readyPromise = new Promise<void>((resolve, reject) => {
       this.readyReject = reject
-      const onReady = (method: string) => {
+      const onReady: WorkerNotification = (method: string) => {
         if (method === 'ready') {
           this.ready = true
           this.notificationHandlers.delete(onReady)
+          this.onReadyHandler = null
           this.readyReject = null
           resolve()
         }
       }
       this.notificationHandlers.add(onReady)
+      this.onReadyHandler = onReady
     })
 
     const workerPath = this.resolveWorkerPath()
@@ -126,9 +152,12 @@ export class DbClient {
         const reject = this.readyReject
         this.readyReject = null
         reject?.(new Error(`db worker died before ready (exit code=${code} signal=${signal})`))
-        // 删除订阅的 onReady 监听器
-        for (const h of Array.from(this.notificationHandlers)) {
-          if (h.toString().includes('onReady')) this.notificationHandlers.delete(h)
+        // R34 修复 (low memory-leak)：用类型化引用删除 onReady handler，
+        // 不依赖 toString 字符串匹配（之前会被 function 改名 / arrow /
+        // 压缩器 / TS 编译改名绕过）。
+        if (this.onReadyHandler) {
+          this.notificationHandlers.delete(this.onReadyHandler)
+          this.onReadyHandler = null
         }
       }
       // 拒绝所有挂起的请求
@@ -278,26 +307,38 @@ export class DbClient {
    * 不会传播给后续 work —— 它们各自独立 try/catch）。
    */
   runInTransaction<T>(work: () => Promise<T>): Promise<T> {
-    // 嵌套调用：已在事务内，无需重复抢锁；外层 BEGIN/COMMIT 覆盖原子性。
-    // 直接跑 work，避免与外层相互等待导致死锁。
-    if (this.txDepth > 0) {
+    // 嵌套调用判定：当前 async 栈已被某个 outer runInTransaction 的
+    // als.run() 包住 → 直接跑 work，不再抢锁。
+    //
+    // 关键：fast-path 必须用 ALS 而不是 txDepth > 0。txDepth 是模块级
+    // 共享计数，并发 top-level caller 在外层 work 中途 await 时也会
+    // 让 txDepth>0，把对方错认为"嵌套"→ 跳过锁 → 两个 caller 同时 BEGIN
+    // → "cannot start a transaction within a transaction"。ALS 绑的
+    // 是**当前栈**的 token，跨栈不可见，所以并发 caller 永远要排队。
+    if (DbClient.inOuterTxAls.getStore() === true) {
       return work()
     }
+    // 顶层调用：把 work 串到 txLock 之后，并在 ALS 上下文里跑 work，使其
+    // 内部任何 `await ...` / `.then(...)` 链上的嵌套 runInTransaction 都
+    // 能看到 inOuterTxAls === true。work 之外（已脱离 als.run 的栈）的
+    // runInTransaction 又会回到"顶层"分支，行为与未加 ALS 时一致。
     this.txDepth += 1
-    const next = this.txLock.then(work, work)
-    // 锁的释放只看"本 work 是否完成"，不再串接其结果——避免 work 抛错后
-    // 后续 work 永远拿不到锁（Promise 链一断就截断）。
-    this.txLock = next.then(
-      () => {
-        this.txDepth -= 1
-        return undefined
-      },
-      () => {
-        this.txDepth -= 1
-        return undefined
-      },
-    )
-    return next
+    return DbClient.inOuterTxAls.run(true, () => {
+      const next = this.txLock.then(work, work)
+      // 锁的释放只看"本 work 是否完成"，不再串接其结果——避免 work 抛错后
+      // 后续 work 永远拿不到锁（Promise 链一断就截断）。
+      this.txLock = next.then(
+        () => {
+          this.txDepth -= 1
+          return undefined
+        },
+        () => {
+          this.txDepth -= 1
+          return undefined
+        },
+      )
+      return next
+    })
   }
 
   isReady(): boolean {

@@ -88,14 +88,24 @@ export function ConversationList({ onNew }: Props) {
   // 各 folder 下的对话预览（folder 展开时显示前 5 条 + N 更多）
   // 与 conversations 列表的关系：conversations 已是按 activeFolderId 过滤后的结果；
   // 展开 folder 时按 folderId 本地二次过滤即可。
+  //
+  // R-fix-conversations-by-folder (MEDIUM perf)：原版对 `folders` 数组每个 folder
+  // 都跑一次 conversations.filter，整体 O(F×N)；高 F/N 下既慢又破坏下游 React.memo
+  // 的引用相等（每条 filter 都返回新数组）。改为单遍 O(N) 分组：每个 folder 桶只在
+  // 该 folder 真的有对话时分配新数组，空 folder 由消费者用 ?? EMPTY_CONVS 兜底
+  // （line 253），与 NoteFoldersSidebar 的实现对齐。依赖收敛到 conversations，
+  // folders 变化（rename / 颜色）不再触发重算 —— bucket 只按 folderId 取，folder
+  // 元数据变更不影响桶内容。
   const conversationsByFolder = useMemo(() => {
     const m = new Map<string | null, AiConversation[]>()
-    m.set(null, conversations.filter((c) => c.folderId === null))
-    for (const f of folders) {
-      m.set(f.id, conversations.filter((c) => c.folderId === f.id))
+    for (const c of conversations) {
+      const k = c.folderId ?? null
+      const arr = m.get(k)
+      if (arr) arr.push(c)
+      else m.set(k, [c])
     }
     return m
-  }, [conversations, folders])
+  }, [conversations])
 
   const uncategorized = conversationsByFolder.get(null) ?? EMPTY_CONVS
   const all = conversations // 已按 activeFolderId 过滤
@@ -195,6 +205,8 @@ export function ConversationList({ onNew }: Props) {
         type="button"
         className={`ai-folder-row ${activeFolderId === undefined ? 'active' : ''}`}
         onClick={() => setActiveFolderId(undefined)}
+        aria-pressed={activeFolderId === undefined}
+        aria-label="显示全部对话"
       >
         <ChevronRight className="ai-folder-chevron" aria-hidden />
         <span className="ai-folder-color-dot" style={{ background: 'var(--text-secondary)' }} />
@@ -209,22 +221,42 @@ export function ConversationList({ onNew }: Props) {
         onDragOver={(e) => handleDragOverFolder(e, null)}
         onDragLeave={(e) => handleDragLeaveFolder(e, null)}
         onDrop={(e) => handleDropToFolder(e, null)}
+        role="button"
+        tabIndex={0}
+        aria-pressed={activeFolderId === null}
+        aria-label="切换到未分类对话"
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            setActiveFolderId(null)
+          }
+        }}
       >
-        <ChevronRight
-          className={`ai-folder-chevron ${uncategorizedExpanded ? 'expanded' : ''}`}
-          aria-hidden
+        {/* R37 修复 (medium a11y)：原 chevron 是裸 svg + onClick，键盘用户
+            无法展开/折叠。包成真 <button>，并补 aria-label / aria-expanded，
+            与 NoteFoldersSidebar 的修复对齐。 */}
+        <button
+          type="button"
+          className={`ai-folder-chevron-btn ${uncategorizedExpanded ? 'expanded' : ''}`}
+          aria-label={uncategorizedExpanded ? '折叠 未分类' : '展开 未分类'}
+          aria-expanded={uncategorizedExpanded}
+          aria-controls="ai-conv-uncategorized-children"
+          title={uncategorizedExpanded ? '折叠' : '展开'}
           onClick={(e) => {
             e.stopPropagation()
             toggleExpansion('ai-conv-uncategorized')
           }}
-        />
+        >
+          <ChevronRight className="ai-folder-chevron" aria-hidden />
+        </button>
         <span className="ai-folder-color-dot empty" />
         <span className="ai-folder-name">未分类</span>
         <span className="ai-folder-count">{uncategorized.length}</span>
       </div>
 
       {uncategorizedExpanded && activeFolderId === null && (
-        <ul className="ai-conv-ul ai-conv-ul-child" role="listbox" aria-label="未分类对话">
+        <ul id="ai-conv-uncategorized-children" className="ai-conv-ul ai-conv-ul-child" role="listbox" aria-label="未分类对话">
           {uncategorized.length === 0 ? (
             <li className="ai-conv-empty" role="status" aria-live="polite">
               暂无对话
@@ -548,15 +580,34 @@ const UserConvFolderBlock = memo(function UserConvFolderBlock({
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
+        role="button"
+        tabIndex={0}
+        aria-pressed={isActive}
+        aria-label={`切换到文件夹 ${folder.name}`}
+        onKeyDown={(e) => {
+          if (e.target !== e.currentTarget) return
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onSelect()
+          }
+        }}
       >
-        <ChevronRight
-          className={`ai-folder-chevron ${expanded ? 'expanded' : ''}`}
-          aria-hidden
+        {/* R37 修复 (medium a11y)：同上，UserConvFolderBlock 的 chevron
+            也要包成真 <button>，与 NoteFoldersSidebar 对齐。 */}
+        <button
+          type="button"
+          className={`ai-folder-chevron-btn ${expanded ? 'expanded' : ''}`}
+          aria-label={expanded ? `折叠 ${folder.name}` : `展开 ${folder.name}`}
+          aria-expanded={expanded}
+          aria-controls={`ai-conv-folder-children-${folder.id}`}
+          title={expanded ? '折叠' : '展开'}
           onClick={(e) => {
             e.stopPropagation()
             onToggleExpand()
           }}
-        />
+        >
+          <ChevronRight className="ai-folder-chevron" aria-hidden />
+        </button>
         <span
           className="ai-folder-color-dot"
           style={{
@@ -613,7 +664,7 @@ const UserConvFolderBlock = memo(function UserConvFolderBlock({
       </div>
 
       {expanded && (
-        <ul className="ai-conv-ul ai-conv-ul-child" role="listbox" aria-label={`${folder.name} 对话`}>
+        <ul id={`ai-conv-folder-children-${folder.id}`} className="ai-conv-ul ai-conv-ul-child" role="listbox" aria-label={`${folder.name} 对话`}>
           {conversations.length === 0 ? (
             <li className="ai-conv-empty-child">（该文件夹下暂无对话）</li>
           ) : (

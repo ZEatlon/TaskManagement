@@ -6,7 +6,7 @@
  */
 import { create } from 'zustand'
 import type { ID, Note, NoteFolder, NoteFolderColor, NoteMeta } from '@shared/types'
-import { noteFoldersApi } from '../lib/ipc'
+import { noteFoldersApi, notesApi } from '../lib/ipc'
 
 /** 文件三态：clean / modified / conflict */
 export type FileStateKind = 'clean' | 'modified' | 'conflict'
@@ -152,11 +152,13 @@ export const useNotesStore = create<NotesState>((set, get) => ({
           notes = notes.filter((n) => n.isFavorite)
         }
       } else if (filter === 'starred') {
-        notes = await window.api.invoke('note:list', { starred: true, archived: false })
+        // R39-fix-notes-store-typed-wrapper (high structure)：三处 list 裸调用
+        // 改走 notesApi.list，handler 入参 schema 变更时类型层暴露调用方。
+        notes = await notesApi.list({ starred: true, archived: false })
       } else if (filter === 'archived') {
-        notes = await window.api.invoke('note:list', { archived: true })
+        notes = await notesApi.list({ archived: true })
       } else {
-        notes = await window.api.invoke('note:list', { archived: false })
+        notes = await notesApi.list({ archived: false })
       }
       // 只在 seq 仍是当前最新一次时才提交 —— 否则丢弃这次结果
       if (seq !== fetchSeq) return
@@ -269,7 +271,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     // 本次发起 path 的那个。
     const seq = ++openSeq
     try {
-      const note = await window.api.invoke<string, Note | null>('note:read', path)
+      const note = await notesApi.read(path)
       if (seq !== openSeq) return
       if (note) {
         set({
@@ -298,10 +300,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     try {
       const { activeFolderId } = get()
       const folderId = activeFolderId === undefined ? null : activeFolderId
-      const note = await window.api.invoke<
-        { content: string; filename?: string; folderId?: string | null },
-        Note
-      >('note:write', { content, filename, folderId })
+      const note = await notesApi.write({ content, filename, folderId })
       if (seq !== createSeq) return null
       // 重新拉取列表（fetchSeq 已是最新，会覆盖前面的结果）
       await get().fetch()
@@ -324,10 +323,9 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       // 时也能真正落盘到磁盘。原版 NoteMetaPanel.persistTags() 是个空函数，
       // UI 上加了 chip 但磁盘没写，下次打开笔记 chip 消失。frontmatter 字段会
       // 透传到主进程 writeNote 的 stringifyFrontmatter，写进文件 YAML 头。
-      const note = await window.api.invoke<
-        { path: string; content: string; frontmatter?: Record<string, unknown> },
-        Note
-      >('note:write', frontmatter ? { path, content, frontmatter } : { path, content })
+      const note = await notesApi.write(
+        frontmatter ? { path, content, frontmatter } : { path, content },
+      )
       // currentPath 已被其他操作改走则丢弃（用 prevPath 比较避免 open() 的 seq 误伤）
       if (get().currentPath !== path && prevPath === path) {
         // 仍要更新 fileStates，避免状态机停留在 modified
@@ -348,7 +346,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
 
   async remove(path) {
     try {
-      await window.api.invoke<string, boolean>('note:delete', path)
+      await notesApi.remove(path)
       set((s) => ({
         notes: s.notes.filter((n) => n.path !== path),
         currentPath: s.currentPath === path ? null : s.currentPath,
@@ -378,10 +376,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
       const folderIdAtStart = get().activeFolderId
       const folderId =
         folderIdAtStart === undefined ? undefined : folderIdAtStart
-      const results = await window.api.invoke<
-        { query: string; limit?: number; folderId?: string | null },
-        NoteMeta[]
-      >('note:search', { query: trimmed, folderId })
+      const results = await notesApi.search({ query: trimmed, folderId })
       if (seq !== searchSeq) return
       // B-search-state-3-fix：IPC 进行中若 activeFolderId 变了，结果属于旧文件夹，不能覆盖。
       if (get().activeFolderId !== folderIdAtStart) return
@@ -412,11 +407,8 @@ export const useNotesStore = create<NotesState>((set, get) => ({
     const folderIdAtStart = get().activeFolderId
     const folderId =
       folderIdAtStart === undefined ? undefined : folderIdAtStart
-    void window.api
-      .invoke<
-        { tag: string; folderId?: string | null },
-        NoteMeta[]
-      >('note:tag-list', { tag, folderId })
+    void notesApi
+      .listByTag({ tag, folderId })
       .then((notes) => {
         if (seq !== tagSeq) return
         // B-tag-state-2-fix：IPC 进行中若 activeFolderId 变了，结果属于旧文件夹
@@ -431,10 +423,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
 
   async reportEdit(path, content) {
     try {
-      const res = await window.api.invoke<{ path: string; content: string }, { state: FileStateKind }>(
-        'note:report-edit',
-        { path, content },
-      )
+      const res = await notesApi.reportEdit({ path, content })
       set((s) => ({
         fileStates: { ...s.fileStates, [path]: res.state },
         draftContent: content,
@@ -447,10 +436,7 @@ export const useNotesStore = create<NotesState>((set, get) => ({
 
   async resolve(path, resolution, mergedContent) {
     try {
-      const res = await window.api.invoke<
-        { path: string; resolution: 'keepLocal' | 'keepRemote' | 'merge'; mergedContent?: string },
-        { state: FileStateKind | null }
-      >('note:resolve', { path, resolution, mergedContent })
+      const res = await notesApi.resolve({ path, resolution, mergedContent })
       // R11 修复 (high #4)：resolve 后 bump reloadSignals[path]，NoteEditor 据此
       // 重挂载 TipTap 读到磁盘最新版本。否则 TipTap 仍持有用户旧本地内容，下一次
       // autosave 把磁盘覆盖回去，用户的"解决"动作被悄悄撤销。同时对 keepRemote /

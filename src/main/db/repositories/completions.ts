@@ -12,6 +12,8 @@
  * 24+ totalInRange + 1+ noteEvents.record），是 leak 最严重的几个仓储之一。
  */
 import { dbClient } from '../client'
+import { withCached } from '../cachedStmt'
+import { DAY_KEY_RE, isValidDayKey } from '@shared/lib/dayKey'
 
 export interface CompletionRecord {
   id: string
@@ -24,34 +26,22 @@ export interface CompletionRecord {
 /**
  * R28-Perf-2 修复 (high perf)：原 R22 withPrepared 每条 record/dailyCounts/
  * totalInRange 都跑一遍 prepare + finalize IPC，热力图 widget 每渲染一次
- * 触发 3+ 次 prepare。引入 per-repo stmtCache：相同 SQL 文本命中 cache 直
- * 接拿到 stmtId，不需要 finalize。worker respawn 时通过
- * dbClient.registerStmtCacheInvalidator 清空缓存。
+ * 触发 3+ 次 prepare。复用 module-scope `withCached` 共享 cache：相同 SQL
+ * 文本命中 cache 直接拿到 stmtId，不需要 finalize。worker respawn 时由
+ * cachedStmt 的 module-scope invalidator 自动清空缓存。
  *
  * 老的 try/finally finalize 仍作为 fallback 保留（但被 stmtCache 路径绕
  * 开）；记录热力图 / backfill 等高频路径不再每条都付一次 IPC。
+ *
+ * 命名沿用本仓库历史的 `withPrepared`，但底层不再 finalize —— 语义与
+ * db/withPrepared.ts 那个「用一次就丢」helper 不同，需要一次性语义请
+ * 直接 import db/withPrepared。
  */
-const completionsStmtCache = new Map<string, number>()
-let completionsInvalidatorRegistered = false
-
 async function withPrepared<T>(
   sql: string,
   run: (stmtId: number) => Promise<T>,
 ): Promise<T> {
-  if (!completionsInvalidatorRegistered) {
-    dbClient.registerStmtCacheInvalidator(() => {
-      completionsStmtCache.clear()
-    })
-    completionsInvalidatorRegistered = true
-  }
-  let stmtId = completionsStmtCache.get(sql)
-  if (stmtId === undefined) {
-    stmtId = (
-      await dbClient.call<{ stmtId: number }>('prepare', { sql })
-    ).stmtId
-    completionsStmtCache.set(sql, stmtId)
-  }
-  return run(stmtId)
+  return withCached(sql, run)
 }
 
 /**
@@ -61,21 +51,28 @@ async function withPrepared<T>(
  * 切成碎片。严格守住 YYYY-MM-DD 字面 + 真实存在的日期。
  * 返回归一化后的 date；非法值抛错（record() 是 IPC 入口，错误冒泡给
  * 渲染端是有意义的）。
+ *
+ * R-fix-daykey-dedup (MEDIUM)：字面 + 真实日期判定统一走
+ * @shared/lib/dayKey.isValidDayKey，与 validators.parseSafeDayKey /
+ * navigateBridge.parseRoute 共享同一权威源。
  */
-const YMD_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * 单条 record() 调用允许写入的最大 count。热力图每天 1000 次完成已远超
+ * 真实使用场景，超过视为异常输入（防止 XSS / 恶意依赖把单日 SUM(count)
+ * 撑爆、扭曲 streak）。handler 层和 repo 层都使用同一常量，避免单点失守。
+ * 防御性夹紧：repo.record 也会 clamp，handler 层先 clamp 是为了给渲染端
+ * 一个清晰的错误信息。
+ */
+export const MAX_COMPLETION_COUNT = 1000
 export function validateDayKey(date: string): string {
-  if (typeof date !== 'string' || !YMD_RE.test(date)) {
-    throw new Error(`invalid day key: ${JSON.stringify(date)} (expected YYYY-MM-DD)`)
-  }
-  const [y, m, d] = date.split('-').map((n) => Number(n))
-  const dt = new Date(`${date}T00:00:00.000Z`)
-  if (
-    Number.isNaN(dt.getTime()) ||
-    dt.getUTCFullYear() !== y ||
-    dt.getUTCMonth() + 1 !== m ||
-    dt.getUTCDate() !== d
-  ) {
-    throw new Error(`invalid day key: ${JSON.stringify(date)} (not a real calendar date)`)
+  if (!isValidDayKey(date)) {
+    // 区分「字面格式不合法」与「字面合法但不是真实日期」两种失败，给 IPC
+    // 调用方更精确的诊断信息（之前 inline 时也是同样的双分支文案）。
+    const looksLikeYmd = typeof date === 'string' && DAY_KEY_RE.test(date)
+    throw new Error(
+      `invalid day key: ${JSON.stringify(date)} (${looksLikeYmd ? 'not a real calendar date' : 'expected YYYY-MM-DD'})`,
+    )
   }
   return date
 }
@@ -83,6 +80,10 @@ export function validateDayKey(date: string): string {
 export class CompletionsRepository {
   async record(stickyNoteId: string | null, date: string, count = 1): Promise<CompletionRecord> {
     const safeDate = validateDayKey(date)
+    // 防御性夹紧：handler 已 clamp 到 [1, MAX_COMPLETION_COUNT]，但
+    // repo 仍兜底一次，避免未来调用方绕过 handler（如 backfill / 测试）
+    // 重新引入无界 count 写入。
+    const safeCount = Math.min(MAX_COMPLETION_COUNT, Math.max(1, Math.floor(count)))
     const id = crypto.randomUUID()
     const now = new Date().toISOString()
     // 同 (sticky_note_id, date) 多次写入时，count 累加而不是抛错。
@@ -91,10 +92,10 @@ export class CompletionsRepository {
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(sticky_note_id, date) DO UPDATE SET count = count + ?`,
       async (stmtId) => {
-        await dbClient.call('run', { stmtId, params: [id, stickyNoteId, safeDate, count, now, count] })
+        await dbClient.call('run', { stmtId, params: [id, stickyNoteId, safeDate, safeCount, now, safeCount] })
       },
     )
-    return { id, stickyNoteId, date: safeDate, count, createdAt: now }
+    return { id, stickyNoteId, date: safeDate, count: safeCount, createdAt: now }
   }
 
   /**

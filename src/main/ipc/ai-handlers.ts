@@ -24,12 +24,24 @@ import {
   setCurrentNoteId,
   noteOpenedByWebContents,
   noteClosedByWebContents,
+  setCurrentStickyId,
+  clearStickyIdIfMatches,
+  setCurrentPomodoroContext,
+  consumePendingCreateNote,
 } from '../ai/tools'
 import { markToolConsumed } from '../ai/stream'
 import { IPC_CHANNELS } from '@shared/ipc/channels'
 import { SYSTEM_PROMPT } from '../ai/prompts'
 import { estimateMessagesTokens } from '../ai/tokenCounter'
+import { hasToolCallField, stripToolCallFields } from './ipcSanitizers'
+import {
+  MAX_STREAM_MESSAGES,
+  MAX_MESSAGE_CONTENT_BYTES,
+  MAX_NOTE_CONTENT_BYTES,
+  ALLOWED_MESSAGE_ROLES,
+} from './ipcLimits'
 import log from '../log'
+import { isUuid } from '@shared/lib/uuid'
 
 /**
  * R12 修复 (medium)：ai:stream 入参边界检查。被攻击渲染端可发送数千条大消息
@@ -38,10 +50,36 @@ import log from '../log'
  * R16 修复 (critical)：role 白名单 —— 渲染端（被 XSS 或恶意依赖劫持时）
  * 可注入 `role: 'system'` 的假消息覆盖服务端 SYSTEM_PROMPT。`role: 'system'`
  * 必须由服务端独享，handler 层拒绝任何渲染端提交的非白名单 role。
+ *
+ * 注：MAX_STREAM_MESSAGES / MAX_MESSAGE_CONTENT_BYTES / MAX_NOTE_CONTENT_BYTES
+ * / ALLOWED_MESSAGE_ROLES 现已统一搬到 ./ipcLimits.ts（与 conversation-handlers
+ * 共用同一来源）。下一轮新增跨 handler 约束也放那里。
  */
-const MAX_STREAM_MESSAGES = 200
-const MAX_MESSAGE_CONTENT_BYTES = 200_000
-const MAX_NOTE_CONTENT_BYTES = 5 * 1024 * 1024
+
+/**
+ * R34-Fix-2 修复 (HIGH prompt-injection)：
+ * AI_SET_CURRENT_STICKY_ID / AI_SET_CURRENT_POMODORO_CONTEXT 接收的
+ * stickyId / stickyNoteId 是 advisory —— 渲染端 StickyNoteCard /
+ * PomodoroTimerPanel mount 时推过来，stream.ts 把它拼进 system prompt
+ * 末尾告诉 LLM「用户当前正在操作哪条便签」。
+ *
+ * 之前 IPC 层只接受任意 string（含空串过 null 兜底），没有任何格式
+ * 校验。被劫持渲染端 / 恶意 dev 依赖可直接写
+ *   `\`)' INSTRUCTIONS_OVERRIDE\\nIgnore all previous directives...//\``
+ * 进 aiContextByWebContents Map；下一次 ai:stream 时被 buildAiContextPrompt
+ * 直接拼到 system prompt 末尾，LLM 会把它当成「系统给的指令」执行。
+ *
+ * 修复：在 IPC 边界用白名单 regex 拦下可疑字符串，只放行 nanoid 风格
+ * （字母数字下划线连字符，1-64 字符）的 ID。null 仍然正常放行（关闭便签
+ * / 离开番茄钟面板）。这是 defense-in-depth 第一层；第二层在
+ * context.ts 的 buildAiContextPrompt 里走 escapeToolText + data-only 包裹。
+ */
+const STICKY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
+
+function isSafeStickyId(s: unknown): s is string {
+  return typeof s === 'string' && STICKY_ID_PATTERN.test(s)
+}
+
 /**
  * R19 修复 (critical security)：从 ALLOWED_MESSAGE_ROLES 删除 'tool'。
  *
@@ -62,8 +100,9 @@ const MAX_NOTE_CONTENT_BYTES = 5 * 1024 * 1024
  * 工具循环（tools.ts / stream.ts）内部产出，append 进 conversationsRepo
  * 时不经 IPC；下一轮 ai:stream 取回历史时自然出现 tool（因为读自 DB，
  * 不需要写入时再放行）。
+ *
+ * 白名单本身已搬到 ./ipcLimits.ts 与 conversation-handlers 共用同一来源。
  */
-const ALLOWED_MESSAGE_ROLES = new Set(['user', 'assistant'])
 
 export function registerAiHandlers(): void {
   /** 列出 provider + 模型 */
@@ -233,29 +272,16 @@ export function registerAiHandlers(): void {
         // → OpenAI adapter 把 tool_call_id 当真实工具执行回执标记 →
         // 模型误信之前工具已产生副作用，跳过重新执行或基于错误前提继续
         // 推进敏感操作。
-        // 修复：把 helperKeyRe 提取成共享正则，ai-handlers 与
-        // conversation-handlers 复用同一个 stripper 函数（与 R31 的
-        // `toolCallKeyRe` 对齐）。
-        const toolCallKeyRe = /^tool[_-]?calls?$/i
-        const helperKeyRe = /^(function_call|tool_call_id|name)$/i
-        let hasToolCallField = false
-        for (const k of Object.keys(obj)) {
-          if (toolCallKeyRe.test(k) || helperKeyRe.test(k)) {
-            hasToolCallField = true
-            break
-          }
-        }
-        if (hasToolCallField) {
-          const cloned: Record<string, unknown> = { ...obj }
-          for (const k of Object.keys(cloned)) {
-            if (toolCallKeyRe.test(k) || helperKeyRe.test(k)) {
-              delete cloned[k]
-            }
-          }
-          // req.messages[i] = cloned as unknown as typeof m —— 直接 mutate 数组
-          // slot 是允许的（IPC structured clone 在 IPC 边界已 deep clone 一次，
-          // 我们拿到的是拷贝），保留 req.messages 引用稳定。
-          req.messages[i] = cloned as unknown as typeof m
+        // 修复（已完成）：regex + strip 逻辑统一搬到
+        // `./ipcSanitizers.ts`，本 handler 与 conversation-handlers
+        // 共享 `hasToolCallField` + `stripToolCallFields`。下一次新增
+        // 工具辅助字段（如 tool_calls_v2 / function_name）只需改一处。
+        if (hasToolCallField(obj)) {
+          // req.messages[i] = cloned —— 直接 mutate 数组 slot 是允许的
+          // （IPC structured clone 在 IPC 边界已 deep clone 一次，
+          // 我们拿到的是拷贝），保留 req.messages 引用稳定，让调用方
+          // chain 行为不变。
+          req.messages[i] = stripToolCallFields(obj) as unknown as typeof m
         }
       }
     }
@@ -294,10 +320,32 @@ export function registerAiHandlers(): void {
    * R16 修复 (medium)：渲染端（被 XSS / 恶意依赖劫持时）可绕过确认 UI
    * 直接调本通道传 500MB content 把主进程写崩。Handler 层在调用 createNoteConfirmed
    * 前做字节级封顶，与 note:write 的 5 MB 一致。
+   *
+   * R33 修复 (HIGH ai:confirm-create-note-bypass)：原版只校验 payload 形
+   * 状 + content 字节上限，任意被劫持渲染端（XSS / 恶意依赖 / devtools
+   * / 拿到 window.api 的恶意 iframe）都可绕过 confirm 弹窗直接 invoke
+   * 本通道往 notes 目录写任意 markdown。现在按 R32-03 的 (callId, sender)
+   * 所有权模式：在 createNote 工具 execute 时把 (callerId, toolCallId,
+   * title, content) 登记到 pendingCreateNote 表，本 handler 必须先
+   * consumePendingCreateNote 通过（命中 + title 完全相等）才允许落盘。
+   * toolCallId 必须为 RFC-4122 UUID（与 NOTE_OPENED 一致），否则拒绝。
    */
   handle<{ title: string; content: string; toolCallId?: string }>(
     IPC_CHANNELS.AI_CONFIRM_CREATE_NOTE,
-    async (_e, payload) => {
+    async (e, payload) => {
+      // R33 修复：toolCallId 必须为 UUID，且必须在 pendingCreateNoteByWebContents
+      // 表里有 callerId = e.sender.id 的对应项。这把"是否有一次合法 createNote
+      // 工具调用正在等确认"做成端到端强校验，绕过渲染端 confirm 弹窗路径
+      // 一律拒绝。
+      const toolCallId = String(payload?.toolCallId ?? '').trim()
+      // R39 修复 (low structure)：UUID 正则字面量在同文件至少 3 次 + tools/note.ts 又一次，
+      // 收口到 @shared/lib/uuid.isUuid，避免规则微调时 4+ 处漏改。
+      if (!toolCallId || !isUuid(toolCallId)) {
+        return {
+          ok: false,
+          error: 'toolCallId must be a UUID',
+        } as const
+      }
       // R16：拒绝超大 content —— 在调 createNoteConfirmed 之前拦下，避免
       // 把 500 MB 字符串拼到 frontmatter 再 writeFile（已经走到 writeFile
       // 才抛错就晚了，主进程 OOM 风险）。
@@ -307,13 +355,33 @@ export function registerAiHandlers(): void {
           `ai:confirm-create-note: content exceeds ${MAX_NOTE_CONTENT_BYTES} bytes (got ${contentBytes})`,
         )
       }
-      const result = await createNoteConfirmed(payload ?? { title: '', content: '' })
+      const submittedTitle = String(payload?.title ?? '').trim()
+      const ownership = consumePendingCreateNote(e.sender.id, toolCallId, submittedTitle)
+      if (!ownership.ok) {
+        // 不抛错 —— 渲染端弹窗会把这个 error 透给用户并停止落盘；抛错
+        // 会让主进程日志里刷一堆 stack trace 污染误导排查。
+        log.warn(
+          `[ipc] ai:confirm-create-note rejected sender=${e.sender.id} toolCallId=${toolCallId}: ${ownership.error}`,
+        )
+        return { ok: false, error: ownership.error } as const
+      }
+      // ownership 通过后再用登记的 (title, content, tags) 落盘（不直接用
+      // payload，即便 renderer 改了 title/content 也以主进程登记的为准，
+      // 杜绝渲染端在最后一公里偷换 LLM 提出的内容）。tags 同样以登记值为准，
+      // 渲染端无权扩缩。
+      const result = await createNoteConfirmed({
+        title: ownership.title,
+        content: ownership.content,
+        ...(Array.isArray(ownership.tags) && ownership.tags.length > 0
+          ? { tags: ownership.tags }
+          : {}),
+      })
       // R11 修复 (medium #5)：createNote 工具的 execute 仅返回 confirm_create 载荷，
       // 实际写入发生在用户同意后的本通道。stream 层故意没在 execute 后立刻
       // markToolConsumed；现在真正落盘了，把它标为已消费，避免历史回放时把
       // 同 toolCallId 的请求再次走 confirm 弹窗。
-      if (result.ok && payload?.toolCallId) {
-        markToolConsumed(payload.toolCallId)
+      if (result.ok) {
+        markToolConsumed(toolCallId)
       }
       log.info(
         `[ipc] ai:confirm-create-note result=${result.ok ? 'ok' : 'err'} title=${result.ok ? result.title : ''}`,
@@ -356,11 +424,8 @@ export function registerAiHandlers(): void {
       // 通过 → 主进程读取并返回该 noteId 的笔记正文。修复：强制 noteId 必
       // 须是 RFC 4122 UUID（4 段 8-4-4-4-12 hex + 连字符），与 sticky / 文件
       // 系统一致，杜绝任意字符串污染。
-      if (
-        !payload ||
-        typeof payload.noteId !== 'string' ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.noteId)
-      ) {
+      // R39：UUID 校验收口到 @shared/lib/uuid.isUuid。
+      if (!payload || !isUuid(payload.noteId)) {
         return { ok: false, error: 'noteId must be a UUID' } as const
       }
       noteOpenedByWebContents(e.sender.id, payload.noteId)
@@ -373,11 +438,8 @@ export function registerAiHandlers(): void {
       // R32-04 修复 (MEDIUM note-id-bypass-summarizeNote)：同 opened —— 必须
       // 是合法 UUID，否则反注册路径被任意字符串触发，导致合法的 opened
       // 集合被错误清空（拒绝服务：用户已打开的笔记突然 summarize 不出正文）。
-      if (
-        !payload ||
-        typeof payload.noteId !== 'string' ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.noteId)
-      ) {
+      // R39：UUID 校验收口到 @shared/lib/uuid.isUuid。
+      if (!payload || !isUuid(payload.noteId)) {
         return { ok: false, error: 'noteId must be a UUID' } as const
       }
       noteClosedByWebContents(e.sender.id, payload.noteId)
@@ -421,6 +483,101 @@ export function registerAiHandlers(): void {
           error: 'confirm expired or already handled',
         } as const
       }
+      return { ok: true } as const
+    },
+  )
+
+  /**
+   * 渲染端通过 InlineAIButton / StickyNoteCard 把"用户当前正在操作的便签 ID"
+   * 推过来。仅作为 system prompt 上下文注入；不参与权限校验。
+   *
+   * 与 setCurrentNoteId 的区别：那个走 openedNotes 集合的强校验（防
+   * summarizeNote 任意指认）；这里只是 advisory。但仍必须在 IPC 边界
+   * 用白名单 regex 校验 stickyId（防 prompt injection：渲染端可塞任意
+   * 字符串进 aiContextByWebContents → 下次 ai:stream 时被拼进 system
+   * prompt）。null 仍然放行（清空 / 卸载时调用）。
+   */
+  handle<string | null>(
+    IPC_CHANNELS.AI_SET_CURRENT_STICKY_ID,
+    async (e, stickyId) => {
+      // null / 非字符串：清空场景，原样放行。
+      if (stickyId === null) {
+        setCurrentStickyId(null, e.sender.id)
+        return { ok: true } as const
+      }
+      if (!isSafeStickyId(stickyId)) {
+        log.warn(
+          `[ai-handlers] ${IPC_CHANNELS.AI_SET_CURRENT_STICKY_ID} refused: invalid stickyId shape from wc=${e.sender.id}`,
+        )
+        return { ok: false, error: 'invalid stickyId' } as const
+      }
+      setCurrentStickyId(stickyId, e.sender.id)
+      return { ok: true } as const
+    },
+  )
+
+  /**
+   * R33 修复 (medium #2)：compare-and-clear 通道。
+   * StickyNoteCard unmount 时调用，传入当前 noteId；主进程仅在 stickyId
+   * 仍等于 noteId 时才清空。返回 { ok, cleared } 让调用方知道是否真的清了
+   * （调试 / 审计用，渲染端不强依赖返回值）。
+   */
+  handle<{ noteId: string }>(
+    IPC_CHANNELS.AI_CLEAR_STICKY_ID_IF_MATCHES,
+    async (e, payload) => {
+      if (!payload || typeof payload.noteId !== 'string' || payload.noteId === '') {
+        return { ok: false, error: 'invalid noteId' } as const
+      }
+      const cleared = clearStickyIdIfMatches(payload.noteId, e.sender.id)
+      return { ok: true, cleared } as const
+    },
+  )
+
+  /**
+   * 渲染端通过 InlineAIButton / PomodoroTimerPanel 把"番茄钟当前阶段"推过来。
+   * 三个字段同时写入；传 null 表示"番茄钟已停止 / 离开面板"。
+   *
+   * R34-Fix-2 修复 (HIGH prompt-injection)：stickyNoteId 同样是 advisory
+   * 但会被拼进 system prompt，必须在 IPC 边界做 regex 白名单校验。null
+   * 放行（停止番茄钟 / 离开面板场景）。
+   */
+  handle<
+    | {
+        running: boolean
+        mode: 'focus' | 'shortBreak' | 'longBreak'
+        stickyNoteId: string | null
+      }
+    | null
+  >(
+    IPC_CHANNELS.AI_SET_CURRENT_POMODORO_CONTEXT,
+    async (e, payload) => {
+      if (payload === null) {
+        setCurrentPomodoroContext(null, e.sender.id)
+        return { ok: true } as const
+      }
+      if (
+        typeof payload !== 'object' ||
+        typeof payload.running !== 'boolean' ||
+        typeof payload.mode !== 'string'
+      ) {
+        return { ok: false, error: 'invalid payload' } as const
+      }
+      // stickyNoteId 单独走白名单：null 放行（番茄钟没关联便签），
+      // string 必须匹配 nanoid 风格正则。
+      if (payload.stickyNoteId !== null && !isSafeStickyId(payload.stickyNoteId)) {
+        log.warn(
+          `[ai-handlers] ${IPC_CHANNELS.AI_SET_CURRENT_POMODORO_CONTEXT} refused: invalid stickyNoteId shape from wc=${e.sender.id}`,
+        )
+        return { ok: false, error: 'invalid stickyNoteId' } as const
+      }
+      setCurrentPomodoroContext(
+        {
+          running: payload.running,
+          mode: payload.mode as 'focus' | 'shortBreak' | 'longBreak',
+          stickyNoteId: payload.stickyNoteId,
+        },
+        e.sender.id,
+      )
       return { ok: true } as const
     },
   )

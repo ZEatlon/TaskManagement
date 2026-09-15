@@ -15,6 +15,7 @@ import {
 } from './provider'
 import { getSecret, SECRET_KEYS } from '../security/keychain'
 import { loadAiConfig } from './router'
+import { translateAiError } from '@shared/i18n/aiErrorTranslate'
 import log from '../log'
 
 /** OpenAI 静态可用模型列表 */
@@ -150,8 +151,10 @@ export class OpenAIProvider implements AiProvider {
       const list = await client.models.list()
       return { ok: !!list.data, message: `已发现 ${list.data.length} 个可用模型` }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return { ok: false, message: msg }
+      // R40-fix-ai-raw-sdk-error (medium)：不再把 SDK 原始 message 推给渲染端。
+      // 原始错误进 log.error 留诊断痕迹；UI 拿中文友好文案。
+      log.error('[ai/openai] testConnection failed', err)
+      return { ok: false, message: translateAiError(err, err instanceof Error ? err.message : String(err)) }
     }
   }
 
@@ -201,7 +204,14 @@ export class OpenAIProvider implements AiProvider {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       log.error('[ai/openai] create stream failed', err)
-      yield { type: 'error', message: msg }
+      // R-fix-llm-error-vs-persist：chat() 抛错走 translateAiError 转中文
+      // 友好文案 + 打 llm-error reason；stream.ts 据此不再把这串 message
+      // 塞进 done.persistError，避免渲染端把 LLM 故障误报为 "DB 写入失败"。
+      yield {
+        type: 'error',
+        message: translateAiError(err, msg),
+        reason: 'llm-error',
+      }
       return
     }
 
@@ -262,7 +272,14 @@ export class OpenAIProvider implements AiProvider {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       log.error('[ai/openai] stream error', err)
-      yield { type: 'error', message: msg }
+      // R-fix-llm-error-vs-persist：同上 create stream failed 分支，把 SDK
+      // message 翻译成中文并打 llm-error reason，让 stream.ts 把它当作
+      // LLM 错误而不是 DB 持久化失败。
+      yield {
+        type: 'error',
+        message: translateAiError(err, msg),
+        reason: 'llm-error',
+      }
     }
   }
 }

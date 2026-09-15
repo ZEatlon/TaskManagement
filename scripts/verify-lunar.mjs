@@ -1,5 +1,10 @@
 // Quick verification script for lunar.ts — run with `npx tsx scripts/verify-lunar.mjs`
-import { solarToLunar, getSolarTerm, weekdayName } from '../src/renderer/src/lib/lunar.ts'
+// R-fix-i18n-lunar-shortdate (medium)：不再 import lunar.weekdayName（已
+// @deprecated）。weekday 直接用 Sunday-first 全称字典索引，
+// 与 getCalendarMessages().weekdayFull 形态完全一致（zh-CN）。
+import { solarToLunar, getSolarTerm } from '../src/renderer/src/lib/lunar.ts'
+
+const WEEKDAY_FULL_ZH = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
 
 const tests = [
   // 节气测试
@@ -22,7 +27,7 @@ let fail = 0
 for (const t of tests) {
   const d = new Date(t.date + 'T12:00:00')
   const r = solarToLunar(d)
-  const w = weekdayName(d, 1)
+  const w = WEEKDAY_FULL_ZH[d.getDay()] ?? ''
   console.log(
     `${t.date} (${w}) → 农历${r.year}年${r.monthName}${r.dayName}` +
       (r.term ? ` / 节气: ${r.term}` : ''),

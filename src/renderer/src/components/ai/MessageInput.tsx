@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useAiStore } from '../../stores/ai'
+import { isImeComposing } from '../../lib/useImeGuard'
 
 interface Props {
   disabled?: boolean
@@ -74,9 +75,7 @@ export function MessageInput({ disabled }: Props) {
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // R6A-3：IME 守卫 —— 中文输入法选词时按 Enter 不应触发 onSend。
-    const isComposing =
-      e.nativeEvent.isComposing || (e as unknown as { keyCode?: number }).keyCode === 229
-    if (e.key === 'Enter' && !e.shiftKey && !isComposing) {
+    if (e.key === 'Enter' && !e.shiftKey && !isImeComposing(e)) {
       e.preventDefault()
       onSend()
     }
@@ -90,6 +89,10 @@ export function MessageInput({ disabled }: Props) {
         ref={textareaRef}
         className="ai-input-textarea"
         placeholder={disabled ? '请先选择对话或配置 API Key' : '输入消息，Enter 发送，Shift+Enter 换行…'}
+        // R33-A11y-Label 修复 (high)：placeholder 不构成可靠 accessible
+        // name（输入即消失，SR 行为不一致），补 aria-label 让 NVDA/JAWS
+        // 在聚焦时播报「消息内容，编辑」，避免用户不知道这是 AI 对话输入框。
+        aria-label="消息内容"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKeyDown}

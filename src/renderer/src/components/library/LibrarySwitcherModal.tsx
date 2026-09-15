@@ -14,10 +14,11 @@
  *
  * 设计：所有 IPC 串行 await + 错误内联展示；modal 内部状态机自管理。
  */
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { X, FolderInput, HardDriveDownload, FolderPlus, Loader2 } from 'lucide-react'
 import { libraryApi, type LibraryScanResult } from '@renderer/lib/ipc'
 import { useSettingsStore } from '../../stores/settings'
+import { useFocusTrap } from '@renderer/lib/useFocusTrap'
 
 interface Props {
   open: boolean
@@ -64,6 +65,46 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
       setError(null)
       setAction(null)
       setResult(null)
+    }
+  }, [open])
+
+  // R-1 修复 (high a11y)：补 useFocusTrap / Esc / 初始焦点 / 焦点恢复。
+  // 原本只声明 role=dialog + aria-modal 但没有任何键盘流控制：纯键盘 / SR
+  // 用户打开后 Tab 直接落到背景 Settings 布局的 widget；Esc 完全不响应；
+  // 关闭后焦点留在 document.body。
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const primaryButtonRef = useRef<HTMLButtonElement | null>(null)
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+  useFocusTrap(dialogRef, open)
+
+  // Esc 关闭（挂在 modal 根 div 而非 window，避免和 CommandBar 等其他
+  // modal 的 keydown handler 互相触发）。
+  const onModalKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault()
+      onClose()
+    }
+  }
+
+  useEffect(() => {
+    if (!open) return
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null
+    // 初始焦点推到 primary 按钮；如果还没渲染（step=pick 且有 disabled 候选）
+    // 就让 dialog 自己接走焦点（tabIndex=-1），由 useFocusTrap 把 Tab 收口。
+    requestAnimationFrame(() => {
+      if (primaryButtonRef.current) {
+        primaryButtonRef.current.focus()
+      } else {
+        dialogRef.current?.focus()
+      }
+    })
+    return () => {
+      // 同 LibraryMissingDialog R25-Corr-5：focus 前先 contains 校验
+      // 防止触发元素在父级 unmount 后变成 detached 节点。
+      const prev = previouslyFocusedRef.current
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+        prev.focus()
+      }
     }
   }, [open])
 
@@ -157,11 +198,15 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
   return (
     <div className="library-switcher-backdrop" onClick={onClose}>
       <div
+        ref={dialogRef}
         className="library-switcher-modal"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="library-switcher-title"
+        aria-busy={busy}
+        onKeyDown={onModalKeyDown}
+        tabIndex={-1}
       >
         <header className="library-switcher-header">
           <h2 id="library-switcher-title">切换库目录</h2>
@@ -182,6 +227,11 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
             <code className="library-switcher-current">{currentPath}</code>
           </div>
 
+          {/* SR-only 状态播报：busy 状态切换时通知 SR 用户「扫描中…」/「切换中…」 */}
+          <div className="sr-only" aria-live="polite" role="status">
+            {busy ? (action ? '切换中…' : '扫描中…') : ''}
+          </div>
+
           {/* 步骤 1：选择新目录 */}
           {step === 'pick' && (
             <div className="library-switcher-section">
@@ -190,6 +240,7 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
                 然后让你选择下一步：<strong>在新建库</strong> / <strong>解析原有数据</strong> / <strong>从当前库迁移</strong>。
               </p>
               <button
+                ref={primaryButtonRef}
                 className="btn primary"
                 onClick={handlePick}
                 disabled={busy}

@@ -5,7 +5,8 @@
  * 主进程主动推送：maximize / unmaximize 状态变化（用于窗口按钮图标切换）
  */
 import { ipcMain, BrowserWindow } from 'electron'
-import { CHANNELS, handle } from './channels'
+import { handle } from './channels'
+import { IPC_CHANNELS as CHANNELS } from '@shared/ipc/channels'
 import log from '../log'
 
 /** 当前主窗口的引用（由 windowManager 注册） */

@@ -11,6 +11,7 @@
 import { basename } from 'node:path'
 import { Stats } from 'node:fs'
 import { dbClient } from '../client'
+import { prepareCached } from '../cachedStmt'
 import type { NoteMeta, ISODateTime, ID } from '@shared/types'
 import type { ParsedNote } from '../../notes/frontmatter'
 import log from '../../log'
@@ -83,29 +84,14 @@ function safeJsonArray(s: string): string[] {
  * NotesRepository 没继承 Repository 基类（自定义 fromRow 不通用），所以
  * 缓存放在 module scope，并通过 dbClient.registerStmtCacheInvalidator 在
  * worker respawn 时清空。
+ *
+ * R-FIX-4 (structure dedup)：原 `notesStmtCache` + `notesInvalidatorRegistered`
+ * + registerStmtCacheInvalidator + lookup 12 行样板被 module-scope
+ * `prepareCached` 取代。与 statsBridge / Repository 基类 / pomodoros /
+ * completions / settings / conversations 共享同一 cache + 同一 invalidate
+ * 钩子。
  */
-const notesStmtCache = new Map<string, number>()
-let notesInvalidatorRegistered = false
-
-function notesPrepare(sql: string): Promise<number> {
-  let id = notesStmtCache.get(sql)
-  if (id !== undefined) return Promise.resolve(id)
-  if (!notesInvalidatorRegistered) {
-    // 首次调用时注册 invalidate 回调；不写进构造器是因为 NotesRepository
-    // 没继承 Repository 基类，没有 super() 钩子。
-    dbClient.registerStmtCacheInvalidator(() => {
-      notesStmtCache.clear()
-    })
-    notesInvalidatorRegistered = true
-  }
-  return dbClient
-    .call<{ stmtId: number }>('prepare', { sql })
-    .then((res) => {
-      if (!res) throw new Error('Failed to prepare statement')
-      notesStmtCache.set(sql, res.stmtId)
-      return res.stmtId
-    })
-}
+const notesPrepare = prepareCached
 
 /** findAll ORDER BY 白名单：避免把不可信字符串拼进 SQL */
 const ALLOWED_ORDER_BY: ReadonlySet<string> = new Set([
@@ -390,6 +376,86 @@ export class NotesRepository {
     throw new Error(
       `[notes.moveToFolder] failed to move note ${id} to folder ${folderId ?? '<uncategorized>'} after 3 CAS attempts (concurrent update conflict)`,
     )
+  }
+
+  /**
+   * 一次性按多个 folder 拉笔记；返回 Map<folderId, NoteMeta[]>。
+   *
+   * R-findByFolders (low perf)：原 NoteFoldersSidebar 调 N 次 listByFolder
+   * 触发 N 次 IPC + N 次 SELECT * WHERE folder_id = ?，用户有 20 个文件夹
+   * 时 21 轮 round-trip（21×1-3ms ≈ 20-60ms 才让 sidebar 响应）。这里
+   * 加 findByFolders 一次性按 folder_id IN (...) 拉取所有相关行，JS 端按
+   * folderId 分组返回。SQL 走 folder_id 部分索引（005-note-folders.sql 的
+   * `idx_notes_folder_id`），IN list 走 index scan，单 query 即可。
+   *
+   * 参数 folderIds：包含若干 string id（用户文件夹）与可能的 null（未分类）。
+   *   - SQLite IN list 不支持 NULL 元素 → 拆分 `IN (?, ...)` 与 `IS NULL`
+   *   - 若只传 null → 只走 IS NULL 单分支；若只传 string → 只走 IN；
+   *     混合 → 两分支用 AND 串起来（单条 SQL，单 round-trip）。
+   *
+   * limit 在 SQL 层整体取 N×K（K = opts.limit），per-folder 截断在 JS 层做。
+   *   SQLite 3.25+ 有 window function 但 not per-IN-group LIMIT，简洁起见
+   *   仍走 JS 截断。N×K 总上限足以覆盖 sidebar 「每个文件夹预览前 10 条」
+   *   的真实需求。
+   */
+  async findByFolders(
+    folderIds: ReadonlyArray<ID | null>,
+    opts: { archived?: boolean; limit?: number } = {},
+  ): Promise<Map<ID | null, NoteMeta[]>> {
+    // R-fix-NOTE_LIST_BY_FOLDERS-unbounded-folderIds (medium DoS) defense-in-depth：
+    // handler 层（note-handlers.ts:NOTE_LIST_BY_FOLDERS）已 cap MAX_FOLDER_IDS=100，
+    // 但任何绕过 IPC 直接调本仓储的内部调用方（其它主进程代码 / 未来自动化脚本）
+    // 同样需要被这条门槛挡住 —— 重复 cap 是有意为之，与 ai-handlers 的入参
+    // 校验后端内 maxToken 二次校验同源思路。
+    if (folderIds.length > 1000) {
+      throw new Error(`notesRepo.findByFolders: folderIds length ${folderIds.length} exceeds 1000`)
+    }
+    // 拆分 null vs string：null 用 IS NULL（SQLite IN 不支持 NULL 元素）；
+    // string 走 IN (?, ?, ...) 占位。
+    const stringIds = folderIds.filter((id): id is ID => typeof id === 'string')
+    const wantsUnsorted = folderIds.includes(null)
+    const where: string[] = []
+    const params: unknown[] = []
+    if (stringIds.length > 0) {
+      where.push(`folder_id IN (${stringIds.map(() => '?').join(', ')})`)
+      params.push(...stringIds)
+    }
+    if (wantsUnsorted) where.push('folder_id IS NULL')
+    if (typeof opts.archived === 'boolean') {
+      where.push('archived = ?')
+      params.push(opts.archived ? 1 : 0)
+    }
+    // 单 SQL：跨多个 folder 拉所有匹配行，limit-per-folder 在 JS 端做截断
+    // （SQLite 不支持 per-IN-group LIMIT）。先按 folder_id, mtime DESC 排
+    // 序，整体取 N×K 行（K = opts.limit）后 JS 端按 folderId 截断。
+    const n = Number(opts.limit)
+    const perFolderLimit = Number.isFinite(n) && n > 0 ? Math.floor(n) : 10
+    // 整体取 N×K + K 行（K 容错）确保每个文件夹 limit 条都能装下
+    const sqlLimit = perFolderLimit * stringIds.length + perFolderLimit
+    const sql = `SELECT * FROM notes WHERE ${where.join(' AND ') || '1=1'} ORDER BY folder_id ASC, mtime DESC LIMIT ?`
+    // 共享 stmtCache（与 findByFolder 一致），SQL 文本命中复用。
+    const stmtId = await notesPrepare(sql)
+    params.push(sqlLimit)
+    const rows = (await dbClient.call('all', { stmtId, params })) as NoteRow[]
+    // JS 端按 folderId 分组并按 mtime DESC 排序后截断 limit
+    const out = new Map<ID | null, NoteMeta[]>()
+    for (const id of folderIds) out.set(id, [])
+    const grouped = new Map<ID | null, NoteMeta[]>()
+    for (const r of rows) {
+      const fid: ID | null = r.folder_id ?? null
+      const arr = grouped.get(fid) ?? []
+      arr.push(rowToMeta(r))
+      grouped.set(fid, arr)
+    }
+    // 入参顺序保证返回 Map 的 key 顺序稳定（FolderWithNotes 用 key 引用比较）
+    for (const id of folderIds) {
+      const list = grouped.get(id) ?? []
+      // SQL 已经 ORDER BY mtime DESC，但 IN 多 folder 时整体排序后 per-folder
+      // 子序列仍保持 mtime DESC；安全起见再排一次确保 per-folder 顺序正确。
+      list.sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : 0))
+      out.set(id, list.slice(0, perFolderLimit))
+    }
+    return out
   }
 
   /**

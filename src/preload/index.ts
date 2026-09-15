@@ -193,6 +193,29 @@ const api = {
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_OPENED, { noteId }),
     noteClosed: (noteId: string): Promise<{ ok: true }> =>
       ipcRenderer.invoke(IPC_CHANNELS.NOTE_CLOSED, { noteId }),
+
+    /**
+     * R33-fix：AI navigate 工具让主进程把跳转指令推到渲染端。渲染端 preload
+     * 监听后桥接到 react-router 的 navigate()。payload 见 NavigateBridge。
+     * 返回解绑函数。需要在 app 启动时（main.tsx）一次性安装，避免重入。
+     */
+    onNavigate: (
+      cb: (event: IpcRendererEvent, payload: { route: string; focusStickyId: string | null; callId: string }) => void,
+    ): (() => void) => {
+      const handler = (e: IpcRendererEvent, payload: { route: string; focusStickyId: string | null; callId: string }) => cb(e, payload)
+      ipcRenderer.on(IPC_CHANNELS.AI_NAVIGATE, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.AI_NAVIGATE, handler)
+    },
+    /**
+     * R33-fix：渲染端在 react-router 实际切完路由后回送 ack，主进程 await
+     * 该 ack 后才返回 ok:true，避免主进程乐观成功导致 LLM 告诉用户「已切到
+     * /today」但渲染端实际未动。focusStickyId 同时传给上层用于滚动 / 高亮。
+     */
+    ackNavigate: (payload: {
+      callId: string
+      focusApplied?: boolean | null
+    }): Promise<{ ok: true }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AI_NAVIGATE_ACK, payload),
   },
 
 /** 附件 API（模块 6） */

@@ -10,6 +10,7 @@
  * 位置由父组件根据鼠标/单元格位置计算后传入。
  */
 import { useEffect, useState } from 'react'
+import { startOfDayLocal } from '@shared/lib/dayKey'
 import { fromISODate } from './heatmapData'
 
 export interface HeatmapTooltipPayload {
@@ -33,8 +34,7 @@ const ONE_DAY_MS = 86_400_000
 
 /** 把日期格式化为"今天 / 昨天 / X 天前 / 未来"等 */
 function relativeLabel(date: Date): string {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = startOfDayLocal(new Date())
   const target = new Date(date.getFullYear(), date.getMonth(), date.getDate())
   const diff = Math.round((target.getTime() - today.getTime()) / ONE_DAY_MS)
   if (diff === 0) return '今天'

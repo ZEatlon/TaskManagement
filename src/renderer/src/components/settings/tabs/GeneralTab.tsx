@@ -7,6 +7,7 @@
 import { useSettingsStore } from '../../../stores/settings'
 import { useAppStore } from '../../../stores/app'
 import { SettingField } from '../SettingField'
+import { LOCALE_OPTIONS, toLocaleValue } from '@shared/i18n/locales'
 
 /** 主题选项 */
 const THEME_OPTIONS = [
@@ -21,8 +22,11 @@ const DENSITY_OPTIONS = [
   { value: 'comfortable', label: '舒适' },
 ]
 
-/** 语言选项（目前仅简体中文） */
-const LANGUAGE_OPTIONS = [{ value: 'zh-CN', label: '简体中文' }]
+/** 语言选项：来自 shared/i18n/locales.ts 的单一来源。
+ *  当前只暴露 zh-CN，但元数据走 typed const，加新 locale 不用改本组件。
+ *  展开为可变数组 —— SettingField.options 是 mutable SelectOption[]，
+ *  而 LOCALE_OPTIONS 是 as const 派生的 readonly tuple。 */
+const LANGUAGE_OPTIONS: { value: string; label: string }[] = [...LOCALE_OPTIONS]
 
 export function GeneralTab() {
   // R37-perf-2：替代全 store 订阅 —— 任何 settings 字段变更都会触发重渲染，
@@ -57,7 +61,9 @@ export function GeneralTab() {
   }
 
   function handleLanguageChange(next: string | number | boolean) {
-    update({ language: next as 'zh-CN' })
+    // narrowing 走 toLocaleValue —— 未知值回退到默认 locale，避免
+    // `as 'zh-CN'` 把任意字符串塞进 settings store 留下脏数据。
+    update({ language: toLocaleValue(next) })
   }
 
   function handleFontSizeChange(next: string | number | boolean) {
@@ -76,7 +82,7 @@ export function GeneralTab() {
 
       <SettingField
         label="语言"
-        description="界面显示语言（当前仅支持简体中文）"
+        description="界面显示语言（暂仅提供简体中文，未来扩展见 src/shared/i18n/locales.ts）"
         type="select"
         value={language}
         onChange={handleLanguageChange}

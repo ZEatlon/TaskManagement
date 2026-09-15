@@ -18,8 +18,9 @@
  *   v4 → v5：去掉 `pomodoroSettings` widget —— 设置已内嵌到 `pomodoroTimer` 面板
  *            底部一行（见 PomodoroQuickSettings），无需独立 widget。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, GripVertical, Plus, X } from 'lucide-react'
+import { useFocusTrap } from '@renderer/lib/useFocusTrap'
 
 export const DASHBOARD_LAYOUT_STORAGE_KEY = 'dashboard.layout.v5'
 export const DASHBOARD_LAYOUT_STORAGE_KEY_V4 = 'dashboard.layout.v4'
@@ -41,6 +42,7 @@ export type DashboardWidgetKey =
   | 'heatmap'
   | 'upcoming'
   | 'recentNotes'
+  | 'aiInsight'
 
 /** 全部 widget 列表（用于校验 / 重置） */
 export const ALL_WIDGET_KEYS: DashboardWidgetKey[] = [
@@ -51,6 +53,7 @@ export const ALL_WIDGET_KEYS: DashboardWidgetKey[] = [
   'heatmap',
   'upcoming',
   'recentNotes',
+  'aiInsight',
 ]
 
 export interface DashboardLayout {
@@ -64,7 +67,7 @@ export interface DashboardLayout {
 export const DEFAULT_LAYOUT: DashboardLayout = {
   columns: [
     ['todaySummary', 'statsCards'],
-    ['pomodoroCalendar', 'pomodoroTimer'],
+    ['pomodoroCalendar', 'pomodoroTimer', 'aiInsight'],
     ['heatmap', 'upcoming', 'recentNotes'],
   ],
   hidden: [],
@@ -80,7 +83,7 @@ export const PRESETS: Record<'compact' | 'focus' | 'balanced', DashboardLayout> 
   /** 2 栏：番茄钟独占左大列，概览在右 */
   focus: {
     columns: [
-      ['todaySummary', 'statsCards', 'pomodoroCalendar', 'pomodoroTimer'],
+      ['todaySummary', 'statsCards', 'pomodoroCalendar', 'pomodoroTimer', 'aiInsight'],
       ['heatmap', 'upcoming', 'recentNotes'],
     ],
     hidden: [],
@@ -97,6 +100,7 @@ export const WIDGET_LABELS: Record<DashboardWidgetKey, string> = {
   heatmap: '近期活动热力图',
   upcoming: '即将到期便签',
   recentNotes: '最近编辑笔记',
+  aiInsight: 'AI 洞察',
 }
 
 export const PRESET_LABELS: Record<keyof typeof PRESETS, string> = {
@@ -414,13 +418,43 @@ export function DashboardEditorModal({
   const [dragSource, setDragSource] = useState<DragSource | null>(null)
   const [dropTarget, setDropTarget] = useState<{ column: number; index: number } | null>(null)
 
-  // Esc 关闭
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+  // R-2 修复 (high a11y)：原版只声明 aria-modal=true 但没有 focus trap /
+  // 初始焦点 / 焦点恢复；Esc 监听挂在 document 上会和 CommandBar 等其他
+  // modal 的 keydown 监听互相触发。补 useFocusTrap + 初始 focus close
+  // 按钮 + 关闭后焦点回到触发元素 + Esc 监听挂到 modal 根 div。
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null)
+  useFocusTrap(dialogRef, true)
+
+  // Esc 关闭（挂到 modal 根 div，与 LibraryMissingDialog R24-a11y-2 同模式）
+  const onModalKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault()
+      onClose()
     }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
+  }
+
+  useEffect(() => {
+    previouslyFocusedRef.current = document.activeElement as HTMLElement | null
+    requestAnimationFrame(() => {
+      // 初始焦点：close 按钮。失败场景：SR / 键盘用户进入 editor 后
+      // 若不指定初始焦点，screen reader 第一个读出"Dialog: Dashboard 编辑"
+      // 但键盘 tab 落到 body 之外的第一个 focusable（可能落到 widget 卡片上），
+      // 完全失去 modal 上下文。
+      if (closeButtonRef.current) {
+        closeButtonRef.current.focus()
+      } else {
+        dialogRef.current?.focus()
+      }
+    })
+    return () => {
+      // 同 LibraryMissingDialog R25-Corr-5：focus 前 document.contains 校验
+      const prev = previouslyFocusedRef.current
+      if (prev && typeof prev.focus === 'function' && document.contains(prev)) {
+        prev.focus()
+      }
+    }
   }, [onClose])
 
   /** 切换 widget 的隐藏状态：从隐藏 → 显示加回最后一列末尾；显示 → 隐藏 */
@@ -446,22 +480,25 @@ export function DashboardEditorModal({
     })
   }, [])
 
-  /** 删除一列：该列 widget 并入前一列（若是第 1 列则并入第 2 列） */
+  /** 删除一列：该列 widget 并入前一列（若是第 1 列则并入第 2 列）
+   *
+   * R26 修复 (low simplification)：原版算了 `insertAt` 又用 `void insertAt` 显式
+   * 丢弃——纯死代码。push 语义（追加到目标列末尾）是有意保留的行为（删列时
+   * 降低重排成本），因此直接删掉该变量及相关 `columns[targetIdx - 1].length`
+   * 计算，不再误导后续维护者。
+   */
   const removeColumn = useCallback((columnIdx: number) => {
     setDraft((prev) => {
       if (prev.columns.length <= 1) return prev // 至少保留 1 列
       const columns = prev.columns.map((col) => [...col])
       const widgets = columns.splice(columnIdx, 1)[0] ?? []
-      const targetIdx = columnIdx === 0 ? 0 : columnIdx - 1
-      // splice 已经把 columns 缩短，targetIdx 重新映射
-      const insertAt = columnIdx === 0 ? 0 : columns[targetIdx - 1].length
+      // splice 后 columnIdx === 0 → 并入新的列 0；否则并入 columnIdx - 1
       const adjustedIdx = columnIdx === 0 ? 0 : columnIdx - 1
       if (widgets.length > 0) {
         columns[adjustedIdx] = [...columns[adjustedIdx], ...widgets]
       }
       // 保险：如果 columns 为空（如只剩 1 列又被删除的情况已拦截），保底
       if (columns.length === 0) columns.push([])
-      void insertAt
       return { ...prev, columns }
     })
   }, [])
@@ -546,6 +583,33 @@ export function DashboardEditorModal({
     setDropTarget(null)
   }, [])
 
+  // 键盘替代：WAI-ARIA 「Select + Move」 风格 —— Alt+ArrowUp / Alt+ArrowDown
+  // 在同一列内把 widget 上下移动一格；不跨列（避免和后续 PR 留接口）。
+  // 失败场景：纯键盘 / SR 用户进 Dashboard 编辑模式想把 heatmap widget
+  // 移到顶列，此前只能切显隐、永远无法重排。
+  const handleItemKeyDown = useCallback(
+    (e: React.KeyboardEvent, columnIdx: number, index: number, widget: DashboardWidgetKey) => {
+      if (!e.altKey) return
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+      e.preventDefault()
+      const col = draft.columns[columnIdx]
+      if (!col) return
+      if (e.key === 'ArrowUp' && index <= 0) return
+      if (e.key === 'ArrowDown' && index >= col.length - 1) return
+      const targetIndex = e.key === 'ArrowUp' ? index - 1 : index + 1
+      setDraft((prev) => ({
+        ...prev,
+        columns: moveWidget(
+          prev.columns,
+          { column: columnIdx, index, widget },
+          columnIdx,
+          targetIndex,
+        ),
+      }))
+    },
+    [draft.columns],
+  )
+
   return (
     <div
       className="dashboard-editor-backdrop"
@@ -556,10 +620,16 @@ export function DashboardEditorModal({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div className="dashboard-editor-modal">
+      <div
+        ref={dialogRef}
+        className="dashboard-editor-modal"
+        onKeyDown={onModalKeyDown}
+        tabIndex={-1}
+      >
         <header className="dashboard-editor-header">
           <h2>编辑 Dashboard</h2>
           <button
+            ref={closeButtonRef}
             type="button"
             className="dashboard-editor-close"
             onClick={onClose}
@@ -619,10 +689,14 @@ export function DashboardEditorModal({
                         key={key}
                         className={`dashboard-editor-item ${isHidden ? 'is-hidden' : ''} ${dragSource?.widget === key ? 'is-dragging' : ''} ${isDropBefore ? 'is-drop-target' : ''}`}
                         draggable
+                        aria-grabbed={dragSource?.widget === key}
+                        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+                        aria-label={`${WIDGET_LABELS[key]}，第 ${idx + 1} 个，共 ${column.length} 个；按 Alt 加方向键上下移动`}
                         onDragStart={(e) => handleDragStart(e, ci, idx, key)}
                         onDragOver={(e) => handleDragOver(e, ci, idx)}
                         onDrop={(e) => handleDrop(e, ci, idx)}
                         onDragEnd={handleDragEnd}
+                        onKeyDown={(e) => handleItemKeyDown(e, ci, idx, key)}
                       >
                         <GripVertical
                           size={14}

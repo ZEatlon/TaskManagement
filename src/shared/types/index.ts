@@ -16,7 +16,11 @@ export type Priority = 'p0' | 'p1' | 'p2' | 'p3'
 /** 标签（支持嵌套，用 parentId 表达层级） */
 export interface Tag {
   id: ID
-  name: ID
+  /**
+   * 用户写入的标签名称字符串，受 trim / 80 字符 / HTML escape 约束。
+   * 不要凭 ID 语义假设 name 可作 lookup key —— 真正的唯一标识是同行的 id 字段。
+   */
+  name: string
   parentId: ID | null
   color: string | null
   order: number

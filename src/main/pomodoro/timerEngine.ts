@@ -48,6 +48,8 @@ export class TimerEngine {
   /** 当前阶段完成回调（自动切换阶段后触发）
    *  参数：(刚结束阶段的状态快照, 下一阶段状态, 上一阶段的 mode)
    *  快照中 elapsedSec 为阶段结束时已流逝的秒数（用于判定是否"完整完成"）
+   *  userSkipped 区分「自然到期」与「用户主动 skip」—— service 层据此
+   *  决定是否自动勾掉关联便签（skip 不应触发 sticky.complete）。
    */
   onPhaseComplete: ((
     finished: {
@@ -56,18 +58,34 @@ export class TimerEngine {
       stickyNoteId: string | null
       totalSec: number
       elapsedSec: number
+      userSkipped: boolean
     },
     next: PomodoroState,
     prevMode: PomodoroMode,
   ) => void) | null = null
   /** 整体停止回调（stop/reset 后） */
   onStopped: ((s: PomodoroState) => void) | null = null
-  /** 状态变化（mode/cycleIndex 改变但 running 不变） */
+  /**
+   * 状态变化 —— emitChange() 触发时回调，**整个 state 可能任意字段变化**
+   * （running / mode / cycleIndex / totalSec / remainingSec / elapsedSec /
+   * startedAt / stickyNoteId 等都可能变）。订阅者必须基于新 state 与 prev
+   * state 做完整 diff，**不要**基于「某些字段在该事件中不变」之类字段子集
+   * 假设来决定是否应用。pause() 同步设 running=false 后会 emitChange()，
+   * setConfig() 在 wasRunning / wasPaused / 未开始 三种分支也都会
+   * emitChange()（参见 pause / setConfig 内部调用点）。
+   */
   onStateChanged: ((s: PomodoroState) => void) | null = null
 
   private timer: NodeJS.Timeout | null = null
   /** 暂停时刻（wall-clock ms），用于 resume 时把 startedAt 偏移，把暂停时长从 elapsed 中扣除 */
   private pausedAt: number | null = null
+  // R-fix-skip-after-natural-complete (MEDIUM concurrency)：最近一次 onPhaseComplete
+  // 触发时的 prevMode —— tick() 自然到期后立刻跳到下一阶段（autoStartNext=true
+  // 时 break 已 running），用户此时再点 skip() 会被 advancePhase + onPhaseComplete
+  // 再触发一次，UX 上收到一条"刚休息就完成"的幽灵通知。skip() 顶部若发现
+  // 当前 mode === lastPhaseCompleteMode，意味着上一阶段刚被自然完成 —— 静默
+  // 丢弃这次 skip，由 advancePhase 进入时清空字段让后续真正的用户 skip 仍生效。
+  private lastPhaseCompleteMode: PomodoroMode | null = null
 
   constructor(config?: PomodoroConfig) {
     this.config = config ?? { ...DEFAULT_POMODORO_CONFIG }
@@ -191,6 +209,11 @@ export class TimerEngine {
     const prev = { ...this.state }
     this.stopTimer()
     this.pausedAt = null
+    // R-fix-nan-selfheal-skip-suppression (LOW correctness)：stop() 之后
+    // state.mode 回到 'focus'，与 lastPhaseCompleteMode='focus' 同名会
+    // 触发 skip() 的静默丢弃。完全停止时应一并清掉 skip 抑制窗口，
+    // 与 reset() 的「全局回到初始」语义对齐。
+    this.lastPhaseCompleteMode = null
     this.state = makeInitialState()
     this.state.totalSec = totalSecOf(this.state.mode, this.config)
     this.state.remainingSec = this.state.totalSec
@@ -203,12 +226,30 @@ export class TimerEngine {
   skip(): void {
     this.stopTimer()
     const prevMode = this.state.mode
+    // R-fix-skip-after-natural-complete (MEDIUM concurrency)：若当前 mode 与
+    // 上次自然到期的 prevMode 一致，说明 tick() 刚推进到这个阶段（autoStartNext=true
+    // 时 break 已经在跑了），用户随后点的 skip 会再触发一次 advancePhase +
+    // onPhaseComplete —— UX 上看到"刚休息就完成"的幽灵通知。静默丢弃。
+    if (this.lastPhaseCompleteMode !== null && this.state.mode === this.lastPhaseCompleteMode) {
+      // 刚被自然进入的下一阶段：静默丢弃这次 skip，并清掉标记让后续真正
+      // 的用户 skip（连点 / 第二次点击）能正常生效。
+      log.info(
+        `[pomodoro] skip() suppressed immediately after natural complete; clearing flag`,
+      )
+      this.lastPhaseCompleteMode = null
+      return
+    }
     const finishedSnapshot = {
       mode: prevMode,
       startedAt: this.state.startedAt,
       stickyNoteId: this.state.stickyNoteId,
       totalSec: this.state.totalSec,
       elapsedSec: this.state.elapsedSec,
+      // R-fix-skip-sticky-complete (MEDIUM correctness)：把「用户主动跳过」
+      // 显式传给 service 层 —— 用户点 skip 的本意是「不想要这次番茄」，
+      // 不该把关联便签自动勾掉 status='done'。userSkipped=true 让
+      // handlePhaseComplete 知道这是 skip 路径而不是自然完成。
+      userSkipped: true,
     }
     this.advancePhase(false)
     // onPhaseComplete 用于在跳过时也允许 service 记录（如 focus 阶段被跳过也记一条未完成的）
@@ -216,7 +257,14 @@ export class TimerEngine {
     log.info(`[pomodoro] skip ${prevMode} -> ${this.state.mode}`)
   }
 
-  /** 重置（回到初始 focus 阶段，running=false） */
+  /** 重置（回到初始 focus 阶段，running=false）。
+   *
+   * R-fix-timer-engine-reset-stop-drift (LOW structure-drift)：历史上 reset()
+   * 一直直接转发到 stop()，但渲染端 store / IPC handler 仍把二者当成独立
+   * action 暴露 —— 实际上 service 层 stop() 还有 white-noise / focus-mode
+   * 清理副作用，reset() 没有；上层看似两条路径实则行为不一致，是文档与代码
+   * 漂移的温床。保留 reset() 仅为向后兼容（外部 / 测试可能直接 import），
+   * service 层不再 export reset，所有"重置"动作统一走 stop()。 */
   reset(): void {
     this.stop()
   }
@@ -255,6 +303,13 @@ export class TimerEngine {
           `[pomodoro] tick: state.startedAt=${this.state.startedAt} parsed as NaN; self-healing`,
         )
         this.stop()
+        // R-fix-nan-selfheal-skip-suppression (LOW correctness)：stop() 之后
+        // state.mode 回到 'focus'（makeInitialState 的默认值）。若
+        // lastPhaseCompleteMode 之前恰好是 'focus'（自然完成 break 后进入
+        // focus 阶段的情形），用户接下来立刻点 skip() 会被顶部的
+        // state.mode === lastPhaseCompleteMode 守卫静默丢弃——用户看到的
+        // 是「focus 计时器还在跑、我的 skip 不生效」。显式清掉标记。
+        this.lastPhaseCompleteMode = null
         this.state.startedAt = null
         this.state.elapsedSec = 0
         this.state.remainingSec = this.state.totalSec
@@ -270,6 +325,12 @@ export class TimerEngine {
     )
     this.state.elapsedSec = elapsedSec
     this.state.remainingSec = Math.max(0, this.state.totalSec - elapsedSec)
+    // R-fix-skip-after-natural-complete：一旦新阶段实际推进了（elapsedSec > 0），
+    // 抑制窗口自然过期 —— 用户对当前阶段有真实时间投入，skip() 不再被静默。
+    // 与 advancePhase 的清空形成「tick 推进 / 显式 advance 二选一」的双重保险。
+    if (elapsedSec > 0 && this.lastPhaseCompleteMode !== null) {
+      this.lastPhaseCompleteMode = null
+    }
     if (this.state.remainingSec <= 0) {
       // 阶段完成：先停 timer 并把当前阶段 running 置 false，
       // 再推进到下一阶段（next state 完全确定），
@@ -282,10 +343,18 @@ export class TimerEngine {
         stickyNoteId: this.state.stickyNoteId,
         totalSec: this.state.totalSec,
         elapsedSec: this.state.elapsedSec,
+        // 自然到期：与 skip 路径区分，让 service 知道这次完成是「系统判定」
+        // 而不是「用户主动放弃」。
+        userSkipped: false,
       }
       this.stopTimer()
       this.state.running = false
       this.advancePhase(this.config.autoStartNext)
+      // R-fix-skip-after-natural-complete：标记「刚被自然进入的下一阶段」，
+      // 后续若用户立刻点 skip()（autoStartNext=true 时新阶段已 running），
+      // skip() 顶部检测 state.mode === lastPhaseCompleteMode 即可静默丢弃，
+      // 避免对刚启动的 break 多触发一次 onPhaseComplete。
+      this.lastPhaseCompleteMode = this.state.mode
       this.onPhaseComplete?.(finishedSnapshot, { ...this.state }, prevMode)
       log.info(`[pomodoro] phase complete ${prevMode} -> ${this.state.mode}`)
     } else {
@@ -299,6 +368,11 @@ export class TimerEngine {
    *   - 任意 break 完成后：进入 focus
    */
   private advancePhase(autoStart: boolean): void {
+    // R-fix-skip-after-natural-complete：advancePhase 进入新阶段时清掉
+    // lastPhaseCompleteMode（防御性，与 tick() 自然到期后的 set 形成对称）。
+    // skip() 路径也会调 advancePhase —— 一旦真的 advancePhase 跑了，说明
+    // 这次 skip 是有效的（已经被用户实际经历过的阶段），后续不应再抑制。
+    this.lastPhaseCompleteMode = null
     let nextMode: PomodoroMode
     if (this.state.mode === 'focus') {
       const completed = this.state.cycleIndex + 1

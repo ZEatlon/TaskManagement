@@ -24,26 +24,46 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Minus,
   Plus,
+  Play,
   Settings,
   SkipForward,
+  Square,
   Volume2,
   VolumeX,
 } from 'lucide-react'
 import { usePomodoroStore } from '../../stores/pomodoro'
-import type { PomodoroConfig, PomodoroWhiteNoise } from '@shared/ipc/channels'
+import {
+  POMODORO_CYCLE_LIMITS,
+  POMODORO_DAILY_GOAL_LIMITS,
+  POMODORO_LONG_BREAK_LIMITS,
+  POMODORO_SHORT_BREAK_LIMITS,
+  type PomodoroConfig,
+  type PomodoroWhiteNoise,
+} from '@shared/ipc/channels'
 
-const CYCLE_MIN = 2
-const CYCLE_MAX = 6
-const GOAL_MIN = 1
-const GOAL_MAX = 20
-const SHORT_BREAK_MIN = 3
-const SHORT_BREAK_MAX = 10
-const LONG_BREAK_MIN = 10
-const LONG_BREAK_MAX = 30
+/**
+ * UI 边界从 @shared/ipc/channels 单一源读（与 validator 同文件 import）。
+ *
+ * Validator 在主进程允许更宽的区间（cycleCount [1,12] / shortBreakMin [1,180]
+ * / longBreakMin [1,180] / dailyGoal [1,20]），UI 故意只暴露更窄的子集
+ * （见 channels.ts 各 *_LIMITS 常量的 JSDoc）。两层边界的契约见
+ * channels.ts POMODORO_CYCLE_LIMITS 块。
+ */
+const CYCLE_MIN = POMODORO_CYCLE_LIMITS.min
+const CYCLE_MAX = POMODORO_CYCLE_LIMITS.max
+const GOAL_MIN = POMODORO_DAILY_GOAL_LIMITS.min
+const GOAL_MAX = POMODORO_DAILY_GOAL_LIMITS.max
+const SHORT_BREAK_MIN = POMODORO_SHORT_BREAK_LIMITS.min
+const SHORT_BREAK_MAX = POMODORO_SHORT_BREAK_LIMITS.max
+const LONG_BREAK_MIN = POMODORO_LONG_BREAK_LIMITS.min
+const LONG_BREAK_MAX = POMODORO_LONG_BREAK_LIMITS.max
 
 const WHITE_NOISE_OPTIONS: Array<{ value: PomodoroWhiteNoise; label: string }> = [
   { value: 'none', label: '关闭' },
+  { value: 'brown', label: '棕色' },
+  { value: 'pink', label: '粉色' },
   { value: 'rain', label: '雨声' },
+  { value: 'ocean', label: '海浪' },
   { value: 'forest', label: '森林' },
 ]
 
@@ -218,6 +238,49 @@ export function PomodoroQuickSettings(): JSX.Element {
     [updateConfig],
   )
 
+  // 试听白噪音：点播放 3 秒预览，点停止立即停。仅渲染端 Web Audio 播放，
+  // 不影响 config / 主进程 audio 模块。组件卸载或切换预览 kind 时也清理。
+  const [previewing, setPreviewing] = useState(false)
+  const previewTimerRef = useRef<number | null>(null)
+  const stopPreview = useCallback(() => {
+    if (previewTimerRef.current !== null) {
+      window.clearTimeout(previewTimerRef.current)
+      previewTimerRef.current = null
+    }
+    void import('../../audio/noise').then((m) => {
+      m.stopWhiteNoise()
+    }).catch(() => undefined)
+    setPreviewing(false)
+  }, [])
+  const handlePreview = useCallback(() => {
+    if (previewing) {
+      stopPreview()
+      return
+    }
+    const kind = config.whiteNoise
+    if (kind === 'none') return
+    void import('../../audio/noise').then((m) => {
+      m.startWhiteNoise(kind)
+      setPreviewing(true)
+      // 3 秒后自动停
+      previewTimerRef.current = window.setTimeout(() => {
+        m.stopWhiteNoise()
+        setPreviewing(false)
+        previewTimerRef.current = null
+      }, 3000)
+    }).catch(() => undefined)
+  }, [previewing, stopPreview, config.whiteNoise])
+
+  // 卸载或切换选项时清掉预览 timer
+  useEffect(() => {
+    return () => {
+      if (previewTimerRef.current !== null) {
+        window.clearTimeout(previewTimerRef.current)
+      }
+      void import('../../audio/noise').then((m) => m.stopWhiteNoise()).catch(() => undefined)
+    }
+  }, [])
+
   return (
     <div className="pomodoro-quick-controls">
       <Stepper
@@ -264,13 +327,23 @@ export function PomodoroQuickSettings(): JSX.Element {
         className={`pomodoro-quick-gear ${gearOpen ? 'is-open' : ''}`}
         onClick={() => setGearOpen((v) => !v)}
         title="更多设置"
-        aria-haspopup="dialog"
+        // R37 修复 (medium a11y)：popover 是非模态（不挡背后 UI 也不暗化），
+        // 不应使用 role="dialog" / aria-haspopup="dialog"。改为 region +
+        // aria-haspopup="true"（通用 popup），开关状态由 aria-expanded 表达。
+        aria-haspopup="true"
         aria-expanded={gearOpen}
+        aria-controls="pomodoro-settings-popover"
       >
         <Settings size={13} aria-hidden />
       </button>
       {gearOpen && (
-        <div ref={popoverRef} className="pomodoro-settings-popover" role="dialog" aria-label="番茄钟更多设置">
+        <div
+          ref={popoverRef}
+          id="pomodoro-settings-popover"
+          className="pomodoro-settings-popover"
+          role="region"
+          aria-label="番茄钟更多设置"
+        >
           <Stepper
             label="短休"
             value={config.shortBreakMin}
@@ -298,6 +371,17 @@ export function PomodoroQuickSettings(): JSX.Element {
                 </option>
               ))}
             </select>
+            <button
+              type="button"
+              className={`pomodoro-quick-toggle pomodoro-noise-preview ${previewing ? 'is-active' : ''}`}
+              onClick={handlePreview}
+              disabled={config.whiteNoise === 'none'}
+              title={previewing ? '停止试听' : '试听 3 秒'}
+              aria-label={previewing ? '停止试听' : '试听白噪音 3 秒'}
+              aria-pressed={previewing}
+            >
+              {previewing ? <Square size={12} aria-hidden /> : <Play size={12} aria-hidden />}
+            </button>
           </label>
         </div>
       )}

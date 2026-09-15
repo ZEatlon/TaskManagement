@@ -22,13 +22,19 @@ export function TodayRoute() {
     ensureLoaded()
   }, [ensureLoaded])
 
-  // P0-1：启用键盘快捷键（n = 新建便签；/ 或 Cmd/Ctrl+K = 聚焦时间线搜索）
+  // P0-1：启用键盘快捷键（mod+n = 新建便签（聚焦标题）；n = 唤起全局浮层；
+  // / 或 Cmd/Ctrl+K = 聚焦时间线搜索）
   useStickyShortcuts({
-    onNew: () => {
+    onNewLocal: () => {
       const titleEl = document.querySelector<HTMLInputElement>(
         '.sticky-note-editor-title, .sticky-note-title',
       )
       titleEl?.focus()
+    },
+    onNewGlobal: () => {
+      // 触发全局浮层：QuickCaptureOverlay 挂在 __root，监听该自定义事件。
+      // 走事件而不是 store，避免每次按 N 都把 overlay 挂到 /today。
+      window.dispatchEvent(new CustomEvent('taskpilot:quick-capture-open'))
     },
     onJumpToday: () => {
       const todayHeader = document.querySelector<HTMLElement>('.sticky-day-section.is-today')

@@ -132,6 +132,32 @@ export interface TaskPilotAiApi {
    */
   noteOpened: (noteId: string) => Promise<{ ok: true }>
   noteClosed: (noteId: string) => Promise<{ ok: true }>
+
+  /**
+   * R33-fix：监听主进程推送的 AI navigate 指令，payload
+   * `{ route, focusStickyId, callId }`，由渲染端桥接到 react-router。
+   * 返回解绑函数。
+   */
+  onNavigate: (
+    cb: (
+      event: IpcRendererEvent,
+      payload: { route: string; focusStickyId: string | null; callId: string },
+    ) => void,
+  ) => () => void
+  /**
+   * R33-fix：渲染端实际应用完路由切换后回送 ack，主进程 await 后再返回
+   * navigate 工具的 ok:true，避免乐观成功。
+   */
+  ackNavigate: (payload: {
+    callId: string
+    /**
+     * 渲染端实际尝试高亮的反馈（仅在 navigate 时带了 focusStickyId 才有值）：
+     *   - true  高亮命中（DOM 中找到了对应便签卡片）
+     *   - false 高亮未命中（便签不在当前 ±7 天窗口 / 已删除 / 时间线未挂载）
+     *   - null  navigate 未要求高亮（focusStickyId 为 null）
+     */
+    focusApplied?: boolean | null
+  }) => Promise<{ ok: true }>
 }
 
 /** 自定义窗口栏控制（frameless traffic lights） */

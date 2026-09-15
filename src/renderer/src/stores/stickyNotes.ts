@@ -23,6 +23,7 @@ import type {
 import { stickyNotesApi } from '../lib/ipc'
 import { addDays, dayKeyOf } from '../lib/date'
 import { announce } from '../components/common/AriaAnnouncer'
+import { priorityRankOf } from '@shared/lib/priorities'
 
 interface StickyNotesState {
   /** YYYY-MM-DD → 该日的便签列表 */
@@ -57,6 +58,18 @@ interface StickyNotesState {
   updateStep: (noteId: ID, stepId: ID, patch: StickyNoteStepPatch) => Promise<void>
   removeStep: (noteId: ID, stepId: ID) => Promise<void>
 
+  /**
+   * R-fix-applyServerNote-bypass-wrapped-set (medium perf/correctness)：
+   * 暴露一个走 wrapped set 的轻量 action，专供 StickyTimeline.applyServerNote
+   * 这种「已知 byDate/all 已重算好」的跨域 patch 使用。直接调
+   * `useStickyNotesStore.setState({...})` 会绕过 wrapped set，noteIdIndex
+   * 不重建，下游 updateStep/addStep/removeStep/remove 的 lookupNoteById
+   * 拿到陈旧 row（un-archive / 跨日 status 改动场景里 Map 与 byDate 视图
+   * 永久失同步直到下一次非-applyServerNote 的 set 触发 wrapper）。
+   * 走 wrapped set 后 syncNoteIdIndex 总会跑，Map 与 byDate 强一致。
+   */
+  patchByDateAndAll: (byDate: Record<string, StickyNote[]>, all: StickyNote[]) => void
+
   /** 派生：过滤现有 byDate + all 中的便签（前端二次过滤，不调 IPC） */
   listFiltered: (filter: {
     status?: StickyNote['status'] | StickyNote['status'][]
@@ -68,21 +81,81 @@ interface StickyNotesState {
   reset: () => void
 }
 
-/** 把一批便签按 date 分桶 */
-function groupByDate(notes: StickyNote[]): Record<string, StickyNote[]> {
-  const out: Record<string, StickyNote[]> = {}
-  for (const n of notes) {
-    const arr = out[n.date] ?? []
-    arr.push(n)
-    out[n.date] = arr
+/** 为 byDate 建一张反向索引：noteId → 当前所在 dayKey。
+ *  R36-fix-mergeByDate-reverse-index (high perf)：原版 mergeByDate 对每条
+ *  incoming 便签都要线性扫所有桶定位旧桶（O(总桶数 × 桶内便签数) per note）。
+ *  改用 Map<id, dayKey> 后单条定位 O(1)；incoming N 条便签总成本从
+ *  O(N × 桶 × K) 降到 O(总便签 + N)。同时导出供 StickyTimeline 的
+ *  applyServerNote 复用，避免重复建索引。
+ *  不在 store state 上挂索引是为了保持 StickyNotesState 形状不变（向后兼容），
+ *  调用方每次需要时临时建一次（≤ 600 notes 建 Map < 1ms）。 */
+export function buildNoteDayIndex(
+  byDate: Record<string, StickyNote[]>,
+): Map<string, string> {
+  const idx = new Map<string, string>()
+  for (const dk of Object.keys(byDate)) {
+    const arr = byDate[dk]
+    if (!arr) continue
+    for (const n of arr) idx.set(n.id, dk)
   }
-  return out
+  return idx
+}
+
+/** R39-fix-updateStep-postIPC-merge (high perf)：维护 noteId → 当前 StickyNote
+ *  的反向索引，updateStep / addStep / removeStep / remove / update 在做
+ *  post-IPC 合并或前置查找时改用 `noteIdIndex.get(id)` 直接 O(1) 拿到当前
+ *  note，避免再走 `Object.values(byDate).flat().find()`（O(总桶 × 桶内 K)）。
+ *  触发场景：500+ 便签库下连续勾选 checklist step，step toggle 链路每次要
+ *  走 2~4 次该扫描，每次都新建临时数组 + GC 压力。
+ *
+ *  维护策略：每次 set() 后从最新的 byDate + all 重建索引（wrap set 在
+ *  create() 边界，零侵入；rebuild 成本 O(N)，但每次调用方只重算一次，与原
+ *  版"每次查找都 full-scan"对比是 N vs N×K 量级优化）。
+ *
+ *  R-fix-syncNoteIdIndex-microtask-defer (low perf)：原版每次 wrapped
+ *  set 都同步跑 rebuild。M=500 + K=60 桶时每次 rebuild ≈ 560 Map ops、
+ *  ~2-3ms，全部叠在 React render 同一帧里。改为：wrapped set 只置一个
+ *  dirty flag 并排一个微任务；连续多次 set 在同一 tick 内只 rebuild 一
+ *  次（最后状态胜出），且 rebuild 落在 render 提交之后的微任务队列里，
+ *  不再阻塞同步 set → render 路径。
+ *  安全性：所有 lookupNoteById 调用点都在 `await` 之后（IPC 回包才取
+ *  当前 row），microtask 必然已在 await 间隙跑完，不存在「set 完立刻
+ *  lookup 拿到陈旧 row」的场景。 */
+const noteIdIndex = new Map<string, StickyNote>()
+let noteIdIndexDirty = false
+
+function syncNoteIdIndex(state: Pick<StickyNotesState, 'byDate' | 'all'>): void {
+  noteIdIndex.clear()
+  // byDate 与 all 都覆盖一遍：loadAllFiltered 只写 all、fetchRange 只写
+  // byDate，两路独立；Map.set 后写覆盖，final 值取最后写入者（一般 all 更
+  // 新，所以先写 all 再覆盖 byDate 让 byDate 中独有的 row 胜出）。
+  for (const n of state.all) noteIdIndex.set(n.id, n)
+  for (const list of Object.values(state.byDate)) {
+    for (const n of list) noteIdIndex.set(n.id, n)
+  }
+}
+
+function scheduleNoteIdIndexSync(get: () => StickyNotesState): void {
+  if (noteIdIndexDirty) return
+  noteIdIndexDirty = true
+  queueMicrotask(() => {
+    noteIdIndexDirty = false
+    syncNoteIdIndex(get())
+  })
+}
+
+/** 公开 O(1) note 查找 helper（取代 `Object.values(byDate).flat().find()`）。 */
+export function lookupNoteById(id: string): StickyNote | undefined {
+  return noteIdIndex.get(id)
 }
 
 /** 合并新加载的便签到现有 byDate（覆盖同 id 旧记录）
  *  R23 修复 (high correctness)：原版只往 n.date 桶里写，跨日期 move 时
  *  旧日期桶里同 id 的副本仍存在 → timeline 同一张便签渲染两次。
- *  修复：写入前先扫所有桶把同 id 的旧 entry 移除，再写到新桶。 */
+ *  修复：写入前先扫所有桶把同 id 的旧 entry 移除，再写到新桶。
+ *  R36-fix (high perf)：用 buildNoteDayIndex 反向索引把「找旧桶」从 O(桶)
+ *  降到 O(1)；fast path（同桶替换 / 新桶追加）不触发任何旧桶写入，避免
+ *  60-bucket 窗口里 99% 的 incoming 都是同 day re-fetch 时大量空写。 */
 function mergeByDate(
   current: Record<string, StickyNote[]>,
   incoming: StickyNote[],
@@ -91,37 +164,64 @@ function mergeByDate(
   for (const dk of Object.keys(current)) {
     next[dk] = current[dk]
   }
+  const noteDay = buildNoteDayIndex(next)
   for (const n of incoming) {
-    // 先从所有桶里移除同 id 旧 entry（处理跨日期 move）
-    for (const dk of Object.keys(next)) {
-      const arr = next[dk]
-      if (!arr) continue
-      const idx = arr.findIndex((x) => x.id === n.id)
-      if (idx >= 0) {
-        if (arr.length === 1) {
-          // 桶只剩这一条，删除空桶
-          if (dk !== n.date) delete next[dk]
-        } else {
-          next[dk] = arr.slice()
-          next[dk]!.splice(idx, 1)
+    const newDate = n.date
+    const curDate = noteDay.get(n.id)
+    // Fast path：旧桶 == 新桶 → 仅做桶内按 id 替换 / 追加，零旧桶写入。
+    if (curDate === newDate) {
+      const arr = next[newDate] ?? []
+      const i = arr.findIndex((x) => x.id === n.id)
+      if (i >= 0) {
+        if (arr[i] !== n) {
+          const cloned = arr.slice()
+          cloned[i] = n
+          next[newDate] = cloned
+        }
+      } else {
+        next[newDate] = [...arr, n]
+        noteDay.set(n.id, newDate)
+      }
+      continue
+    }
+    // 跨日期 move：先从旧桶 O(1) 定位剔除（保持 R23 的跨日去重语义）
+    if (curDate !== undefined) {
+      const oldArr = next[curDate]
+      if (oldArr) {
+        const oi = oldArr.findIndex((x) => x.id === n.id)
+        if (oi >= 0) {
+          if (oldArr.length === 1) {
+            // 桶只剩这一条，删除空桶（与原版语义一致）
+            delete next[curDate]
+          } else {
+            const cloned = oldArr.slice()
+            cloned.splice(oi, 1)
+            next[curDate] = cloned
+          }
         }
       }
     }
     // 再写入新桶
-    const arr = next[n.date] ? [...next[n.date]!] : []
-    const idxInNew = arr.findIndex((x) => x.id === n.id)
-    if (idxInNew >= 0) arr[idxInNew] = n
-    else arr.push(n)
-    next[n.date] = arr
+    const newArr = next[newDate] ?? []
+    const ni = newArr.findIndex((x) => x.id === n.id)
+    if (ni >= 0) {
+      const cloned = newArr.slice()
+      cloned[ni] = n
+      next[newDate] = cloned
+    } else {
+      next[newDate] = [...newArr, n]
+    }
+    noteDay.set(n.id, newDate)
   }
   return next
 }
 
 function sortNotes(notes: StickyNote[]): StickyNote[] {
   // 按 priority (p0 > p1 > p2 > p3) 再按 created_at ASC 稳定排序
-  const order: Record<string, number> = { p0: 0, p1: 1, p2: 2, p3: 3 }
+  // R36：内联 `{p0:0,p1:1,p2:2,p3:3}` 收敛到 @shared/lib/priorities，
+  // 与 dashboard / timeline / widget 共用唯一权威源。
   return [...notes].sort((a, b) => {
-    const po = (order[a.priority] ?? 9) - (order[b.priority] ?? 9)
+    const po = priorityRankOf(a.priority) - priorityRankOf(b.priority)
     if (po !== 0) return po
     return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
   })
@@ -140,6 +240,63 @@ function patchAll(all: StickyNote[], note: StickyNote): StickyNote[] {
   }
   return [...all, note]
 }
+
+/**
+ * R31 helper (medium structure)：抽出 "byDate[id 桶] sort + all patchAll"
+ * 的同步更新公共模板。之前每条乐观更新 / IPC 回写路径都要手抄 7 行
+ * （capture byDate, patch entry by id, sortNotes, spread outer, patchAll）。
+ * 任何漏写都会让 byDate 视图与派生 all 视图错位（R24-Corr-7 修过的洞）。
+ * 本 helper 强制保证 byDate/all 一致性，未来加新 action（如 moveToFolder /
+ * setRecurrence）只需一行 `set(applyNotePatch(get, next))`。
+ *
+ * 仅适用于「同 date 桶内按 id 替换」的写路径；跨日期 move / 纯 insert /
+ * 纯 remove / 合并远端 snapshot 的分支（mergeByDate）不在覆盖范围内。
+ */
+function applyNotePatch(
+  get: () => StickyNotesState,
+  next: StickyNote,
+): Pick<StickyNotesState, 'byDate' | 'all'> {
+  const before = get()
+  // R37-fix-medium (perf)：先 findIndex 校验 note 是否在目标桶内。
+  // dashboard 端通过 loadAllFiltered 触发的 update / addStep / updateStep /
+  // removeStep 经常拿到 date 不在当前 byDate 窗口里的便签 —— 旧逻辑仍会
+  // 无条件 .map 重建桶（产出与原数组元素相同的新 ref）+ sortNotes 扫整桶。
+  // 这些操作会让 StickyTimeline 的 filteredByDate useMemo 因 byDate 浅 ref
+  // 变化重跑，即便 note 实际不在窗口里。修复：note 不在桶内 → 仅 patchAll，
+  // byDate ref 完全不动；只有 note 本来就在桶内时才走 map + sortNotes。
+  const bucket = before.byDate[next.date] ?? []
+  const idx = bucket.findIndex((n) => n.id === next.id)
+  return {
+    byDate:
+      idx >= 0
+        ? {
+            ...before.byDate,
+            [next.date]: sortNotes(
+              bucket.map((n) => (n.id === next.id ? next : n)),
+            ),
+          }
+        : before.byDate,
+    all: patchAll(before.all, next),
+  }
+}
+
+/**
+ * R32-Corr-1 修复 (HIGH stale-fetch race on timeline rapid paging)：
+ * 复用 notes.ts (line 105-114) 的 seq 守卫 + heatmap.ts (line 39-41) 的
+ * 「互不冲突的 fetch 路径独立 seq」思路。
+ *
+ * 触发场景：用户在 StickyTimeline 上先滚动 9/1-9/7（IPC 1 发出），还没
+ * 回来就又跳回 8/25-8/31（IPC 2 发出）。若 IPC 1 因 SQLite 慢查询晚到
+ * 几百毫秒，它的 stale merged push 会把 IPC 2 已落地的窗口数据覆盖回去
+ * （甚至含已被用户删除 / 勾掉的便签）→ lost-update：刚刚成功的删除被 undo。
+ *
+ * 每路 fetch 各自维护独立 seq：fetchRange 直调与 fetchAround 间接调用
+ * 不共享同一计数器，否则 fetchAround 触发的 fetchRange bump 会顺手把
+ * 直调的 fetchRange 也判 stale（与 heatmap 三路独立 seq 同思路）。
+ */
+let fetchRangeSeq = 0
+let fetchAroundSeq = 0
+let loadAllFilteredSeq = 0
 
 // R8R-1 / R8R-5：每个便签的 in-flight 操作计数器 + 操作版本号。
 // 计数器 > 0 视为有正在飞行的写操作；版本号用于顺序写入场景下让
@@ -185,7 +342,21 @@ function isStale(id: string, capturedVersion: number): boolean {
   return noteVersionOf(id) > capturedVersion
 }
 
-export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
+export const useStickyNotesStore = create<StickyNotesState>((rawSet, get) => {
+  // R39-fix-updateStep-postIPC-merge (high perf)：wrap set 让每次提交都同步
+  // noteIdIndex，updateStep / addStep 等 post-IPC 合并可直接 lookupNoteById
+  // 拿 O(1) 当前 note。set 签名与 zustand 兼容（partial 或 updater 函数）。
+  // R-fix-syncNoteIdIndex-microtask-defer (low perf)：rebuild 改成 microtask
+  // 异步执行，多个 set 在同 tick 内只跑一次最终 rebuild，不阻塞 set→render
+  // 同步路径。
+  const set: typeof rawSet = (((
+    partial: Partial<StickyNotesState> | ((state: StickyNotesState) => Partial<StickyNotesState>),
+    replace?: boolean,
+  ) => {
+    ;(rawSet as (p: unknown, r?: boolean) => void)(partial, replace)
+    scheduleNoteIdIndexSync(get)
+  }) as typeof rawSet)
+  return {
   byDate: {},
   all: [],
   loading: false,
@@ -194,9 +365,12 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
   rangeEnd: '',
 
   async fetchRange(startDate, endDate) {
+    // R32-Corr-1：seq 守卫，回包时若 seq !== fetchRangeSeq 直接丢弃
+    const seq = ++fetchRangeSeq
     set({ loading: true, error: null })
     try {
       const notes = await stickyNotesApi.list(startDate, endDate)
+      if (seq !== fetchRangeSeq) return
       const sorted = sortNotes(notes)
       set({
         byDate: mergeByDate(get().byDate, sorted),
@@ -205,17 +379,25 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
         loading: false,
       })
     } catch (err) {
+      if (seq !== fetchRangeSeq) return
       set({ error: (err as Error).message, loading: false })
     }
   },
 
   async fetchAround(anchor, beforeDays, afterDays) {
+    // R32-Corr-1：fetchAround 自己独立的 seq 守卫（与 heatmap 同思路）：
+    // 内部调用的 fetchRange 已经按 fetchRangeSeq 自身判 stale 丢弃，
+    // 这里再在 fetchAround 边界确认本次 fetchAround 仍是最新调用。
+    const seq = ++fetchAroundSeq
     const start = dayKeyOf(addDays(new Date(anchor), -beforeDays))
     const end = dayKeyOf(addDays(new Date(anchor), afterDays))
     await get().fetchRange(start, end)
+    if (seq !== fetchAroundSeq) return
   },
 
   async loadAllFiltered(filter) {
+    // R32-Corr-1：loadAllFiltered 独立 seq 守卫
+    const seq = ++loadAllFilteredSeq
     try {
       const apiFilter: {
         status?: StickyNote['status'] | StickyNote['status'][]
@@ -233,6 +415,8 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       if (filter?.starred !== undefined) apiFilter.starred = filter.starred
       if (filter?.limit !== undefined) apiFilter.limit = filter.limit
       const list = await stickyNotesApi.listFiltered(apiFilter)
+      // R32-Corr-1：回包时若已有更新的 loadAllFiltered 触发，直接丢弃
+      if (seq !== loadAllFilteredSeq) return
       // R24-Corr-7 修复 (medium data-integrity)：原 set({ all: sortNotes(list) })
       // 无条件覆盖 store.all —— IPC 往返期间用户对某条便签的乐观更新（status
       // 切换 / starred 切换 / moveToFolder）会被 IPC 返回的最新全量覆盖，
@@ -246,15 +430,25 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       // > 0 或 versionOf > 0 且上次刷新后又有变更），保留 store 现有 row
       // 并仅把 IPC row 的新字段（如步骤数）补回去；否则直接以 IPC row 替换。
       const beforeAll = get().all
-      const beforeByDate = get().byDate
+      // R13 修复 (medium perf)：把 O(N*M) 的 beforeAll.find 换成 O(1) Map
+      // 查找 —— M=2000 全量便签、N=200 IPC rows 时从 400,000 次比较降到 200 次。
+      const localById = new Map(beforeAll.map((n) => [n.id, n]))
       const merged: StickyNote[] = []
       const seenIds = new Set<string>()
       for (const incoming of list) {
         seenIds.add(incoming.id)
-        const local = beforeAll.find((n) => n.id === incoming.id)
+        const local = localById.get(incoming.id)
         const inflight = inflightOps.get(incoming.id) ?? 0
-        if (local && (inflight > 0 || isStale(incoming.id, 0))) {
-          // 还在飞行 / 已被新乐观更新 → 保留本地 row，仅把 steps / priority /
+        // R-Corr fix (high correctness)：之前这里还判了 `isStale(incoming.id, 0)`
+        // （即 noteVersionOf(id) > 0）。但 endOp (line 211) 在 inflightOps 归零时
+        // 会 noteVersion.delete(id)，IPC 返回时 noteVersion 已被清零 → 永远 false。
+        // 这会让 inflight==0 且 endOp 已走的 IPC 回包走 merged.push(incoming) 分支，
+        // 309-324 行的 field-level merge 永不执行 → 本地乐观更新被覆盖。
+        // 修复：仅依赖 inflightOps 单一判定；保留 isStale 备用，但 caller 必须传
+        // 真实的 capturedVersion 才有意义（loadAllFiltered 没有 caller 版本，传 0
+        // 永远 false，所以这里直接删掉这一支）。
+        if (local && inflight > 0) {
+          // 还在飞行 → 保留本地 row，仅把 steps / priority /
           // tags 等 IPC 权威字段 patch 进来（避免丢失用户的乐观更新）。
           merged.push({
             ...local,
@@ -275,15 +469,18 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
           merged.push(incoming)
         }
       }
-      // store.all 里存在但 IPC list 不包含的 row（已删除或被 filter 排除）→ 移除
-      const filteredBeforeAll = beforeAll.filter((n) => seenIds.has(n.id) || !beforeByDate[n.date])
-      const finalAll = sortNotes([
-        ...merged,
-        // 把 IPC 没返回但 store 里有（说明还在飞行）的 row 补上
-        ...filteredBeforeAll.filter((n) => (inflightOps.get(n.id) ?? 0) > 0),
-      ])
+      // store.all 里存在但 IPC list 不包含的 row（说明还在飞行）→ 补上；
+      // 这里只保留「IPC 没返回过且 inflightOps > 0」的 row —— merged 已经
+      // 覆盖了 seenIds 里的所有 id，留它们再过 filter 会与 merged 重复进入
+      // finalAll，导致下游 widget（今日完成数 / 番茄数 / 归档数）双计入并
+      // 渲染两张同 id 的卡。
+      const filteredBeforeAll = beforeAll.filter(
+        (n) => !seenIds.has(n.id) && (inflightOps.get(n.id) ?? 0) > 0,
+      )
+      const finalAll = sortNotes([...merged, ...filteredBeforeAll])
       set({ all: finalAll })
     } catch (err) {
+      if (seq !== loadAllFilteredSeq) return
       set({ error: (err as Error).message })
     }
   },
@@ -390,12 +587,8 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
           status: input.status ?? inferredStatus,
         })
         // 用真实记录替换占位 —— byDate 与 all 都要同步
-        const arr = (get().byDate[real.date] ?? []).map((n) => (n.id === tempId ? real : n))
         bumpNoteVersion(real.id)
-        set({
-          byDate: { ...get().byDate, [real.date]: sortNotes(arr) },
-          all: patchAll(get().all, real),
-        })
+        set(applyNotePatch(get, real))
         // R8A-5：通知屏幕阅读器
         announce(`已创建便签 ${real.title}`)
         return real
@@ -427,11 +620,12 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
     // byDate 桶内），find 返回 undefined → 函数静默 return，乐观更新、
     // 错误提示、IPC 都不触发 → 用户以为编辑失败。修复：先在 all 查（all
     // 是 superset），找不到再回退 byDate；都没找到就 fetch + 警告。
-    const note =
-      beforeAll.find((n) => n.id === id)
-      ?? Object.values(before).flat().find((n) => n.id === id)
+    // R39-fix-updateStep-postIPC-merge (high perf)：改用 module-level
+    // noteIdIndex O(1) 查找，免去 Object.values(before).flat().find() 的
+    // 临时数组分配 + 全桶扫描。
+    const note = noteIdIndex.get(id)
     if (!note) {
-       
+
       console.warn(`[stickyNotes.update] note ${id} not in store; skipping optimistic update`)
       return
     }
@@ -454,15 +648,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
         all: patchAll(beforeAll, optimistic),
       })
     } else {
-      set({
-        byDate: {
-          ...before,
-          [oldDate]: sortNotes(
-            (before[oldDate] ?? []).map((n) => (n.id === id ? optimistic : n)),
-          ),
-        },
-        all: patchAll(beforeAll, optimistic),
-      })
+      set(applyNotePatch(get, optimistic))
     }
     try {
       const updated = await stickyNotesApi.update(id, patch)
@@ -516,11 +702,11 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
     const before = get().byDate
     const beforeAll = get().all
     // R30-Corr-1 修复 (HIGH silent-noop)：先在 all 查，再回退 byDate。
-    const note =
-      beforeAll.find((n) => n.id === id)
-      ?? Object.values(before).flat().find((n) => n.id === id)
+    // R39-fix-updateStep-postIPC-merge (high perf)：改用 module-level
+    // noteIdIndex O(1) 查找。
+    const note = noteIdIndex.get(id)
     if (!note) {
-       
+
       console.warn(`[stickyNotes.remove] note ${id} not in store; skipping`)
       return
     }
@@ -548,11 +734,10 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
     const before = get().byDate
     const beforeAll = get().all
     // R30-Corr-1 修复：先在 all 查，再回退 byDate。
-    const note =
-      beforeAll.find((n) => n.id === noteId)
-      ?? Object.values(before).flat().find((n) => n.id === noteId)
+    // R39-fix-updateStep-postIPC-merge (high perf)：改用 module-level
+    // noteIdIndex O(1) 查找。
+    const note = noteIdIndex.get(noteId)
     if (!note) {
-       
       console.warn(`[stickyNotes.addStep] note ${noteId} not in store; skipping`)
       return
     }
@@ -573,15 +758,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       steps: [...note.steps, optimisticStep],
       updatedAt: new Date().toISOString(),
     }
-    set({
-      byDate: {
-        ...before,
-        [note.date]: sortNotes(
-          (before[note.date] ?? []).map((n) => (n.id === noteId ? optimisticNote : n)),
-        ),
-      },
-      all: patchAll(beforeAll, optimisticNote),
-    })
+    set(applyNotePatch(get, optimisticNote))
     try {
       const real = await stickyNotesApi.addStep(noteId, content)
       if (isStale(noteId, myVersion)) {
@@ -589,21 +766,14 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
         return
       }
       // 用真实 step 替换临时
-      const curByDate = get().byDate
-      const curAll = get().all
+      // R39-fix-updateStep-postIPC-merge (high perf)：noteIdIndex O(1) 查找
+      // 当前 note，免去 Object.values().flat().find() 全桶扫描。
+      const cur = noteIdIndex.get(noteId) ?? note
       const nextNote = {
-        ...(Object.values(curByDate).flat().find((n) => n.id === noteId) ?? note),
-        steps: (Object.values(curByDate).flat().find((n) => n.id === noteId)?.steps ?? []).map(
-          (s) => (s.id === tempId ? real : s),
-        ),
+        ...cur,
+        steps: (cur.steps).map((s) => (s.id === tempId ? real : s)),
       }
-      const arr = (curByDate[note.date] ?? []).map((n) =>
-        n.id === noteId ? nextNote : n,
-      )
-      set({
-        byDate: { ...curByDate, [note.date]: sortNotes(arr) },
-        all: patchAll(curAll, nextNote),
-      })
+      set(applyNotePatch(get, nextNote))
       endOp(noteId)
     } catch (err) {
       endOp(noteId)
@@ -616,11 +786,11 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
     const before = get().byDate
     const beforeAll = get().all
     // R30-Corr-1 修复：先在 all 查，再回退 byDate。
-    const note =
-      beforeAll.find((n) => n.id === noteId)
-      ?? Object.values(before).flat().find((n) => n.id === noteId)
+    // R39-fix-updateStep-postIPC-merge (high perf)：改用 module-level
+    // noteIdIndex O(1) 查找。
+    const note = noteIdIndex.get(noteId)
     if (!note) {
-       
+
       console.warn(`[stickyNotes.updateStep] note ${noteId} not in store; skipping`)
       return
     }
@@ -667,30 +837,16 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       completedAt,
       updatedAt: new Date().toISOString(),
     }
-    set({
-      byDate: {
-        ...before,
-        [note.date]: sortNotes(
-          (before[note.date] ?? []).map((n) => (n.id === noteId ? optimisticNote : n)),
-        ),
-      },
-      all: patchAll(beforeAll, optimisticNote),
-    })
+    set(applyNotePatch(get, optimisticNote))
 
     try {
       const real = await stickyNotesApi.updateStep(stepId, patch)
       if (real && !isStale(noteId, myVersion)) {
-        const curByDate = get().byDate
-        const curAll = get().all
-        const cur = Object.values(curByDate).flat().find((n) => n.id === noteId) ?? optimisticNote
+        // R39-fix-updateStep-postIPC-merge (high perf)：noteIdIndex O(1) 查找
+        // 当前 note，免去 Object.values().flat().find() 全桶扫描。
+        const cur = noteIdIndex.get(noteId) ?? optimisticNote
         const nextNote: StickyNote = { ...cur, steps: cur.steps.map((s) => (s.id === stepId ? real : s)) }
-        const arr = (curByDate[note.date] ?? []).map((n) =>
-          n.id === noteId ? nextNote : n,
-        )
-        set({
-          byDate: { ...curByDate, [note.date]: sortNotes(arr) },
-          all: patchAll(curAll, nextNote),
-        })
+        set(applyNotePatch(get, nextNote))
       }
 
       // 联动 status：单独调 IPC（H1 保持不变：done 走 complete，其它走 setStatus）
@@ -701,30 +857,15 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
             : await stickyNotesApi.setStatus(noteId, targetStatus)
           if (updated && !isStale(noteId, myVersion)) {
             // 用后端返回值刷新 status / completedAt / updatedAt
-            const curByDate = get().byDate
-            const curAll = get().all
-            const arr = (curByDate[note.date] ?? []).map((n) =>
-              n.id === noteId ? updated : n,
-            )
-            set({
-              byDate: { ...curByDate, [note.date]: sortNotes(arr) },
-              all: patchAll(curAll, updated),
-            })
+            set(applyNotePatch(get, updated))
           }
         } catch (statusErr) {
           // status 联动失败：仅回滚 status 字段，不回滚 step 本身
-          const curByDate = get().byDate
-          const curAll = get().all
-          const cur = Object.values(curByDate).flat().find((n) => n.id === noteId) ?? optimisticNote
+          // R39-fix-updateStep-postIPC-merge (high perf)：noteIdIndex O(1)。
+          const cur = noteIdIndex.get(noteId) ?? optimisticNote
           const rolled: StickyNote = { ...cur, status: note.status, completedAt: note.completedAt }
-          const arr = (curByDate[note.date] ?? []).map((n) =>
-            n.id === noteId ? rolled : n,
-          )
-          set({
-            byDate: { ...curByDate, [note.date]: sortNotes(arr) },
-            all: patchAll(curAll, rolled),
-          })
-           
+          set(applyNotePatch(get, rolled))
+
           console.warn('[stickyNotes] status 联动失败:', statusErr)
         }
       }
@@ -741,11 +882,11 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
     const before = get().byDate
     const beforeAll = get().all
     // R30-Corr-1 修复：先在 all 查，再回退 byDate。
-    const note =
-      beforeAll.find((n) => n.id === noteId)
-      ?? Object.values(before).flat().find((n) => n.id === noteId)
+    // R39-fix-updateStep-postIPC-merge (high perf)：改用 module-level
+    // noteIdIndex O(1) 查找。
+    const note = noteIdIndex.get(noteId)
     if (!note) {
-       
+
       console.warn(`[stickyNotes.removeStep] note ${noteId} not in store; skipping`)
       return
     }
@@ -759,15 +900,7 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
       steps: note.steps.filter((s) => s.id !== stepId),
       updatedAt: new Date().toISOString(),
     }
-    set({
-      byDate: {
-        ...before,
-        [note.date]: sortNotes(
-          (before[note.date] ?? []).map((n) => (n.id === noteId ? optimisticNote : n)),
-        ),
-      },
-      all: patchAll(beforeAll, optimisticNote),
-    })
+    set(applyNotePatch(get, optimisticNote))
     try {
       await stickyNotesApi.removeStep(stepId)
       endOp(noteId)
@@ -781,44 +914,13 @@ export const useStickyNotesStore = create<StickyNotesState>((set, get) => ({
   reset() {
     set({ byDate: {}, all: [], loading: false, error: null, rangeStart: '', rangeEnd: '' })
   },
-}))
 
-/**
- * R16 修复 (low)：selectNotesByDate 之前直接返回 `state.byDate[dayKey]` 引用，
- * 消费者若 .sort() / .push() / .reverse() 会原地 mutate store state。原模块
- * 当前没有 active 消费者（grep 验证），但作为公共 API 仍可能被未来的 caller
- * 误用，添加 @deprecated 提示并返回防御性副本。
- *
- * @deprecated 切勿用 .sort/.push 直接 mutate 返回值；请在调用方用 useMemo
- *             派生，或用下面 selectAllNotesSorted（已修复 sort 原位 mutate）。
- */
-export function selectNotesByDate(state: StickyNotesState, dayKey: string): StickyNote[] {
-  return state.byDate[dayKey] ? [...state.byDate[dayKey]] : []
-}
-
-/**
- * 合并一组日期的便签并按 date ASC + priority ASC 排序（用于时间线渲染）。
- *
- * R16 修复 (low)：原版 `Object.values(state.byDate).flat()` 已经返回新数组，
- * 但 `.sort()` 是原地排序 —— 一旦未来有人"优化"成 `[...Object.values(...).flat()]`
- * 之外的形式（比如缓存 flat 结果），sort 会原地 mutate store byDate 内部的数组。
- * 这里显式 spread 一份再 sort，并把 sort 提到辅助函数 sortNotes（已存在）以避免
- * 重复实现。
- *
- * 当前无 active 消费者，仅供调试 / 单元测试用。禁止用 useStickyNotesStore(selectAllNotesSorted)
- * 作为 selector —— 每次返回新对象会触发 Zustand 无限重渲染。
- */
-export function selectAllNotesSorted(state: StickyNotesState): StickyNote[] {
-  // 直接复用 sortNotes（已用 [...notes].sort 实现）
-  // 此处保留独立实现以匹配原语义
-  const all = [...Object.values(state.byDate).flat()]
-  const order: Record<string, number> = { p0: 0, p1: 1, p2: 2, p3: 3 }
-  return all.sort((a, b) => {
-    if (a.date !== b.date) return a.date < b.date ? -1 : 1
-    const po = (order[a.priority] ?? 9) - (order[b.priority] ?? 9)
-    if (po !== 0) return po
-    return a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0
-  })
-}
-
-export { groupByDate }
+  patchByDateAndAll(byDate, all) {
+    // R-fix-applyServerNote-bypass-wrapped-set (medium perf/correctness)：
+    // 走 wrapped set 让 noteIdIndex 同步重建，外部 patch（典型：StickyTimeline
+    // 的 applyServerNote post-IPC 合并）也能让后续 lookupNoteById 拿到当前 row。
+    // 任意一次直接 setState({ all, byDate }) 都会让 Map 静默失同步。
+    set({ byDate, all })
+  },
+  }
+})

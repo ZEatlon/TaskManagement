@@ -25,6 +25,11 @@ import { StatusBadge } from './StatusBadge'
 import { useAutosave } from '../../lib/useAutosave'
 import { aiApi, notesApi } from '../../lib/ipc'
 import { TagChipSelector } from './TagChipSelector'
+import { InlineAIButton } from '../ai/InlineAIButton'
+import { useAiStore } from '../../stores/ai'
+import { mdastToHtml, wrapPrintableHtml } from '../../notes/mdastToHtml'
+import { announce } from '../common/AriaAnnouncer'
+import type { RootContent } from 'mdast'
 
 interface Props {
   /** 受控路径 */
@@ -66,6 +71,13 @@ export function NoteEditor({ path, onSaved }: Props) {
   const lastNotePath = useRef<string | null>(null)
   // 切换笔记 / 还原草稿时短暂抑制 autosave
   const suppressAutosaveRef = useRef(false)
+  // R28 修复 (low)：restoreDraft 的 IndexedDB 读取是异步的；effect 在
+  // currentNote.path 变化时重跑产生新闭包，但旧 effect 启动的 restoreDraft
+  // Promise 仍可能在飞行中。快切笔记（A → B → C）时三个 Promise 全部 in-flight，
+  // 最后 resolve 的 .then 不一定对应当前 currentNote → 旧闭包持有的 currentNote
+  // 把 A 的草稿写到 C 上 → 用户在 C 上点「恢复草稿」会把 C 当前内容替换成 A 的。
+  // 用 generation 计数器：每次 effect 入口 ++，then 回调里若非最新直接丢弃。
+  const restoreDraftGenRef = useRef(0)
 
   const autosave = useAutosave({
     notePath: path,
@@ -97,7 +109,7 @@ export function NoteEditor({ path, onSaved }: Props) {
       const { remark } = await import('remark')
       const remarkGfm = (await import('remark-gfm')).default
       const file = remark().use(remarkGfm).parse(draftMd || '')
-      const body = mdastToHtml(file.children as neverListItemArray)
+      const body = mdastToHtml(file.children as RootContent[])
       const html = wrapPrintableHtml({
         title: currentNote.title || '未命名笔记',
         body,
@@ -131,8 +143,20 @@ export function NoteEditor({ path, onSaved }: Props) {
       // 切换 currentNote 之外还会在每次父组件渲染时跑一遍 restoreDraft()，
       // 频繁去 IndexedDB 查草稿。改成只依赖真正会被用到的 restoreDraft 引用
       // （其它字段 scheduleSave/clearDraft 是稳定闭包）。
+      //
+      // R28 修复 (low)：restoreDraft 的 IndexedDB 读异步，effect 重跑产生新闭包
+      // 但旧 Promise 仍可能 in-flight。快切笔记时旧闭包持 currentNote=A，把
+      // A 的草稿写到当前打开的 C 上 → 数据误覆盖。用 generation 计数器在
+      // .then 里丢弃陈旧回调。
+      const myGen = ++restoreDraftGenRef.current
+      // 捕获当前 path 与 content 的局部变量，避免 .then 里读陈旧闭包
+      const notePathAtStart = currentNote.path
+      const noteContentAtStart = currentNote.content
       void autosave.restoreDraft().then((draft) => {
-        if (draft && draft.content !== currentNote.content) {
+        if (myGen !== restoreDraftGenRef.current) return // stale，回调过期
+        if (draft && draft.content !== noteContentAtStart) {
+          // 二次校验：path 没变才显示提示（理论上 generation 已保证，但保险）
+          if (lastNotePath.current !== notePathAtStart) return
           setRestorePrompt({
             draftContent: draft.content,
             draftUpdatedAt: draft.updatedAt,
@@ -164,6 +188,9 @@ export function NoteEditor({ path, onSaved }: Props) {
       await clearDraft()
       setDirty(false)
       setSavedAt(new Date().toLocaleTimeString('zh-CN'))
+      // R30-a11y-1 修复 (medium)：保存成功后通过 announce() 让屏幕阅读器
+      // 用户也能感知「笔记已保存」—— 视觉上的 save-status 徽章 SR 不可见。
+      announce('笔记已保存')
       onSaved?.()
     },
     [path, draftMd, save, clearDraft, onSaved],
@@ -263,6 +290,9 @@ export function NoteEditor({ path, onSaved }: Props) {
     void aiApi.setCurrentNoteId(noteId).catch(() => {
       /* IPC 失败不应阻塞编辑器；主进程仍以"未知笔记"对待 */
     })
+    // 把 noteId 也写到 useAiStore.context，让 InlineAIButton / CommandBar 的
+    // prompt 模板可以引用。卸载 / 切换笔记时由 setContext 浅合并覆盖。
+    useAiStore.getState().setContext({ noteId: noteId ?? undefined })
     // 不在此处 cleanup。cleanup 会随 dep 变化在每次切换笔记时跑，但此时
     // currentNote 已经是新笔记，会出现"上一份笔记清空 → 紧接着又被设为新 id"
     // 的竞态，且卸载时的 currentNote 也是最后打开的那一份，currentNote 始终 truthy
@@ -288,6 +318,8 @@ export function NoteEditor({ path, onSaved }: Props) {
   useEffect(() => {
     return () => {
       void aiApi.setCurrentNoteId(null).catch(() => undefined)
+      // 同步清 useAiStore.context 里的 noteId（避免 stale id 残留到下次进入）
+      useAiStore.getState().setContext({ noteId: undefined })
     }
   }, [])
 
@@ -322,11 +354,15 @@ export function NoteEditor({ path, onSaved }: Props) {
           {/* 布局切换 */}
           <div
             className="layout-toggle"
-            role="tablist"
+            role="radiogroup"
             aria-label="编辑布局"
             onKeyDown={(e) => {
-              // R13 修复 (medium)：tablist 应支持 ArrowLeft/Right 切换；
-              // roving tabindex 让 Tab 键只停当前 active。
+              // R29 修复 (high a11y)：原 role="tablist" / role="tab" 缺少配套
+              // role="tabpanel" 容器与 aria-controls 关联（实际只有一个 edit-only
+              // / preview-only / split 决定显示哪个面板，没有 3 个 tabpanel），
+              // NVDA / VoiceOver 会报 "tab N of 3" 但读不到 tabpanel 内容变更。
+              // 改为 radiogroup + radio（互斥三选一）：单个 Tab 落点（roving
+              // tabindex），Arrow 切换选项（沿用原 R13 的方向键处理）。
               const order = ['edit-only', 'split', 'preview-only'] as const
               const idx = order.indexOf(layout)
               if (idx < 0) return
@@ -349,8 +385,9 @@ export function NoteEditor({ path, onSaved }: Props) {
               return (
                 <button
                   key={k}
-                  role="tab"
-                  aria-selected={isActive}
+                  type="button"
+                  role="radio"
+                  aria-checked={isActive}
                   tabIndex={isActive ? 0 : -1}
                   className={`layout-btn ${isActive ? 'active' : ''}`}
                   onClick={() => setLayout(k)}
@@ -378,19 +415,47 @@ export function NoteEditor({ path, onSaved }: Props) {
           )}
 
           {fileState && <StatusBadge state={fileState} />}
-          {autosave.hasDraft && !dirty && (
-            <span
-              className="save-status draft"
-              title={`未保存草稿 ${new Date(autosave.pendingDraft?.updatedAt ?? Date.now()).toLocaleString('zh-CN')}`}
-            >
-              草稿缓存
-            </span>
+          {/*
+           * R30-a11y-1 修复 (medium a11y)：原版三个 save-status 徽章（草稿缓存 /
+           * 未保存 / 已保存）只在视觉上闪烁，NVDA / VoiceOver 用户收不到任何
+           * 状态变化通知。补一层 aria-live="polite" + aria-atomic="true" 把它们
+           * 整体包成一个 status 区域，每次徽章文本变化时 SR 自动播报；保存成功
+           * 路径另发 announce() 兜底（即便焦点不在工具栏也能听到）。
+           */}
+          <span
+            className="save-status-group"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >
+            {autosave.hasDraft && !dirty && (
+              <span
+                className="save-status draft"
+                title={`未保存草稿 ${new Date(autosave.pendingDraft?.updatedAt ?? Date.now()).toLocaleString('zh-CN')}`}
+              >
+                草稿缓存
+              </span>
+            )}
+            {dirty ? (
+              <span className="save-status dirty">未保存</span>
+            ) : savedAt ? (
+              <span className="save-status saved">已保存 · {savedAt}</span>
+            ) : null}
+          </span>
+          {currentNote && (
+            /*
+             * AI 触发按钮 —— 放在保存 / 导出 PDF 按钮前。
+             *   - target="note" + id=currentNote.id：菜单 prompt 会带 noteId
+             *   - size="md" 比 sticky 的 sm 稍大，更适合编辑器工具栏
+             *   - 浮层 fixed 定位，不会被 toolbar 的 overflow 截断
+             */
+            <InlineAIButton
+              target="note"
+              id={currentNote.id}
+              size="md"
+              title="AI 助手（总结 / 续写 / 重写）"
+            />
           )}
-          {dirty ? (
-            <span className="save-status dirty">未保存</span>
-          ) : savedAt ? (
-            <span className="save-status saved">已保存 · {savedAt}</span>
-          ) : null}
           <button className="btn primary" onClick={() => doSave()} disabled={!dirty}>
             保存
           </button>
@@ -475,233 +540,3 @@ export function NoteEditor({ path, onSaved }: Props) {
 }
 
 export default NoteEditor
-
-/* -------------------------------------------------------------------------- */
-/* * PDF 导出：将 markdown 转换为自包含 HTML（含内联样式），交给主进程
- *   隐藏 BrowserWindow 用 webContents.printToPDF() 渲染。
- *
- * 为什么不复用 NotePreview 组件：
- *   - NotePreview 是 React 组件，靠 Context（ImageResolverContext）异步
- *     解析图片 → 序列化进 PDF 会出现「图片加载一半」的空位
- *   - 浏览器渲染上下文（document / window）依赖 React 树；隐藏
- *     BrowserWindow 是空白页面，React 不会挂载
- *   - 因此走「一次性同步 HTML 字符串 + 共享 CSS」路径
- */
-
-/** mdast RootContent 数组（含 ListItem / TableCell 等所有变体）的别名 */
-type neverListItemArray = import('mdast').RootContent[]
-
-/**
- * 把 mdast 节点数组渲染成简单 HTML。同步、纯函数 —— 与 NotePreview
- * 的 sanitize 策略保持一致：URL 仅放行 http/https/mailto/#/file/，其余
- * 协议降级为纯文本。
- */
-const ALLOWED_HREF = /^(https?:|mailto:|#|file:)/i
-
-function isSafeHref(raw: string): boolean {
-  const stripped = raw.replace(/[\s\x00-\x1f\x7f]/g, '').toLowerCase()
-  return stripped.length > 0 && ALLOWED_HREF.test(stripped)
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/[‪-‮⁦-⁩]/g, '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function mdastToHtml(nodes: neverListItemArray): string {
-  return nodes.map((n) => mdastNodeToHtml(n)).join('')
-}
-
-function mdastNodeToHtml(node: import('mdast').RootContent): string {
-  switch (node.type) {
-    case 'heading': {
-      const depth = Math.min(6, Math.max(1, node.depth))
-      return `<h${depth}>${renderInline(node.children)}</h${depth}>`
-    }
-    case 'paragraph':
-      return `<p>${renderInline(node.children)}</p>`
-    case 'blockquote':
-      return `<blockquote>${mdastToHtml(node.children)}</blockquote>`
-    case 'list': {
-      const Tag = node.ordered ? 'ol' : 'ul'
-      return `<${Tag}>${node.children.map((li) => mdastNodeToHtml(li as import('mdast').RootContent)).join('')}</${Tag}>`
-    }
-    case 'listItem': {
-      const checked = (node as { checked?: boolean | null }).checked
-      const checkbox = typeof checked === 'boolean'
-        ? `<input type="checkbox" disabled ${checked ? 'checked' : ''} /> `
-        : ''
-      return `<li>${checkbox}${mdastToHtml(node.children as neverListItemArray)}</li>`
-    }
-    case 'code':
-      return `<pre><code>${escapeHtml(node.value)}</code></pre>`
-    case 'thematicBreak':
-      return '<hr />'
-    case 'table':
-      return mdastTableToHtml(node)
-    case 'html':
-      return escapeHtml(node.value)
-    default:
-      return ''
-  }
-}
-
-function renderInline(children: import('mdast').PhrasingContent[]): string {
-  return children.map((n) => renderInlineNode(n)).join('')
-}
-
-function renderInlineNode(node: import('mdast').PhrasingContent): string {
-  switch (node.type) {
-    case 'text':
-      return escapeHtml(node.value)
-    case 'inlineCode':
-      return `<code>${escapeHtml(node.value)}</code>`
-    case 'strong':
-      return `<strong>${renderInline(node.children)}</strong>`
-    case 'emphasis':
-      return `<em>${renderInline(node.children)}</em>`
-    case 'delete':
-      return `<del>${renderInline(node.children)}</del>`
-    case 'link': {
-      const href = node.url
-      return isSafeHref(href)
-        ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer nofollow">${renderInline(node.children)}</a>`
-        : renderInline(node.children)
-    }
-    case 'image': {
-      const src = node.url
-      const alt = escapeHtml(node.alt ?? '')
-      // PDF 输出无法异步解析图片（主进程 printToPDF 是同步时机）；
-      // 仅放行已经能直接加载的绝对 URL（http/https/file），相对路径
-      // 在 PDF 里降级为占位文本，提示用户切换为绝对 URL。
-      if (isSafeHref(src)) {
-        return `<img src="${escapeHtml(src)}" alt="${alt}" />`
-      }
-      return `<span class="md-image-blocked">${alt || '(相对图片在 PDF 中不可用)'}</span>`
-    }
-    case 'break':
-      return '<br />'
-    case 'html':
-      return escapeHtml(node.value)
-    default:
-      return ''
-  }
-}
-
-function mdastTableToHtml(node: import('mdast').Table): string {
-  const [head, ...rows] = node.children
-  let html = '<table><thead>'
-  if (head) {
-    html += '<tr>' + head.children.map((c) => {
-      const align = (c as { align?: string | null }).align
-      return `<th${align ? ` align="${align}"` : ''}>${renderInline(c.children)}</th>`
-    }).join('') + '</tr>'
-    html += '</thead><tbody>'
-    html += rows.map((row) => '<tr>' + row.children.map((c) => {
-      const align = (c as { align?: string | null }).align
-      return `<td${align ? ` align="${align}"` : ''}>${renderInline(c.children)}</td>`
-    }).join('') + '</tr>').join('')
-    html += '</tbody>'
-  }
-  return html + '</table>'
-}
-
-/**
- * 把渲染好的 markdown body 包成完整 HTML 文档（CSS 内联）。
- */
-function wrapPrintableHtml({ title, body }: { title: string; body: string }): string {
-  return `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8" />
-<title>${escapeHtml(title)}</title>
-<style>
-  @page { size: A4; margin: 14mm 16mm; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-      "Microsoft YaHei", sans-serif;
-    font-size: 13px;
-    line-height: 1.65;
-    color: #1f2328;
-    background: #ffffff;
-    margin: 0;
-    padding: 0;
-    -webkit-font-smoothing: antialiased;
-  }
-  h1, h2, h3, h4, h5, h6 {
-    color: #1f2328;
-    margin-top: 1.6em;
-    margin-bottom: 0.6em;
-    line-height: 1.3;
-    font-weight: 600;
-    page-break-after: avoid;
-  }
-  h1 { font-size: 24px; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.3em; }
-  h2 { font-size: 20px; border-bottom: 1px solid #d1d9e0; padding-bottom: 0.2em; }
-  h3 { font-size: 16px; }
-  h4 { font-size: 14px; }
-  p { margin: 0.6em 0; }
-  a { color: #0969da; text-decoration: none; }
-  ul, ol { padding-left: 1.6em; margin: 0.6em 0; }
-  li { margin: 0.2em 0; }
-  blockquote {
-    margin: 0.8em 0;
-    padding: 0.4em 1em;
-    border-left: 3px solid #d1d9e0;
-    color: #59636e;
-    background: #f6f8fa;
-  }
-  code {
-    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 0.92em;
-    background: #f6f8fa;
-    padding: 0.12em 0.4em;
-    border-radius: 4px;
-  }
-  pre {
-    background: #f6f8fa;
-    padding: 12px 14px;
-    border-radius: 6px;
-    overflow-x: auto;
-    line-height: 1.5;
-    page-break-inside: avoid;
-  }
-  pre code { background: transparent; padding: 0; }
-  hr { border: 0; border-top: 1px solid #d1d9e0; margin: 1.5em 0; }
-  table { border-collapse: collapse; margin: 0.8em 0; }
-  th, td { border: 1px solid #d1d9e0; padding: 6px 10px; }
-  th { background: #f6f8fa; }
-  img { max-width: 100%; height: auto; border-radius: 6px; margin: 0.4em 0; page-break-inside: avoid; }
-  .note-print-title {
-    font-size: 26px;
-    font-weight: 700;
-    margin: 0 0 0.4em 0;
-    border-bottom: 2px solid #1f2328;
-    padding-bottom: 0.4em;
-  }
-  .note-print-meta {
-    color: #59636e;
-    font-size: 11px;
-    margin-bottom: 1.4em;
-  }
-  .md-image-blocked {
-    color: #8b949e;
-    font-style: italic;
-    background: #f6f8fa;
-    padding: 2px 6px;
-    border-radius: 4px;
-  }
-</style>
-</head>
-<body>
-  <h1 class="note-print-title">${escapeHtml(title)}</h1>
-  <div class="note-print-meta">导出于 ${new Date().toLocaleString('zh-CN')}</div>
-  ${body}
-</body>
-</html>`
-}

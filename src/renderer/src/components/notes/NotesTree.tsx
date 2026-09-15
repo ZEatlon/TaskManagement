@@ -14,7 +14,7 @@
  * 标签筛选仍然通过 useNotesStore.activeTag —— 用户在右侧 TagsPanel 点选后，store
  * 内置逻辑会同步刷新 notes 数组。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNotesStore, type FolderSelection, type NotesFilter } from '../../stores/notes'
 import type { NoteMeta } from '@shared/types'
 import { ConfirmDialog } from '../common/ConfirmDialog'
@@ -106,16 +106,36 @@ export function NotesTree({ onSelect }: Props) {
     }
   }
 
-  function handleDropToFolder(noteId: string, folderId: FolderSelection) {
-    if (folderId === undefined) return
-    void moveNoteToFolder(noteId, folderId ?? null)
-  }
+  const handleDropToFolder = useCallback(
+    (noteId: string, folderId: FolderSelection) => {
+      if (folderId === undefined) return
+      void moveNoteToFolder(noteId, folderId ?? null)
+    },
+    [moveNoteToFolder],
+  )
 
-  function handleConfirmDelete() {
+  const handleConfirmDelete = useCallback(() => {
     if (!pendingDelete) return
     void remove(pendingDelete.path)
     setPendingDelete(null)
-  }
+  }, [pendingDelete, remove])
+
+  // R-fix-NoteFoldersSidebar-handlers (perf, medium)：把 onOpenNote / onDeleteNote
+  // 用 useCallback 稳定。原版是 inline arrow，每次 render 都换引用，导致
+  // FolderWithNotes 内部所有 NoteSubRow 的 memo comparator（依赖 onOpen/onDelete
+  // 引用）全部失效 —— 用户打开任意便签，sidebar 整棵树每个 NoteSubRow 跟着 re-render。
+  // 用 latestRef 模式捕获外部 onSelect（其引用可能不稳定），handler 引用本身始终稳定。
+  const onSelectRef = useRef(onSelect)
+  useEffect(() => {
+    onSelectRef.current = onSelect
+  }, [onSelect])
+  const handleOpenNote = useCallback((n: NoteMeta) => {
+    void open(n.path)
+    onSelectRef.current?.(n)
+  }, [open])
+  const handleDeleteNote = useCallback((n: NoteMeta) => {
+    setPendingDelete({ path: n.path, title: n.title })
+  }, [])
 
   return (
     <div className="notes-tree">
@@ -140,8 +160,10 @@ export function NotesTree({ onSelect }: Props) {
 
       <div className="filter-tabs" role="tablist" aria-label="笔记过滤">
         <button
+          id="notes-filter-tab-all"
           role="tab"
           aria-selected={filter === 'all'}
+          aria-controls="notes-filter-panel"
           tabIndex={filter === 'all' ? 0 : -1}
           className={`tab ${filter === 'all' ? 'active' : ''}`}
           onClick={() => setFilter('all')}
@@ -160,8 +182,10 @@ export function NotesTree({ onSelect }: Props) {
           全部
         </button>
         <button
+          id="notes-filter-tab-starred"
           role="tab"
           aria-selected={filter === 'starred'}
+          aria-controls="notes-filter-panel"
           tabIndex={filter === 'starred' ? 0 : -1}
           className={`tab ${filter === 'starred' ? 'active' : ''}`}
           onClick={() => setFilter('starred')}
@@ -180,8 +204,10 @@ export function NotesTree({ onSelect }: Props) {
           收藏
         </button>
         <button
+          id="notes-filter-tab-archived"
           role="tab"
           aria-selected={filter === 'archived'}
+          aria-controls="notes-filter-panel"
           tabIndex={filter === 'archived' ? 0 : -1}
           className={`tab ${filter === 'archived' ? 'active' : ''}`}
           onClick={() => setFilter('archived')}
@@ -201,19 +227,34 @@ export function NotesTree({ onSelect }: Props) {
         </button>
       </div>
 
-      {/* 文件夹 + 文件列表合并（NoteFoldersSidebar 已实现 2 级 tree） */}
-      <NoteFoldersSidebar
-        activeFolderId={activeFolderId}
-        onSelectFolder={setActiveFolder}
-        onDropToFolder={handleDropToFolder}
-        onOpenNote={(n) => {
-          void open(n.path)
-          onSelect?.(n)
-        }}
-        onDeleteNote={(n) =>
-          setPendingDelete({ path: n.path, title: n.title })
+      {/* R31-a11y-tab-panel (high)：filter tabs 之前仅声明 role=tablist，但 tab 与
+          NoteFoldersSidebar 渲染的笔记列表完全没有 panel 关系，SR 用户从 tab Tab 一次
+          直接进入列表丢失关联。补 role=tabpanel + aria-labelledby 动态跟随当前
+          selected tab，确保 SR 播报「笔记列表 与 收藏 选项卡关联」。
+          注意：必须包一层 wrapper div 而不是直接给 NoteFoldersSidebar 加 role，因为
+          不修改子组件 API；filter 切换时 NoteFoldersSidebar 内部会按 active filter
+          重新渲染列表，wrapper 仅承担 aria 关联，零行为变更。 */}
+      <div
+        id="notes-filter-panel"
+        role="tabpanel"
+        aria-labelledby={
+          filter === 'all'
+            ? 'notes-filter-tab-all'
+            : filter === 'starred'
+              ? 'notes-filter-tab-starred'
+              : 'notes-filter-tab-archived'
         }
-      />
+        tabIndex={0}
+      >
+        {/* 文件夹 + 文件列表合并（NoteFoldersSidebar 已实现 2 级 tree） */}
+        <NoteFoldersSidebar
+          activeFolderId={activeFolderId}
+          onSelectFolder={setActiveFolder}
+          onDropToFolder={handleDropToFolder}
+          onOpenNote={handleOpenNote}
+          onDeleteNote={handleDeleteNote}
+        />
+      </div>
 
       <ConfirmDialog
         open={pendingDelete !== null}

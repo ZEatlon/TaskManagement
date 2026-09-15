@@ -12,6 +12,8 @@ import { useNavigate } from '@tanstack/react-router'
 import { FileText, Pin } from 'lucide-react'
 import type { NoteMeta } from '@shared/types'
 import { useNotesStore } from '../../stores/notes'
+import { useSettingsStore } from '../../stores/settings'
+import { formatTimeAgo } from '../../lib/formatDate'
 
 interface Props {
   notes?: NoteMeta[]
@@ -24,6 +26,12 @@ export function RecentNotes({ notes: providedNotes, limit = 5 }: Props) {
   const storeNotes = useNotesStore((s) => s.notes)
   const open = useNotesStore((s) => s.open)
   const setFilter = useNotesStore((s) => s.setFilter)
+  // R-fix-i18n-recent-notes-mtime (medium)：原 RecentNotes.tsx 自写了一份
+  // formatMtime，硬编码『刚刚/X分钟前/...』+ toLocaleDateString('zh-CN')，与
+  // lib/formatDate.ts:81 formatTimeAgo 完全同形态但绕过 locale registry。
+  // 改读 useSettingsStore.language 后直接调 formatTimeAgo(n.mtime, language)，
+  // 未来加 en-US 时本 widget 自动跟随；与 Dashboard 其它日期 widget 视觉统一。
+  const language = useSettingsStore((s) => s.language)
   const notes = providedNotes ?? storeNotes
 
   const recent = useMemo(() => {
@@ -89,7 +97,7 @@ export function RecentNotes({ notes: providedNotes, limit = 5 }: Props) {
                 />
               )}
               <span className="recent-note-mtime muted small">
-                {formatMtime(n.mtime)}
+                {formatTimeAgo(n.mtime, language)}
               </span>
             </button>
           </li>
@@ -97,24 +105,6 @@ export function RecentNotes({ notes: providedNotes, limit = 5 }: Props) {
       </ul>
     </div>
   )
-}
-
-/** 格式化 mtime → 相对时间（≤7d 显示「Xd 前」；更早显示日期） */
-function formatMtime(iso: string): string {
-  const t = new Date(iso).getTime()
-  const now = Date.now()
-  const diffMs = now - t
-  const diffMin = Math.floor(diffMs / 60_000)
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return `${diffMin}分钟前`
-  const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return `${diffHour}小时前`
-  const diffDay = Math.floor(diffHour / 24)
-  if (diffDay < 7) return `${diffDay}天前`
-  return new Date(iso).toLocaleDateString('zh-CN', {
-    month: '2-digit',
-    day: '2-digit',
-  })
 }
 
 export default RecentNotes

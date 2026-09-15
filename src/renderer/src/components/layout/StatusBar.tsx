@@ -6,12 +6,12 @@
  * - 今日便签 / 今日已完成 / 进行中便签 / 笔记总数 / 库位置
  * - 同步状态指示
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { useLocation } from '@tanstack/react-router'
 import { useStickyNotesStore } from '../../stores/stickyNotes'
 import { useNotesStore } from '../../stores/notes'
 import { useSettingsStore } from '../../stores/settings'
-import { dayKeyOf } from '../../lib/date'
+import { useTodayKey } from '../../lib/useDayRollover'
 
 interface RouteMeta {
   label: string
@@ -48,31 +48,10 @@ export function StatusBar() {
 
   // R11 修复 (low #4)：原版 useMemo([]) 一次性固化 todayKey，用户在 23:55 打开
   // App 到 00:30 后仍把「昨天」当今天 → 状态栏显示「今日便签 N」用的是昨天的
-  // 数字，跨日便签统计错位。改用 state + 跨午夜定时器，与 FocusCalendar.today
-  // 保持一致的更新策略。
-  const [todayKey, setTodayKey] = useState<string>(() => dayKeyOf(new Date()))
-  useEffect(() => {
-    let timer: number | null = null
-    function scheduleNextMidnightRefresh() {
-      const now = new Date()
-      const next = new Date(now)
-      next.setHours(24, 0, 5, 0)
-      const ms = Math.max(1000, next.getTime() - now.getTime())
-      timer = window.setTimeout(() => {
-        setTodayKey(dayKeyOf(new Date()))
-        scheduleNextMidnightRefresh()
-      }, ms)
-    }
-    scheduleNextMidnightRefresh()
-    function onVisibility() {
-      if (document.visibilityState === 'visible') setTodayKey(dayKeyOf(new Date()))
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => {
-      if (timer !== null) window.clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisibility)
-    }
-  }, [])
+  // 数字，跨日便签统计错位。改用 useTodayKey（lib/useDayRollover）订阅
+  // 模块级共享轮询 + visibilitychange，与 FocusCalendar.today / TodaySummary /
+  // HeatmapWidget / StickyNotesWidget / dashboard.tsx 共享同一份实现。
+  const todayKey = useTodayKey()
   const todayStickies = useMemo(
     () => byDate[todayKey] ?? [],
     [byDate, todayKey],

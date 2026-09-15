@@ -166,6 +166,10 @@ export function GitStatusBadge({ showLabel = true, className }: Props) {
         onClick={() => setMenuOpen((v) => !v)}
         title={meta.title}
         style={{ color: meta.color }}
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-controls="git-badge-menu"
+        aria-label={`Git 同步状态：${meta.label}，${menuOpen ? '已展开' : '打开'}操作菜单`}
       >
         <span className={`git-icon ${state === 'syncing' ? 'spin' : ''}`}>{meta.icon}</span>
         {showLabel && (
@@ -180,7 +184,7 @@ export function GitStatusBadge({ showLabel = true, className }: Props) {
       </button>
 
       {menuOpen && (
-        <div className="git-menu">
+        <div className="git-menu" id="git-badge-menu" role="menu">
           <div className="git-menu-info">
             {lastSyncAt && <div className="muted">上次同步：{lastSyncLabel}</div>}
             {lastError && <div className="git-menu-error">{lastError}</div>}

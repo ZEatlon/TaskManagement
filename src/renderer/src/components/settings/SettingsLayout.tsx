@@ -29,7 +29,21 @@ export function SettingsLayout({ activeId, onTabChange, children }: SettingsLayo
   return (
     <div className="settings-layout">
       <SettingsSidebar activeId={activeId} onSelect={onTabChange} items={SETTINGS_TABS} />
-      <section className="settings-content">
+      {/*
+        R33-A11y-Tab-Panel 修复 (medium aria-controls-missing)：
+        右侧内容区承担唯一可见的 tabpanel。id 与 SettingsSidebar 各 tab 的
+        aria-controls="settings-panel" 对应；aria-labelledby 动态绑定当前激活
+        tab 的 id（与 tab 的 id="settings-tab-<activeId>" 匹配），让 SR 在
+        进入 panel 时播报「tab panel, <当前 tab 名称>」。tabIndex={0} 让
+        panel 可获焦，符合 WAI-ARIA APG Tabs pattern。
+      */}
+      <section
+        id="settings-panel"
+        role="tabpanel"
+        aria-labelledby={`settings-tab-${activeId}`}
+        tabIndex={0}
+        className="settings-content"
+      >
         <div className="settings-content-inner">{children}</div>
       </section>
     </div>

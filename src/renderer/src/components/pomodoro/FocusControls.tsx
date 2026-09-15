@@ -7,15 +7,41 @@
  * - 左侧：可选显示「剩余次数」「今日已完成」等 metadata
  *
  * 交互：
- * - −/+ 调整时长（步长 5 分钟；边界 5~90 分钟）
- * - 点击中央时长 → 重置为默认（25 分钟）
+ * - −/+ 调整时长（步长 5 分钟；边界 1~180 分钟，与主进程 validator 同源）
+ * - 点击中央时长 → 重置为默认（DEFAULT_POMODORO_CONFIG.focusMin 分钟）
  * - 点击右侧按钮触发 onStart/onPause/onResume（由父组件决定）
  */
 import { useCallback, useEffect, useState } from 'react'
-import type { PomodoroState } from '@shared/ipc/channels'
+import {
+  DEFAULT_POMODORO_CONFIG,
+  POMODORO_FOCUS_MIN_LIMITS,
+  type PomodoroState,
+} from '@shared/ipc/channels'
+
+/**
+ * R-fix-focus-controls-boundary-drift (HIGH)：以下三个常量以前在
+ * 渲染端 hardcode（MIN_MINUTES=5 / MAX_MINUTES=90 / DEFAULT_MINUTES=25），
+ * 与主进程 validatePomodoroConfigPatch 认可的 [1, 180] 漂移。AI 通过
+ * startPomodoro({ minutes: 120 }) 持久化进 focusMin=120 后，UI 显示
+ * 120 但 + 按钮被永久禁用。
+ *
+ * 现在从 @shared/ipc/channels 导入：min/max 与 validator 同源，step 是
+ * UI 步长与 validator 无关但同组维护。DEFAULT_MINUTES 改读
+ * DEFAULT_POMODORO_CONFIG.focusMin（25），与持久化默认值同源。
+ */
+const MIN_MINUTES = POMODORO_FOCUS_MIN_LIMITS.min
+const MAX_MINUTES = POMODORO_FOCUS_MIN_LIMITS.max
+const STEP_MINUTES = POMODORO_FOCUS_MIN_LIMITS.step
+const DEFAULT_MINUTES = DEFAULT_POMODORO_CONFIG.focusMin
 
 interface FocusControlsProps {
-  state: PomodoroState
+  /**
+   * R-perf fix：原本必填，但实际组件解构里未读（保留接口仅为
+   * 兼容外部 mock / Storybook 等）。运行时不再使用 —— 父组件
+   * PomodoroTimerPanel 已停传此 prop，避免把每秒变化的 timer
+   * 状态喂进 memo 树触发 1Hz 全量重渲染。
+   */
+  state?: PomodoroState
   /** 自定义焦点时长（分钟），仅在 idle 状态下生效 */
   customMinutes: number
   onChangeMinutes: (m: number) => void
@@ -32,11 +58,6 @@ interface FocusControlsProps {
    */
   orientation?: 'row' | 'col'
 }
-
-const MIN_MINUTES = 5
-const MAX_MINUTES = 90
-const STEP_MINUTES = 5
-const DEFAULT_MINUTES = 25
 
 export function FocusControls({
   customMinutes,
@@ -97,7 +118,7 @@ export function FocusControls({
           className="focus-duration-display"
           onClick={resetMinutes}
           disabled={disabled}
-          title="重置为 25 分钟"
+          title={`重置为 ${DEFAULT_MINUTES} 分钟`}
         >
           <span className="focus-duration-num">{displayMinutes}</span>
           <span className="focus-duration-unit">分钟</span>

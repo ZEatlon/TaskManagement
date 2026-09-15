@@ -190,7 +190,7 @@ export function SyncConfirmDialog({ open, onClose, onConfirm }: Props) {
                 rows={3}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="commit message"
+                placeholder="提交信息（commit message）"
               />
             </label>
             <div className="muted" style={{ marginTop: 4 }}>

@@ -16,6 +16,7 @@ import { FirstRunWizard } from '../components/library/FirstRunWizard'
 import { LibraryMissingDialog } from '../components/library/LibraryMissingDialog'
 import { CommandBar } from '../components/ai/CommandBar'
 import { CreateNoteConfirmDialog } from '../components/ai/CreateNoteConfirmDialog'
+import { QuickCaptureOverlay } from '../components/sticky-notes/QuickCaptureOverlay'
 
 type BootState =
   | { kind: 'loading' }
@@ -71,9 +72,14 @@ export function RootRoute() {
   if (boot.kind === 'missing' && !missingDismissed) {
     return (
       <>
+        {/* WCAG 2.4.1 Bypass Blocks：键盘用户首次 Tab 即可跳到主要内容，
+            避免逐个穿过 Header nav + 侧边栏。配套样式见 .skip-link。 */}
+        <a href="#main-content" className="skip-link">
+          跳到主要内容
+        </a>
         <div className="app-shell is-dimmed" aria-hidden>
           <Header />
-          <main className="app-main">
+          <main id="main-content" className="app-main">
             <div className="page-placeholder">
               <h1>库目录不可访问</h1>
               <p className="muted">正在等待您处理…</p>
@@ -95,14 +101,21 @@ export function RootRoute() {
   // 正常主界面
   return (
     <div className="app-shell">
+      {/* WCAG 2.4.1 Bypass Blocks：见 .skip-link 样式；这是页面第一个
+          focusable 元素，Tab 一次即进入，回车直接跳到 #main-content。 */}
+      <a href="#main-content" className="skip-link">
+        跳到主要内容
+      </a>
       <Header />
-      <main className="app-main">
+      <main id="main-content" className="app-main">
         <Outlet />
       </main>
       <StatusBar />
       {/* 全局 AI 命令栏（Cmd+K 触发）+ createNote 确认弹窗（仅在 /ai 页触发但挂全局以避免切换时丢失） */}
       <CommandBar />
       <CreateNoteConfirmDialog />
+      {/* 全局 N 快捷键浮层：任意页面唤起，不依赖 /today 路由 */}
+      <QuickCaptureOverlay />
     </div>
   )
 }

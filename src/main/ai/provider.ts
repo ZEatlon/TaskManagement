@@ -44,6 +44,12 @@ export interface ToolDefinition {
     type: 'object'
     properties: Record<string, unknown>
     required?: string[]
+    /**
+     * R-fix-updateSticky-additionalProperties：与 batchUpdateStickies.patch
+     * 对齐的标准 JSON Schema 字段；不开启时未声明字段会被静默吞掉，
+     * LLM 据 ok:true 报「已加 work 标签」但 DB 啥也没改。
+     */
+    additionalProperties?: boolean
   }
   /**
    * 副作用风险等级（R8I-2）：
@@ -84,6 +90,29 @@ export interface ChatOptions {
   signal?: AbortSignal
 }
 
+/**
+ * R32-04 修复 (medium error-handling)：AI 路由层在 chat 真正发起请求前
+ * 做的三类"快速失败"（AI 总开关未开 / 未选 provider / 自定义 baseUrl
+ * 被 DNS rebinding 防护拦截）会在 router.chat 里 yield error chunk。
+ * 给 error chunk 加一个 reason 字段，stream.ts 据此区分：
+ *   - 有 reason → 这是预检阶段的配置/安全拒绝，不要混入 persist 错误
+ *   - 无 reason → 这是 LLM 流中途的运行时错误，沿用原 persistError 收尾
+ * 避免 AI 关闭 / DNS 拦截被错误地展示成"对话未持久化（DB 写入失败）"。
+ *
+ * R-fix-llm-error-vs-persist (high error-handling)：扩展 `llm-error`
+ * 让 SDK 在 chat() catch 块抛出的真实 LLM 错误（401/403/404/429/5xx/
+ * fetch failed / aborted 等）走 error 事件，stream.ts 据此不再把
+ * 它们的 message 塞进 done.persistError，避免渲染端在 ChatPanel
+ * 顶部误报"对话未持久化（DB 写入失败）" —— 那是 LLM 故障不是 DB 故障。
+ * provider.chat() 内部已经通过 translateAiError 把 message 转成
+ * 中文友好文案，渲染端 banner 直接渲染 message 即可。
+ */
+export type AiErrorReason =
+  | 'ai-disabled'
+  | 'no-provider'
+  | 'dns-blocked'
+  | 'llm-error'
+
 /** 流式响应的一个增量分片 */
 export type ChatChunk =
   | { type: 'text'; text: string }
@@ -91,7 +120,7 @@ export type ChatChunk =
   | { type: 'tool_result'; toolCallId: string; result: unknown }
   | { type: 'usage'; input: number; output: number }
   | { type: 'done'; persistError?: string }
-  | { type: 'error'; message: string }
+  | { type: 'error'; message: string; reason?: AiErrorReason }
   // R8I-2：工具循环遇到 risk != 'none' 的工具时，先发这个事件，
   // 前端弹 confirm 对话框再把结果送回主进程。
   | {

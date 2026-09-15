@@ -1126,6 +1126,32 @@ code {
   border: 0 !important;
 }
 
+/* WCAG 2.4.1 Bypass Blocks (.skip-link) —— 默认把链接藏到屏幕外（保留
+   可被 Tab 聚焦），获得焦点时滑回屏幕顶部，给键盘 / SR 用户一个「跳过
+   Header / 侧边栏直达主内容」的入口。配套 href="#main-content" 的 <main>
+   见 __root.tsx。颜色 / 圆角复用现有 design token，与其它按钮视觉一致。 */
+.skip-link {
+  position: absolute;
+  top: -100px;
+  left: 12px;
+  z-index: 9999;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: top 0.15s var(--ease-out, ease-out);
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 12px;
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 /* ====== WCAG 2.3.3 prefers-reduced-motion ====== */
 /* R32-A11yPerf-2 修复 (HIGH accessibility-motion-illness)：原版 index.css
    有 4 套全局动画：

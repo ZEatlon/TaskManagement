@@ -47,7 +47,6 @@ interface Props {
 
 interface PendingDelete {
   folder: NoteFolder
-  detachedNotes: number
 }
 
 export function NoteFoldersSidebar({
@@ -90,24 +89,21 @@ export function NoteFoldersSidebar({
   async function reloadTreeNotes() {
     const m = new Map<string | null, NoteMeta[]>()
     try {
-      // 仅取前 10 条 —— 侧栏展开只显示前 5 + 「+N 更多」，拉全部既无意义
-      // 也放大 IPC payload 与 SQLite 扫描。limit:10 是足够的运行预算。
-      const unsorted = await noteFoldersApi.listByFolder(null, {
+      // R-findByFolders (low perf)：原版 N 次 listByFolder = N 轮 IPC +
+      // N 次 SELECT * WHERE folder_id = ?。用户有 20 个文件夹时 sidebar
+      // 要 21 轮 round-trip 才响应（每轮 1-3ms ≈ 20-60ms）。批量接口
+      // listByFolders 单 IPC + 单 SQL（folder_id IN (...) + folder_id IS NULL
+      // 复合谓词），把 round-trip 压到 1 次。
+      const folderIds: Array<string | null> = [null, ...folders.map((f) => f.id)]
+      const grouped = await noteFoldersApi.listByFolders(folderIds, {
         archived: false,
         limit: 10,
       })
-      m.set(null, unsorted)
-      // 并行拉每个文件夹的笔记（数量不大，无压力）
-      const folderResults = await Promise.all(
-        folders.map(async (f) => {
-          const list = await noteFoldersApi.listByFolder(f.id, {
-            archived: false,
-            limit: 10,
-          })
-          return [f.id, list] as const
-        }),
-      )
-      for (const [id, list] of folderResults) m.set(id, list)
+      // IPC 返回 Record<string, NoteMeta[]>（key 'null' 表示未分类）
+      for (const id of folderIds) {
+        const key = id === null ? 'null' : id
+        m.set(id, grouped[key] ?? [])
+      }
     } catch {
       // 失败：保留空 map，UI 仍然显示文件夹
     }
@@ -270,12 +266,13 @@ export function NoteFoldersSidebar({
           onDrop={onDropToFolder}
           onOpenNote={onOpenNote}
           onDeleteNote={onDeleteNote}
-          currentPath={currentPath}
+          hasSelectedChild={unsortedNotes.some((n) => n.path === currentPath)}
         />
 
         {/* 用户创建的文件夹 */}
         {folders.map((f) => {
           const children = notesByFolder.get(f.id) ?? EMPTY_NOTES
+          const childHasSelected = children.some((n) => n.path === currentPath)
           return (
             <UserFolderRow
               key={f.id}
@@ -284,7 +281,6 @@ export function NoteFoldersSidebar({
               hoverDrop={hoverDrop}
               renameId={renameId}
               renameText={renameText}
-              currentPath={currentPath}
               setHoverDrop={setHoverDrop}
               setRenameText={setRenameText}
               setRenameId={setRenameId}
@@ -295,6 +291,7 @@ export function NoteFoldersSidebar({
               onOpenNote={onOpenNote}
               onDeleteNote={onDeleteNote}
               children={children}
+              hasSelectedChild={childHasSelected}
             />
           )
         })}
@@ -305,11 +302,7 @@ export function NoteFoldersSidebar({
         title="删除文件夹"
         body={
           pendingDelete
-            ? `确认删除文件夹「${pendingDelete.folder.name}」？${
-                pendingDelete.detachedNotes > 0
-                  ? `该文件夹下的 ${pendingDelete.detachedNotes} 篇笔记会移至「未分类」。`
-                  : '该文件夹下没有笔记。'
-              }`
+            ? `确认删除文件夹「${pendingDelete.folder.name}」？该文件夹下的笔记会移至「未分类」。`
             : ''
         }
         confirmLabel="删除"
@@ -518,7 +511,10 @@ interface FolderWithNotesProps {
   onDrop: (noteId: string, folderId: FolderSelection) => void
   onOpenNote?: (note: NoteMeta) => void
   onDeleteNote?: (note: NoteMeta) => void
-  currentPath: string | null
+  /** 是否本文件夹下存在「当前选中」的笔记（用 boolean 替代整字符串 currentPath，
+   *  避免 currentPath 翻转时所有 FolderWithNotes 一起 re-render —— 选中态的
+   *  实际渲染放到 NoteSubRow 内部 subscribe currentPath 后按需触发）。 */
+  hasSelectedChild: boolean
 }
 
 /**
@@ -548,7 +544,7 @@ function FolderWithNotes(props: FolderWithNotesProps) {
     folder, label, colorKey, active, expanded, children,
     renaming, renameText, onRenameTextChange, onRenameConfirm, onRenameCancel, onStartRename, onDelete,
     onRowClick, onToggleExpand, acceptsDrop, isHovering, setHoverDrop, onDrop,
-    onOpenNote, onDeleteNote, currentPath,
+    onOpenNote, onDeleteNote,
   } = props
 
   const folderId = folder?.id ?? null
@@ -575,17 +571,6 @@ function FolderWithNotes(props: FolderWithNotesProps) {
     if (!noteId) return
     onDrop(noteId, folderId)
   }
-  function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (renaming) return
-    if (e.target !== e.currentTarget) return
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      // Round 5：键盘 Enter / Space → 切换展开（与鼠标点击行行为一致）
-      onToggleExpand()
-      // 同步把该 folder 设为活跃过滤（视觉反馈）
-      onRowClick()
-    }
-  }
 
   /**
    * Round 5 修复 (high)：原版点击行只触发 onRowClick（设置 folder 过滤），
@@ -596,6 +581,16 @@ function FolderWithNotes(props: FolderWithNotesProps) {
    *   - 点击行（除 chevron / 重命名 / 删除按钮） → 切换展开 + 设为活跃
    *   - chevron 点击 → 仅切换展开（视觉反馈一致）
    *   - 行内按钮（重命名 / 删除）→ 阻止冒泡，行为不变
+   *
+   * R-fix-nested-interactive-role (medium a11y)：之前外层 div 同时挂了
+   * role="button" + tabIndex=0 + aria-pressed，**嵌套**了真实的
+   * chevron / 重命名 / 删除 <button>。这是 WAI-ARIA 不允许的「嵌套交互元素」
+   * 反模式 —— VoiceOver 会读到「切换到文件夹 X 按钮」进入后再次读到
+   * 「重命名文件夹 X 按钮 / 删除文件夹 X 按钮」，语义层级混乱；并触发
+   * 4.1.2 Name Role Value 违规。修复：去掉外层的 role / tabIndex / aria-* /
+   * onKeyDown，让 div 只承担布局 + 鼠标点击（onClick），键盘交互完全交给
+   * 真按钮（chevron 切展开、actions 改 / 删）。与 NoteFoldersSidebar 旧实现
+   * 对齐。
    */
   function handleRowClick(e: React.MouseEvent<HTMLDivElement>) {
     // 让行内按钮的 stopPropagation 生效；这里只处理 row 自身的点击
@@ -616,12 +611,7 @@ function FolderWithNotes(props: FolderWithNotesProps) {
           active ? 'active' : '',
           isHovering ? 'is-drop-target' : '',
         ].filter(Boolean).join(' ')}
-        role="button"
-        tabIndex={0}
-        aria-pressed={active}
-        aria-label={`切换到文件夹 ${label}`}
         onClick={handleRowClick}
-        onKeyDown={handleKeyDown}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -708,7 +698,6 @@ function FolderWithNotes(props: FolderWithNotesProps) {
             <NoteSubRow
               key={n.path}
               note={n}
-              isSelected={currentPath === n.path}
               onOpen={onOpenNote}
               onDelete={onDeleteNote}
             />
@@ -730,9 +719,15 @@ function FolderWithNotes(props: FolderWithNotesProps) {
     prev.children === next.children &&
     prev.renaming === next.renaming &&
     prev.renameText === next.renameText &&
-    prev.currentPath === next.currentPath &&
     prev.acceptsDrop === next.acceptsDrop &&
     prev.isHovering === next.isHovering,
+    // R-fix-NoteFoldersSidebar-handlers (perf, medium)：原 comparator 含
+    // currentPath —— 用户打开任意一条便签 → currentPath 字符串变化 → 所有
+    // FolderWithNotes 的 comparator 全失效 → 整棵 sidebar re-render。
+    // 改为父组件派生 hasSelectedChild boolean，只有「本 folder 下确实有笔记被选中」
+    // 时才受影响；其它文件夹的 boolean 没变 → comparator 命中 → 跳过 re-render。
+    // 同时 hasSelectedChild 也不必从此 comparator 移除；只有当某 folder 第一次
+    // 进入「有选中子」状态时该 row 才 re-render，符合直觉。
 )
 
 /* -------------------------------------------------------------------------- */
@@ -747,7 +742,6 @@ interface UserFolderRowProps {
   hoverDrop: FolderSelection
   renameId: string | null
   renameText: string
-  currentPath: string | null
   children: NoteMeta[]
   setHoverDrop: (id: FolderSelection) => void
   setRenameText: (s: string) => void
@@ -758,125 +752,140 @@ interface UserFolderRowProps {
   onDropToFolder: (noteId: string, folderId: FolderSelection) => void
   onOpenNote?: (note: NoteMeta) => void
   onDeleteNote?: (note: NoteMeta) => void
+  /** 是否本文件夹下存在「当前选中」的笔记（boolean 替代字符串 currentPath，
+   *  避免 currentPath 翻转时所有 UserFolderRow 一起 re-render） */
+  hasSelectedChild: boolean
 }
 
 /** 把每个用户文件夹折叠/展开的订阅隔离开 —— 单独改一个文件夹不会触发
- *  其他兄弟文件夹或外层 NoteFoldersSidebar 任何无关重渲染。              */
-function UserFolderRow(props: UserFolderRowProps) {
-  const { folder, children, ...rest } = props
-  // 单 key 订阅 —— Zustand selector 返回 boolean，Object.is 比较；
-  // 仅该文件夹折叠状态变化才重渲染本组件，O(1) 而不是 O(N) 全列表。
-  const expanded = useTreeExpanded(`folder:${folder.id}`)
-  const toggleExpansion = useTreeExpansionStore((s) => s.toggle)
+ *  其他兄弟文件夹或外层 NoteFoldersSidebar 任何无关重渲染。
+ *
+ *  R-fix-NoteFoldersSidebar-handlers (perf, medium)：原版未 memo 包裹，
+ *  父组件 NoteFoldersSidebar 任何 render 都让所有 UserFolderRow 跟着 re-render。
+ *  现在加 React.memo + 自定义 comparator：忽略 handler 引用变化（行为依赖外部
+ *  store / setState，引用稳定即可；父组件已对 onOpenNote/onDeleteNote 等做了
+ *  useCallback）。关键数据字段变化（folder / children / hoverDrop /
+ *  renameId / renameText / hasSelectedChild）才触发重渲染。              */
+const UserFolderRow = memo(
+  function UserFolderRow(props: UserFolderRowProps) {
+    const { folder, children, ...rest } = props
+    // 单 key 订阅 —— Zustand selector 返回 boolean，Object.is 比较；
+    // 仅该文件夹折叠状态变化才重渲染本组件，O(1) 而不是 O(N) 全列表。
+    const expanded = useTreeExpanded(`folder:${folder.id}`)
+    const toggleExpansion = useTreeExpansionStore((s) => s.toggle)
 
-  return (
-    <FolderWithNotes
-      folder={folder}
-      label={folder.name}
-      colorKey={folder.color}
-      active={rest.activeFolderId === folder.id}
-      expanded={expanded}
-      children={children}
-      renaming={rest.renameId === folder.id}
-      renameText={rest.renameText}
-      currentPath={rest.currentPath}
-      acceptsDrop
-      isHovering={rest.hoverDrop === folder.id}
-      onRenameTextChange={rest.setRenameText}
-      onRenameConfirm={() => void rest.handleRename(folder.id)}
-      onRenameCancel={() => rest.setRenameId(null)}
-      onStartRename={() => {
-        rest.setRenameId(folder.id)
-        rest.setRenameText(folder.name)
-      }}
-      onDelete={async () => {
-        let count = 0
-        try {
-          const list = await noteFoldersApi.listByFolder(folder.id, {
-            archived: false,
-            limit: 10,
-          })
-          count = list.length
-        } catch {
-          /* ignore */
-        }
-        rest.setPendingDelete({ folder, detachedNotes: count })
-      }}
-      onRowClick={() => rest.onSelectFolder(folder.id)}
-      onToggleExpand={() => toggleExpansion(`folder:${folder.id}`)}
-      setHoverDrop={rest.setHoverDrop}
-      onDrop={rest.onDropToFolder}
-      onOpenNote={rest.onOpenNote}
-      onDeleteNote={rest.onDeleteNote}
-    />
-  )
-}
+    return (
+      <FolderWithNotes
+        folder={folder}
+        label={folder.name}
+        colorKey={folder.color}
+        active={rest.activeFolderId === folder.id}
+        expanded={expanded}
+        children={children}
+        renaming={rest.renameId === folder.id}
+        renameText={rest.renameText}
+        acceptsDrop
+        isHovering={rest.hoverDrop === folder.id}
+        onRenameTextChange={rest.setRenameText}
+        onRenameConfirm={() => void rest.handleRename(folder.id)}
+        onRenameCancel={() => rest.setRenameId(null)}
+        onStartRename={() => {
+          rest.setRenameId(folder.id)
+          rest.setRenameText(folder.name)
+        }}
+        onDelete={async () => {
+          // R-fix-NoteFoldersSidebar-delete-count (correctness, medium)：原版
+          // 走 listByFolder + limit:10 预拉一次只为拿数量，对 11+ 笔记的文件夹
+          // 直接说谎（"将分离 10 条" 实际可能分离更多）。删除的真正数量由
+          // 主进程 NOTE_FOLDER_DELETE 返回（{ deleted, detachedNotes }），
+          // 这里没必要再多发一次 IPC。确认弹窗改为通用文案「该文件夹下的笔记
+          // 会移至未分类」，让主进程去算账；结果仍可在删除后通过 toast 提示。
+          rest.setPendingDelete({ folder })
+        }}
+        onRowClick={() => rest.onSelectFolder(folder.id)}
+        onToggleExpand={() => toggleExpansion(`folder:${folder.id}`)}
+        setHoverDrop={rest.setHoverDrop}
+        onDrop={rest.onDropToFolder}
+        onOpenNote={rest.onOpenNote}
+        onDeleteNote={rest.onDeleteNote}
+        hasSelectedChild={rest.hasSelectedChild}
+      />
+    )
+  },
+  // 浅比较 comparator：folder 引用 + 数据字段相同才跳过重渲染。handler 引用
+  // 变化（onSelectFolder / onDropToFolder / onOpenNote / onDeleteNote /
+  // setHoverDrop / setRenameText / setRenameId / handleRename / setPendingDelete）
+  // 全部忽略 —— 它们的行为依赖外部稳定源（Zustand action / setState / 已 useCallback）。
+  (prev, next) =>
+    prev.folder === next.folder &&
+    prev.activeFolderId === next.activeFolderId &&
+    prev.hoverDrop === next.hoverDrop &&
+    prev.renameId === next.renameId &&
+    prev.renameText === next.renameText &&
+    prev.children === next.children &&
+    prev.hasSelectedChild === next.hasSelectedChild,
+)
 
 /** 二级笔记行 —— 显示标题 + 修改时间 + 删除按钮，点击切到当前笔记
  *
  * React.memo 自定义 comparator：
- *   - note 引用不变 + isSelected boolean 不变 + onOpen/onDelete 函数引用不变 → 跳过重渲染
- *   - onOpen/onDelete 由父级 useCallback 稳定（或这里忽略 reference 变化，
- *     因为这两个 handler 的逻辑只依赖当前 NoteMeta / 当前路由，行为稳定）
- *   - 关注点：点击其他文件夹 / 其他笔记切换时，本行不重新渲染；只有
- *     isSelected 切换 / note 引用变化 / handler 引用变化时才重渲染。
+ *   - note 引用不变 + handler 引用不变 → 跳过重渲染
+ *   - 选中态（isSelected）已下沉到本组件内 `useNotesStore((s) => s.currentPath === note.path)` 订阅：
+ *     只有「自己变成/脱离选中」那一行 re-render，不再把 currentPath 沿 FolderWithNotes 整树透传。
+ *   - onOpen/onDelete 由父级 useCallback 稳定（NotesTree 已包）。
  */
 const NoteSubRow = memo(
   function NoteSubRow({
     note,
-    isSelected,
     onOpen,
     onDelete,
   }: {
     note: NoteMeta
-    isSelected: boolean
     onOpen?: (n: NoteMeta) => void
     onDelete?: (n: NoteMeta) => void
   }) {
-  function fmt(iso: string): string {
-    try {
-      const d = new Date(iso)
-      const pad = (n: number) => String(n).padStart(2, '0')
-      return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
-    } catch {
-      return ''
+    const isSelected = useNotesStore((s) => s.currentPath === note.path)
+    function fmt(iso: string): string {
+      try {
+        const d = new Date(iso)
+        const pad = (n: number) => String(n).padStart(2, '0')
+        return `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      } catch {
+        return ''
+      }
     }
-  }
-  return (
-    <li className={`folder-child-row ${isSelected ? 'active' : ''}`}>
-      <button
-        type="button"
-        className="folder-child-btn"
-        onClick={() => onOpen?.(note)}
-        aria-current={isSelected ? 'page' : undefined}
-        title={note.path}
-      >
-        <span className="folder-child-title">{note.title}</span>
-        <span className="folder-child-time muted">{fmt(note.mtime)}</span>
-      </button>
-      {onDelete && (
+    return (
+      <li className={`folder-child-row ${isSelected ? 'active' : ''}`}>
         <button
           type="button"
-          className="folder-child-del-btn"
-          title="删除"
-          aria-label={`删除笔记 ${note.title}`}
-          onClick={(e) => {
-            e.stopPropagation()
-            onDelete(note)
-          }}
+          className="folder-child-btn"
+          onClick={() => onOpen?.(note)}
+          aria-current={isSelected ? 'page' : undefined}
+          title={note.path}
         >
-          ×
+          <span className="folder-child-title">{note.title}</span>
+          <span className="folder-child-time muted">{fmt(note.mtime)}</span>
         </button>
-      )}
-    </li>
-  )
+        {onDelete && (
+          <button
+            type="button"
+            className="folder-child-del-btn"
+            title="删除"
+            aria-label={`删除笔记 ${note.title}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(note)
+            }}
+          >
+            ×
+          </button>
+        )}
+      </li>
+    )
   },
-  // 浅比较 comparator：note 引用 + isSelected boolean 必须相同才跳过重渲染。
-  // onOpen/onDelete 函数引用可以变 —— 它们的行为只依赖当前 note / 当前路由，
-  // 由父组件 useCallback 进一步稳定，但这里不强制要求。
+  // 浅比较 comparator：note 引用 + handler 引用必须相同才跳过重渲染。
   (prev, next) =>
     prev.note === next.note &&
-    prev.isSelected === next.isSelected &&
     prev.onOpen === next.onOpen &&
     prev.onDelete === next.onDelete,
 )

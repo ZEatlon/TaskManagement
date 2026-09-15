@@ -19,8 +19,12 @@
  * - role="group" + aria-label 包裹三个按钮
  */
 import { useEffect, useState } from 'react'
+import { isMacPlatform } from '../../lib/shortcuts'
 
-const isMac = window.api.platform === 'darwin'
+// R32-Corr-1：统一走 lib/shortcuts.isMacPlatform()，preload 未就绪时回
+// 退到 navigator.platform，避免 `window.api === undefined` 时被误判成
+// Win/Linux 路径（否则会订阅 isMaximized + 渲染 max/min/close 按钮）。
+const isMac = isMacPlatform()
 
 export function WindowControls() {
   // R6R-2：必须先声明所有 hooks，再做 early-return —— 之前 isMac 早返会跳过

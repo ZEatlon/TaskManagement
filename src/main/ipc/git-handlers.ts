@@ -57,6 +57,44 @@ import { isBlockedHostname, assertHostnameStillPublic } from '../lib/networkSafe
 const SETTINGS_KEY = 'app.settings'
 
 /**
+ * git:log depth 上限：renderer 单次最多看 500 条提交。
+ *
+ * 防御场景：被攻陷的渲染端（XSS / 恶意 dev dep / window.api hijacker）
+ * 调 `window.api.git.log(1e9)`，让 isomorphic-git 在主进程事件循环里
+ * 走完整提交历史 → CPU + 内存被占满 → UI 卡死 + 自动同步被阻塞。
+ * 500 足够覆盖任意正常使用（commit history 浏览 / 渲染）。
+ */
+const MAX_LOG_DEPTH = 500
+const DEFAULT_LOG_DEPTH = 20
+
+/** commit message 字节上限（8 KiB；git 自身的「良好实践」上限） */
+const MAX_COMMIT_MESSAGE_BYTES = 8 * 1024
+
+/**
+ * R-Fix-GIT_AUTO_COMMIT_PUSH-input-validation (high security)：
+ * git:auto-commit-push 此前把 IPC args.message 直接透传给 runOnceNow，
+ * 绕过了 git:commit 在 IPC 边界做的 8 KiB 字节上限 + CR/Tab 清洗。
+ * 后果：被攻陷的渲染端可发 {message: 'A'.repeat(50_000_000)} 写一个
+ * 多 MB 的 commit object（IO + 内存爆），或在 message 里塞 CR / 竖向制表
+ * 符污染 git log 显示。统一在 helper 里做校验，GIT_COMMIT 和
+ * GIT_AUTO_COMMIT_PUSH 两入口都走它（runOnceNow 还会把 message 透传给
+ * commitAndPush → 同样的 commit() 调用被两条 IPC 路径触发）。
+ */
+function sanitizeCommitMessage(raw: unknown): string {
+  if (typeof raw !== 'string') {
+    throw new Error('commit message must be a string')
+  }
+  const bytes = Buffer.byteLength(raw, 'utf8')
+  if (bytes > MAX_COMMIT_MESSAGE_BYTES) {
+    throw new Error(
+      `commit message exceeds ${MAX_COMMIT_MESSAGE_BYTES} bytes (got ${bytes})`,
+    )
+  }
+  // 去掉 CR / Tab —— 多行 message 保留 LF（subject 空行 body 是合法格式）
+  return raw.replace(/[\r\t]+/g, ' ')
+}
+
+/**
  * 允许的远端协议。
  *
  * 只允许 https / ssh：
@@ -218,7 +256,18 @@ export function registerGitHandlers(): void {
       args: { message: string; author?: { name: string; email: string } },
     ): Promise<{ sha: string | null }> => {
       const dir = await requireLibraryPath()
-      const sha = await commit(dir, args.message, args.author)
+      // R-Fix-GIT_COMMIT-input-validation (medium)：原版直接透传 args.message
+      // 与 args.author 到 gitManager.commit()。被攻陷的渲染端可以：
+      //   1) message = 'A'.repeat(50_000_000) → isomorphic-git 写一个
+      //      多 MB 的 commit object，IO + 内存压力暴涨；
+      //   2) author = { name: 'Coworker', email: 'coworker@corp' } →
+      //      伪造 author identity，push 到共享远端后污染协作归因。
+      // 在 IPC 边界统一校验：message 走字节上限 + 控制字符清洗（helper
+      // 内做），author 永远不接收 —— commit 始终用 server-side 的
+      // DEFAULT_AUTHOR，与系统其余部分一致；如未来需要「用户配置身份」，
+      // 应来自 server-side settings 表，不是每条 IPC 入参）。
+      const sanitized = sanitizeCommitMessage(args?.message)
+      const sha = await commit(dir, sanitized)
       return { sha }
     },
   )
@@ -247,7 +296,16 @@ export function registerGitHandlers(): void {
   /** 最近 N 条提交（默认 20） */
   handle(IPC_CHANNELS.GIT_LOG, async (_e, args: { depth?: number }): Promise<GitLogEntry[]> => {
     const dir = await requireLibraryPath()
-    return getLog(dir, args?.depth ?? 20)
+    // R-Fix-GIT_LOG-depth-unbounded (low)：被攻陷的渲染端可调
+    // `git.log(1e9)` 让 isomorphic-git 走完整 commit 历史 → CPU
+    // 钉死 + UI 卡死。在 IPC 边界把 depth 钳到 [1, MAX_LOG_DEPTH]；
+    // gitManager.getLog 内部还有第二道 clamp 作 defense-in-depth。
+    const raw = args?.depth
+    const depth =
+      typeof raw === 'number' && Number.isFinite(raw)
+        ? Math.min(MAX_LOG_DEPTH, Math.max(1, Math.floor(raw)))
+        : DEFAULT_LOG_DEPTH
+    return getLog(dir, depth)
   })
 
   /** 读取 remote URL */
@@ -345,7 +403,15 @@ export function registerGitHandlers(): void {
   handle(
     IPC_CHANNELS.GIT_AUTO_COMMIT_PUSH,
     async (_e, args: { message: string }): Promise<{ ok: true; sha: string | null }> => {
-      const result = await runOnceNow(args.message)
+      // R-Fix-GIT_AUTO_COMMIT_PUSH-input-validation (high security)：
+      // 复用 sanitizeCommitMessage helper —— 此入口此前直接透传
+      // args.message 到 runOnceNow，绕过字节上限 + CR/Tab 清洗，与
+      // git:commit 形成 handler-to-handler 不一致。现在两入口共用
+      // 同一道闸门；runOnceNow 在 cron / 5s 初始 timer 路径里不接收
+      // 外部 message，所以这条 helper 只覆盖 IPC 入口，cron tick 用
+      // defaultCommitMessage() 走纯 server-side 字符串，本身安全。
+      const sanitized = sanitizeCommitMessage(args?.message)
+      const result = await runOnceNow(sanitized)
       if (!result.ok) {
         throw new Error(result.error ?? 'git auto commit+push failed')
       }

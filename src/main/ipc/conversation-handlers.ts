@@ -6,6 +6,14 @@ import { handle } from './channels'
 import { conversationsRepo } from '../db/repositories/conversations'
 import type { AiMessage } from '@shared/types/ai'
 import { IPC_CHANNELS } from '@shared/ipc/channels'
+import { hasToolCallField, stripToolCallFields } from './ipcSanitizers'
+import {
+  MAX_MESSAGE_CONTENT_BYTES,
+  MAX_MODEL_BYTES,
+  MAX_PROVIDER_BYTES,
+  MAX_TITLE_BYTES,
+  RENDERER_ALLOWED_MESSAGE_ROLES,
+} from './ipcLimits'
 
 /**
  * R12 修复 (medium)：对话相关 IPC 入参边界检查。
@@ -23,10 +31,58 @@ import { IPC_CHANNELS } from '@shared/ipc/channels'
  * 送 LLM，让 LLM 误信之前工具已产生副作用（写文件 / 删便签 / 网络请求）并据此继续
  * 后续敏感操作。Handler 层直接拒绝 renderer 提交 tool 消息 —— 真实工具消息由主进程
  * tools.ts / stream.ts 内部 append 调用 conversationsRepo.appendMessage 写入，绕过 IPC。
+ *
+ * R35-Corr-2 修复 (medium input-validation-conversation-asymmetry)：note-handlers /
+ * sticky-note-handlers 已在 R33-Corr-4 / R34-Corr-1a 引入 `assertId` 防御 IPC
+ * 信任边界注入（被攻渲染端 / devtools / 落后 schema 的旧渲染端可发 number/object/
+ * 空串 / `{ evil: 1 }`，TS 类型只是装饰）。conversation-handlers 这边 4 个 handler
+ * （AI_GET_CONVERSATION / AI_UPDATE_TOKENS / AI_UPDATE_TITLE / AI_DELETE_CONVERSATION）
+ * 完全没做 id 运行时校验 —— 与 note-handlers 形成不对称。补 assertId 让 4 个
+ * handler 走同一防御模式。
+ *
+ * R41 修复 (medium token-injection-oversize-clamp)：AI_UPDATE_TOKENS 把
+ * args.input / args.output 透传到 conversationsRepo.updateTokens（直接
+ * 走 better-sqlite3 binding 到 INTEGER 列），没有任何数字范围校验。
+ * 被攻渲染端可发 `{ input: Number.MAX_SAFE_INTEGER * 1000, output: -1 }`
+ * → SQLite INTEGER 列虽然不会抛错（整数溢出被静默 wrap 到 2^63 范围），
+ * 但下游 UI（用量面板 / token 配额判断 / 模型限额预警）会读到错误的
+ * 「天文数字」，让用户看不见实际产生过的 LLM 消耗（被静默 reset / 错
+ * 配后的负值会让 token 总和看起来「回退」）。修复：input / output 走
+ * Number.isFinite + Math.max(0, Math.floor(...)) clamp 到 [0,
+ * Number.MAX_SAFE_INTEGER] 整数区间。
+ *
+ * 注：MAX_TITLE_BYTES / MAX_MESSAGE_CONTENT_BYTES / RENDERER_ALLOWED_MESSAGE_ROLES
+ * 现已统一搬到 ./ipcLimits.ts（与 ai-handlers 共用同一来源）。下一轮新增跨
+ * handler 约束也放那里。
  */
-const MAX_TITLE_BYTES = 500
-const MAX_MESSAGE_CONTENT_BYTES = 200_000
-const RENDERER_ALLOWED_MESSAGE_ROLES = new Set(['user', 'assistant'])
+
+/**
+ * R35-Corr-2 模式：IPC 边界 id 非空字符串运行时断言。inline 函数体复用，
+ * 不引新模块；非法入参直接抛 Error（与 sticky-note / note handler 风格
+ * 一致），上层 channels.ts 的 try/catch 会把它转成 IPC reject 给渲染端。
+ */
+function assertNonEmptyStringId(id: unknown, channel: string): asserts id is string {
+  if (typeof id !== 'string' || id.trim() === '') {
+    throw new Error(`${channel}: id must be non-empty string`)
+  }
+}
+
+/**
+ * R41 修复：把任意 number 入参 clamp 到 [0, Number.MAX_SAFE_INTEGER] 的
+ * 整数区间。NaN / Infinity / 负数 / 浮点 / 超大值全部归一：
+ *   - NaN / Infinity / 非有限数 → 0（不抛错，避免 IPC reject 流）
+ *   - 负数 → 0（token 计数语义上不能为负）
+ *   - 浮点 → Math.floor（SQLite INTEGER 列只接受整数；浮点会触发
+ *     better-sqlite3 RangeError "Too big or wrong number of arguments"）
+ *   - 超过 MAX_SAFE_INTEGER → MAX_SAFE_INTEGER（避免整数溢出 wrap）
+ */
+function clampTokenCount(n: unknown): number {
+  if (typeof n !== 'number' || !Number.isFinite(n)) return 0
+  const floored = Math.floor(n)
+  if (floored < 0) return 0
+  if (floored > Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER
+  return floored
+}
 
 export function registerConversationHandlers(): void {
   handle(
@@ -49,9 +105,16 @@ export function registerConversationHandlers(): void {
       return conversationsRepo.findAll(limit, { folderId })
     },
   )
-  handle(IPC_CHANNELS.AI_GET_CONVERSATION, async (_e, id: string) =>
-    conversationsRepo.findById(id),
-  )
+  handle(IPC_CHANNELS.AI_GET_CONVERSATION, async (_e, id: string) => {
+    // R35-Corr-2 (medium input-validation-conversation-asymmetry)：与
+    // note-handlers.ts:123 / sticky-note-handlers.ts:154 同款 assertId。
+    // id 直接透传到 conversationsRepo.findById（better-sqlite3 binding），
+    // 非 string 入参（number/object/null/空串）会让 SQLite 把对象绑成
+    // "[object Object]" 或命中 WHERE id=NULL 影响 0 行，破坏调用方
+    // 信任假设。
+    assertNonEmptyStringId(id, IPC_CHANNELS.AI_GET_CONVERSATION)
+    return conversationsRepo.findById(id)
+  })
   handle(
     IPC_CHANNELS.AI_CREATE_CONVERSATION,
     async (
@@ -61,11 +124,39 @@ export function registerConversationHandlers(): void {
         model: string
         title?: string | null
         folderId?: string | null
+        titleIsAuto?: boolean | null
       },
     ) => {
+      // R45-fix-conversation-provider-model-oversize (medium input-validation-
+      // resource-exhaustion)：provider / model 跨 IPC 信任边界（被攻渲染端
+      // / devtools / preload），TS string 只是装饰；原 handler 只校验 title
+      // 字节上限，provider / model 走 better-sqlite3 parameterized INSERT
+      // 写到 TEXT 列，被攻可塞 50 MB × 50 MB 单条 ~100 MB 行 → findAll(limit)
+      // 扫描撑爆 IPC reply 内存。合法值集合已知且小（openai/anthropic/
+      // gemini/ollama/... + 具体模型名），64 / 128 字节硬上限足矣。
+      if (typeof input.provider !== 'string'
+          || Buffer.byteLength(input.provider, 'utf8') > MAX_PROVIDER_BYTES) {
+        throw new Error(
+          `conversation: provider must be a string <= ${MAX_PROVIDER_BYTES} bytes`,
+        )
+      }
+      if (typeof input.model !== 'string'
+          || Buffer.byteLength(input.model, 'utf8') > MAX_MODEL_BYTES) {
+        throw new Error(
+          `conversation: model must be a string <= ${MAX_MODEL_BYTES} bytes`,
+        )
+      }
       if (input.title && Buffer.byteLength(input.title, 'utf8') > MAX_TITLE_BYTES) {
         throw new Error(`conversation: title exceeds ${MAX_TITLE_BYTES} bytes`)
       }
+      // R-fix-i18n-conv-title-placeholder-flag：渲染端 newConversation 在
+      // 生成『新对话 · datetime』占位时显式传 true，由 repo 写进
+      // title_is_auto 列；title_updated 事件 handler 据此判定是否覆盖，
+      // 不再 prefix-match 字面量。AI_UPDATE_TITLE 走 updateTitle 把它
+      // 置回 0。input.titleIsAuto 非布尔时回退到 false（占位 flag 不
+      // 是高敏感字段，宁缺勿滥，避免被攻渲染端误把它开到 true 后用
+      // 后续 LLM 重写覆盖用户已手动改的名字）。
+      const titleIsAuto = input.titleIsAuto === true
       return conversationsRepo.create({
         id: randomUUID(),
         provider: input.provider,
@@ -75,6 +166,7 @@ export function registerConversationHandlers(): void {
         tokenInput: 0,
         tokenOutput: 0,
         folderId: input.folderId ?? null,
+        titleIsAuto,
       })
     },
   )
@@ -131,25 +223,20 @@ export function registerConversationHandlers(): void {
       // `{tool_calls:[{id, type:'function', function:{name:'deleteNote', ...}}]}`
       // (snake_case) 落库，下次 ai:stream 把伪造"我之前调过 deleteNote"
       // 当真，让 LLM 跳过当前真实调用或据此执行破坏性后续操作。
-      // 修复：用 `^tool[_-]?calls?$` 正则（mirror ai-handlers.ts:170-191 的
+      // 修复：用 `^tool[_-]?calls?$` 正则（mirror ai-handlers.ts 的
       // R27-Sec-4 修复）覆盖所有变体；同时也剥 function_call /
       // tool_call_id / name 工具辅助字段，防止伪造的 tool 执行回执。
       // 任何 role（不只是 assistant）都要做，避免被 system / user 角色绕开。
-      const toolCallKeyRe = /^tool[_-]?calls?$/i
-      const helperKeyRe = /^(function_call|tool_call_id|name)$/i
-      let needsClone = false
-      for (const k of Object.keys(args.message)) {
-        if (toolCallKeyRe.test(k) || helperKeyRe.test(k)) {
-          needsClone = true
-          break
-        }
-      }
-      if (needsClone) {
-        const cloned: Record<string, unknown> = {}
-        for (const [k, v] of Object.entries(args.message)) {
-          if (!toolCallKeyRe.test(k) && !helperKeyRe.test(k)) cloned[k] = v
-        }
-        await conversationsRepo.appendMessage(args.id, cloned as unknown as AiMessage)
+      //
+      // R32-Corr-9 修复 (MEDIUM helperKeyRe-divergence)：regex + strip
+      // 逻辑已统一搬到 ./ipcSanitizers.ts，本 handler 与 ai-handlers
+      // 共用 `hasToolCallField` + `stripToolCallFields`。下一次新增
+      // 工具辅助字段只需改一处。
+      if (hasToolCallField(args.message as unknown as Record<string, unknown>)) {
+        await conversationsRepo.appendMessage(
+          args.id,
+          stripToolCallFields(args.message as unknown as Record<string, unknown>) as unknown as AiMessage,
+        )
         return { ok: true }
       }
       await conversationsRepo.appendMessage(args.id, args.message)
@@ -159,13 +246,22 @@ export function registerConversationHandlers(): void {
   handle(
     IPC_CHANNELS.AI_UPDATE_TOKENS,
     async (_e, args: { id: string; input: number; output: number }) => {
-      await conversationsRepo.updateTokens(args.id, args.input, args.output)
+      // R35-Corr-2：args.id 同上需要 assertId。
+      assertNonEmptyStringId(args?.id, IPC_CHANNELS.AI_UPDATE_TOKENS)
+      // R41 (medium token-injection-oversize-clamp)：input/output 走
+      // clampTokenCount —— NaN/Infinity/负数/浮点/超大值都归一到合法
+      // 整数区间，详见 clampTokenCount 注释。
+      const input = clampTokenCount(args?.input)
+      const output = clampTokenCount(args?.output)
+      await conversationsRepo.updateTokens(args.id, input, output)
       return { ok: true }
     },
   )
   handle(
     IPC_CHANNELS.AI_UPDATE_TITLE,
     async (_e, args: { id: string; title: string }) => {
+      // R35-Corr-2：args.id 同上需要 assertId（title 已有 byteLength 上限 OK）。
+      assertNonEmptyStringId(args?.id, IPC_CHANNELS.AI_UPDATE_TITLE)
       if (typeof args.title !== 'string'
           || Buffer.byteLength(args.title, 'utf8') > MAX_TITLE_BYTES) {
         throw new Error(`conversation: title exceeds ${MAX_TITLE_BYTES} bytes`)
@@ -175,6 +271,9 @@ export function registerConversationHandlers(): void {
     },
   )
   handle(IPC_CHANNELS.AI_DELETE_CONVERSATION, async (_e, id: string) => {
+    // R35-Corr-2：id 直接透传到 conversationsRepo.delete（DELETE SQL），
+    // 非 string 入参影响 0 行但破坏调用方信任假设；与 sibling handler 对齐。
+    assertNonEmptyStringId(id, IPC_CHANNELS.AI_DELETE_CONVERSATION)
     await conversationsRepo.delete(id)
     return { ok: true }
   })

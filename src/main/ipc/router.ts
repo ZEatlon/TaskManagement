@@ -6,7 +6,8 @@
  * 「任务」概念完全由 stickyNotesApi 承载（一张便签 = 一组任务）。
  */
 import { shell } from 'electron'
-import { CHANNELS, handle } from './channels'
+import { handle } from './channels'
+import { IPC_CHANNELS as CHANNELS } from '@shared/ipc/channels'
 import log from '../log'
 import { registerTagHandlers } from './tag-handlers'
 import { registerSettingHandlers } from './setting-handlers'
@@ -59,16 +60,15 @@ export function registerIpcHandlers(): void {
       throw new Error(`system:open-external: 不允许的协议 '${parsed.protocol}'`)
     }
     if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-      // 借用 git-handlers.ts:116 / setting-handlers.ts 已用的 isBlockedHostname
-      // 词法黑名单；DNS 解析后的运行时 rebinding 校验不适用于「用户点链接就开」
-      // 场景（用户期望一次点击立刻打开，再异步校验会破坏体验），仅用词法黑名单
-      // 拦最常见的 loopback / 私有 / 常见 local-suffix 域名。
-      const { isBlockedHostname } = await import('../lib/networkSafety')
-      if (isBlockedHostname(parsed.hostname)) {
-        throw new Error(
-          `system:open-external: 目标主机 '${parsed.hostname}' 是 loopback / 私有 / link-local，不允许通过本应用打开`,
-        )
-      }
+      // R-Fix-SYSTEM_OPEN_EXTERNAL-rebinding (medium SSRF)：
+      // 词法 isBlockedHostname 拦不住公共 wildcard DNS（nip.io / sslip.io /
+      // lvh.me / 攻击者控制域名临时改 A 记录到 127.0.0.1）—— DNS 解析时再
+      // 校验一道闸门。await dns.lookup + 任一返回 IP 落在 blocked 范围即拒。
+      // 用户点链接就开的"延迟"在毫秒级，对 inline click 体验无感，且关键
+      // 是 IPC 入口对任何渲染端（含被 XSS 劫持的笔记）都开放，"用户点击"
+      // UX 论证不成立。
+      const { assertHostnameStillPublic } = await import('../lib/networkSafety')
+      await assertHostnameStillPublic(parsed.hostname)
     }
     await shell.openExternal(url)
     return { ok: true }

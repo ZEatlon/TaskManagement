@@ -7,10 +7,7 @@
  * 与 completionsRepo / noteEventsRepo 同模式：仅暴露 dailyCounts(start, end)。
  */
 import { dbClient } from '../client'
-
-/** R28-Perf-3：per-repo stmtCache + invalidate 钩子 */
-const pomodorosStmtCache = new Map<string, number>()
-let pomodorosInvalidatorRegistered = false
+import { prepareCached } from '../cachedStmt'
 
 /**
  * R10 修复：计算"UTC ISO → 本地日期"需要的分钟偏移。
@@ -48,27 +45,16 @@ export class PomodorosRepository {
     const mod = localOffsetModifier()
     // R28-Perf-3 修复 (high perf)：dailyMinutes 是热力图 / 完成事件后刷
     // 新的 hot path；原 R25 走 try/finally finalize 仍每次付一次 IPC。
-    // SQL 是常量（除 ? 绑定参数外），引入 per-repo stmtCache 命中后直
-    // 接拿 stmtId，不再 finalize。worker respawn 时 cache 被 invalidate
-    // 自动清空。
-    if (!pomodorosInvalidatorRegistered) {
-      dbClient.registerStmtCacheInvalidator(() => {
-        pomodorosStmtCache.clear()
-      })
-      pomodorosInvalidatorRegistered = true
-    }
+    // SQL 是常量（除 ? 绑定参数外），改为走 module-scope prepareCached
+    // 共享 cache：同一 SQL 文本命中即返回 stmtId，不再 finalize。
+    // worker respawn 时 cache 由 prepareCached 内部的 invalidator 自动
+    // 清空。
     const sql = `SELECT date(started_at, ?) as d, SUM(duration_min) as minutes
                  FROM pomodoros
                  WHERE date(started_at, ?) BETWEEN ? AND ?
                    AND completed = 1
                  GROUP BY d ORDER BY d ASC`
-    let stmtId = pomodorosStmtCache.get(sql)
-    if (stmtId === undefined) {
-      stmtId = (
-        await dbClient.call<{ stmtId: number }>('prepare', { sql })
-      ).stmtId
-      pomodorosStmtCache.set(sql, stmtId)
-    }
+    const stmtId = await prepareCached(sql)
     const rows = (await dbClient.call('all', {
       stmtId,
       params: [mod, mod, startDate, endDate],

@@ -9,7 +9,7 @@ import { useAiStore } from '../../stores/ai'
 import { MiniPomodoro } from '../pomodoro/MiniPomodoro'
 import { WindowControls } from './WindowControls'
 import { BrandMark } from '../brand/BrandMark'
-import { findShortcutDef, formatShortcutForOS } from '../../lib/shortcuts'
+import { findShortcutDef, formatShortcutForOS, isMacPlatform } from '../../lib/shortcuts'
 import { useSettingsStore } from '../../stores/settings'
 
 /**
@@ -97,7 +97,10 @@ export function Header() {
 
   // 在 Windows / Linux 上，titleBarStyle: 'hidden' 不会自动支持双击最大化；
   // 我们手动接管 drag 区域上的双击事件，复刻 macOS 行为。
-  const isMac = window.api.platform === 'darwin'
+  // R32-Corr-1：统一走 lib/shortcuts.isMacPlatform()，preload 未就绪时回
+  // 退到 navigator.platform，避免 `window.api === undefined` 时被误判成
+  // Win/Linux 路径。
+  const isMac = isMacPlatform()
   const handleHeaderDoubleClick = (e: React.MouseEvent<HTMLElement>) => {
     if (isMac) return // macOS hiddenInset 自带双击行为
     // 命中 WindowControls 区域则不处理（避免和 close/min/max 冲突）

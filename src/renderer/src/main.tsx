@@ -9,6 +9,10 @@ import { createAppRouter } from './router'
 import { installPomodoroListeners } from './stores/pomodoro'
 import { installAiListeners } from './stores/ai'
 import { useGitStore } from './stores/git'
+import {
+  setAppRouter,
+  installNavigateListener,
+} from './lib/navigateBridge'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
 import { AriaAnnouncerMount } from './components/common/AriaAnnouncer'
 import './styles/index.css'
@@ -27,6 +31,10 @@ import './styles/sticky-notes.css'
 import './styles/dashboard.css'
 
 const router = createAppRouter()
+// R33-fix：把 router 实例注入到 lib/navigateBridge，AI navigate 工具的
+// `app:navigate` 事件会通过它调 router.navigate()。必须在 installNavigateListener
+// 之前调用，否则 listener 收到的首条事件会因 router 为 null 而 no-op。
+setAppRouter(router)
 
 /**
  * H4 修复 (high reliability)：原版 installPomodoroListeners /
@@ -61,6 +69,10 @@ const disposePomodoroListeners = safeInstall('pomodoro listeners', installPomodo
 // 安装 AI 流事件监听（主进程推送 -> store）
 const disposeAiListeners = safeInstall('ai listeners', installAiListeners)
 
+// R33-fix：安装 AI navigate 事件监听（主进程 app:navigate -> router.navigate）。
+// 必须在 router 实例注入之后安装；不需要 React 树就绪，模块级监听即可。
+const disposeNavigateListener = safeInstall('navigate listener', installNavigateListener)
+
 // 初始化 git store：注册主进程推送事件 + 拉取初始状态
 // 必须在此处调用，否则主进程推送的 GIT_STATE_CHANGED / SYNC_START / SYNC_END / SYNC_ERROR
 // 事件在渲染端无人订阅，UI 永远停留在 'idle'，同步指示器不会响应 autoSync。
@@ -82,6 +94,7 @@ try {
 import.meta.hot?.dispose(() => {
   disposePomodoroListeners?.()
   disposeAiListeners?.()
+  disposeNavigateListener?.()
   useGitStore.getState().dispose()
 })
 

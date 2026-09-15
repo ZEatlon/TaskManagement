@@ -121,10 +121,16 @@ export function ConflictDialog({ open, path, localContent, remoteContent, onClos
 
           <div className="conflict-tabs" role="tablist" aria-label="冲突解决方式">
             {/* R12 修复 (high)：conflict tabs 之前没有 role/aria-selected，
-                屏幕阅读器无法识别当前选中的 tab。补齐 a11y 与方向键导航。 */}
+                屏幕阅读器无法识别当前选中的 tab。补齐 a11y 与方向键导航。
+                R31-a11y-tab-panel (high)：补 tab ↔ tabpanel 配对：每个 tab 加 id
+                + aria-controls 指向对应 panel；panel 加 role="tabpanel" +
+                aria-labelledby 回指 tab + tabIndex={0} 可获焦；merge 面板的
+                textarea 加 aria-labelledby 关联 tab 标题，避免 SR 报无标签文本框。 */}
             <button
+              id="conflict-tab-local"
               role="tab"
               aria-selected={tab === 'local'}
+              aria-controls="conflict-panel-local"
               tabIndex={tab === 'local' ? 0 : -1}
               className={`tab ${tab === 'local' ? 'active' : ''}`}
               onClick={() => setTab('local')}
@@ -143,8 +149,10 @@ export function ConflictDialog({ open, path, localContent, remoteContent, onClos
               本地版本
             </button>
             <button
+              id="conflict-tab-remote"
               role="tab"
               aria-selected={tab === 'remote'}
+              aria-controls="conflict-panel-remote"
               tabIndex={tab === 'remote' ? 0 : -1}
               className={`tab ${tab === 'remote' ? 'active' : ''}`}
               onClick={() => setTab('remote')}
@@ -163,8 +171,10 @@ export function ConflictDialog({ open, path, localContent, remoteContent, onClos
               磁盘版本
             </button>
             <button
+              id="conflict-tab-merge"
               role="tab"
               aria-selected={tab === 'merge'}
+              aria-controls="conflict-panel-merge"
               tabIndex={tab === 'merge' ? 0 : -1}
               className={`tab ${tab === 'merge' ? 'active' : ''}`}
               onClick={() => setTab('merge')}
@@ -186,18 +196,42 @@ export function ConflictDialog({ open, path, localContent, remoteContent, onClos
 
           <div className="conflict-content">
             {tab === 'local' && (
-              <pre className="diff local">{localContent}</pre>
+              <pre
+                id="conflict-panel-local"
+                role="tabpanel"
+                aria-labelledby="conflict-tab-local"
+                tabIndex={0}
+                className="diff local"
+              >
+                {localContent}
+              </pre>
             )}
             {tab === 'remote' && (
-              <pre className="diff remote">{remoteContent}</pre>
+              <pre
+                id="conflict-panel-remote"
+                role="tabpanel"
+                aria-labelledby="conflict-tab-remote"
+                tabIndex={0}
+                className="diff remote"
+              >
+                {remoteContent}
+              </pre>
             )}
             {tab === 'merge' && (
-              <textarea
-                className="merge-textarea"
-                value={merged}
-                onChange={(e) => setMerged(e.target.value)}
-                spellCheck={false}
-              />
+              <div
+                id="conflict-panel-merge"
+                role="tabpanel"
+                aria-labelledby="conflict-tab-merge"
+                tabIndex={0}
+              >
+                <textarea
+                  className="merge-textarea"
+                  value={merged}
+                  onChange={(e) => setMerged(e.target.value)}
+                  spellCheck={false}
+                  aria-label="手动合并内容"
+                />
+              </div>
             )}
           </div>
         </div>

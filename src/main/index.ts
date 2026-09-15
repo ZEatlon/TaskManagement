@@ -21,6 +21,7 @@ import { isFirstRun } from './lib/libraryManager'
 import { notesManager } from './notes/notesManager'
 import { startPomodoroService, stopPomodoroService } from './pomodoro/pomodoroService'
 import { grantAttachmentPrivileges, registerAttachmentProtocol } from './attachments/protocol'
+import { startNotifier, stopNotifier } from './sticky-notes'
 trace('index.ts:all-imports-done')
 
 const isDev = !app.isPackaged
@@ -100,9 +101,11 @@ if (!gotTheLock) {
       log.warn('[boot] mock seed init failed', err)
     }
 
-    // 启动系统托盘（失败不影响主流程）
+    // 启动系统托盘（失败不影响主流程）。
+    // R-fix-i18n-tray-menu (high)：initTray 改为 async，需要 await 拿到
+    // settings.language → 渲染 locale 文案。失败时整体回退到默认 locale。
     try {
-      initTray()
+      await initTray()
     } catch (err) {
       log.warn('[boot] tray init failed', err)
     }
@@ -119,6 +122,14 @@ if (!gotTheLock) {
       startPomodoroService()
     } catch (err) {
       log.warn('[boot] pomodoro service start failed', err)
+    }
+
+    // 启动便签提醒派发服务（30s 扫描 + 系统通知 + IPC 推送）
+    // 与 pomodoroService 一样容错启动：失败不影响主流程。
+    try {
+      startNotifier()
+    } catch (err) {
+      log.warn('[boot] sticky notifier start failed', err)
     }
 
     // 启动 Git 自动同步调度器（库目录就绪且 settings.gitAutoPushEnabled 时生效）
@@ -145,10 +156,15 @@ if (!gotTheLock) {
         stopAutoSync()
         stopScheduler()
         stopPomodoroService()
+        // R28 修复 (medium)：stopNotifier 现在是 async，必须 await 以保证
+        // in-flight scanOnce 落地后再 finalizeCachedStmts；否则 scanOnce 链
+        // 上的 dbClient.call('run') 会命中已 finalize 的 stmtId 报错，setInterval
+        // .catch 静默吞错 → notified_at 没落库 → 用户重复收到同一条便签提醒。
+        await stopNotifier()
         destroyTray()
         await notesManager.stopWatching()
       } catch (err) {
-        log.warn('[shutdown] scheduler/tray/autoSync/pomodoro stop failed', err)
+        log.warn('[shutdown] scheduler/tray/autoSync/pomodoro/notifier stop failed', err)
       }
       try {
         await closeDatabase()

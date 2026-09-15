@@ -13,14 +13,26 @@
  * 取消机制：通过 AbortController + activeStreams 表。
  */
 import type { ChatChunk, Message, ToolDefinition } from './provider'
+import type { AiErrorReason } from './provider'
 import { chat as routerChat } from './router'
-import { executeTool, getToolDefinitions, setCurrentCallerWebContentsId, runWithCallerContext } from './tools'
+import {
+  executeTool,
+  getToolDefinitions,
+  setCurrentCallerWebContentsId,
+  runWithCallerContext,
+  getAiContextByWebContents,
+  buildAiContextPrompt,
+  getCurrentOpenNoteByWebContents,
+  __bindActiveStreamsAccessor,
+} from './tools'
 import { conversationsRepo } from '../db/repositories/conversations'
 import { dbClient } from '../db/client'
 import log from '../log'
 import { IPC_CHANNELS } from '@shared/ipc/channels'
 import { scheduleAutoTitle } from './autoTitle'
 import { SYSTEM_PROMPT } from './prompts'
+import { buildConfirmSummary } from './confirmSummary'
+import { localDayKeyOf } from '@shared/lib/dayKey'
 import type { BrowserWindow } from 'electron'
 
 /**
@@ -37,6 +49,38 @@ interface ActiveStream {
   webContentsId: number | null
 }
 const activeStreams = new Map<string, ActiveStream>()
+
+/**
+ * R-fix-caller-context-leak (medium correctness)：把 activeStreams 的访问
+ * 桥挂到 context.ts —— clearWebContentsNoteState 销毁 webContents 时要
+ * abort 该 wc 拥有的所有 in-flight 流。这里只导出最小需要的两个操作
+ * （snapshot 拥有者对、abort by callId），避免 stream.ts 暴露完整 abortStream
+ * 所有权校验逻辑给 context.ts（防止绕过 R32-03 修复的越权校验）。
+ */
+__bindActiveStreamsAccessor(
+  function* snapshotActiveStreamOwners(): IterableIterator<[string, number | null]> {
+    for (const [callId, entry] of activeStreams) {
+      yield [callId, entry.webContentsId]
+    }
+  },
+  function abortActiveStreamByCallId(callId: string): void {
+    const entry = activeStreams.get(callId)
+    if (!entry) return
+    // 这里只由 context.clearWebContentsNoteState(已被销毁的 wcId) 调用，
+    // 所有权隐式匹配（wcId == entry.webContentsId）已在外层 for-of 保证；
+    // 不再走 abortStream() 二次校验以避免循环依赖（abortStream 在同模块
+    // 内部能直接 entry.controller.abort()，更便宜）。
+    try {
+      entry.controller.abort()
+    } catch {
+      /* abort 自身可能抛（罕见），吞掉 —— 清理路径不能崩 */
+    }
+    activeStreams.delete(callId)
+    // 流主动 abort 时把挂起的 confirm 一并清掉，避免 confirm 端
+    // 调 confirmToolCall(callId, ...) 时命中一个不再等待的 promise。
+    clearPendingConfirms(callId)
+  },
+)
 
 /** 最大多轮工具迭代轮次（防止死循环） */
 const MAX_TOOL_ROUNDS = 6
@@ -110,6 +154,12 @@ export function confirmToolCall(callId: string, toolCallId: string, approved: bo
  * 永远是空，confirm 永远走 fallback 分支 resolve(false)，每个副作用工具都
  * 被自动拒绝。现已统一：runStream 调本函数，confirm 端按 (callId, toolCallId)
  * 复合键查找。
+ *
+ * R-fix-toctou-one-shot：本函数**不再**做 consumedOneShotIds 重放检查。
+ * 抢占与去重的责任已上提到 runStream 的 for-of 循环开头（has() → add()
+ * 暂存 → 执行成功/失败/拒绝各分支 delete/add 收尾）。这里再 has() 检查
+ * 会把 runStream 自己刚刚暂存的占位误判为「已消费」→ 每个副作用工具
+ * 都被自动拒绝，破坏现有确认流。仅保留 emit 与 pendingConfirms 的注册逻辑。
  */
 export function awaitToolConfirmation(
   callId: string,
@@ -119,10 +169,6 @@ export function awaitToolConfirmation(
   emit: (e: StreamEvent) => void,
   signal: AbortSignal,
 ): Promise<boolean> {
-  // R8I-3：one-shot 重放保护 —— 如果该 id 已经消费过，直接拒绝
-  if (consumedOneShotIds.has(toolCallId)) {
-    return Promise.resolve(false)
-  }
   return new Promise<boolean>((resolve) => {
     if (signal.aborted) {
       resolve(false)
@@ -199,22 +245,6 @@ export function clearPendingConfirms(callId: string): void {
   }
 }
 
-/** R8I-2：从工具参数生成人类可读的摘要 */
-function buildConfirmSummary(toolName: string, args: Record<string, unknown>): string {
-  switch (toolName) {
-    case 'createSticky':
-      return `创建便签 "${String(args['title'] ?? '').slice(0, 40)}"`
-    case 'updateSticky':
-      return `更新便签 ${String(args['id'] ?? '').slice(0, 8)}`
-    case 'completeSticky':
-      return `标记便签 ${String(args['id'] ?? '').slice(0, 8)} 为完成`
-    case 'createNote':
-      return `创建笔记 "${String(args['title'] ?? '').slice(0, 40)}"`
-    default:
-      return `执行 ${toolName}`
-  }
-}
-
 /** 流式响应请求体 */
 export interface StreamRequest {
   /** 流唯一 id，用于取消 */
@@ -242,12 +272,37 @@ export interface StreamRequest {
 export type StreamEvent =
   | { type: 'text'; text: string; callId: string }
   | { type: 'tool_call'; callId: string; toolCallId: string; toolName: string; args: unknown }
-  | { type: 'tool_result'; callId: string; toolName: string; result: unknown }
+  | {
+      type: 'tool_result'
+      callId: string
+      /** R-fix-parallel-tool-result：携带 tc.id 让渲染端按 id 精确匹配，
+       *  避免 LLM 在同一轮并发调用同名工具（如两个 createSticky）时按
+       *  name 反向匹配到最后一条 calling → 结果颠倒。 */
+      toolCallId: string
+      toolName: string
+      result: unknown
+    }
   | { type: 'usage'; callId: string; input: number; output: number }
   | { type: 'round_start'; callId: string; round: number }
   | { type: 'round_end'; callId: string; round: number }
   | { type: 'done'; callId: string; persistError?: string }
-  | { type: 'error'; callId: string; message: string }
+  | {
+      type: 'error'
+      callId: string
+      message: string
+      /**
+       * R32-04：AI 路由层在发起请求前做的配置/安全预检失败原因。
+       * 渲染端据此区分「AI 总开关未开」「未选 provider」「DNS 拦截」，
+       * 不再一律误报为"对话未持久化"。
+       *
+       * R-fix-llm-error-vs-persist：新增 'llm-error' 表示 SDK 在 chat()
+       * catch 块抛出的真实 LLM 错误（401/403/404/429/5xx/fetch failed/
+       * aborted 等）。stream.ts 看到 reason='llm-error' 时不把 message
+       * 塞进 done.persistError —— 那是 LLM 故障不是 DB 故障，不应让
+       * 渲染端 banner 误报为「对话未持久化」。
+       */
+      reason?: AiErrorReason
+    }
   | { type: 'aborted'; callId: string }
   // R8I-2：副作用工具挂起 → 等用户确认
   | {
@@ -332,8 +387,33 @@ export async function runStream(
     // 角色定位 / 工具使用约定 / 中文润色 / 步骤拆解规则。修复：在主进程
     // 边界硬注入 SYSTEM_PROMPT，保证无论渲染端如何变化（甚至将来放弃 IPC
     // 拿 system prompt），system 消息都在第一位。
+    //
+    // 上下文注入（InlineAIButton 配套）：把"用户当前正在编辑便签 X /
+    // 笔记 Y / 番茄钟正在跑 Z 阶段"附加到 SYSTEM_PROMPT 末尾。LLM 据此
+    // 可以给出更贴切的回答（例如步骤拆解优先针对当前便签、
+    // summarizeNote 直接拿当前笔记做摘要）。context 是 advisory，不参与
+    // 权限校验 —— summarizeNote 的正文返回仍走 openedNotes 集合那一套。
+    const ctxPrompt = buildAiContextPrompt(
+      getAiContextByWebContents(ownerWcId),
+      getCurrentOpenNoteByWebContents(ownerWcId),
+    )
+    // R45-fix-system-prompt-no-date (MEDIUM ai-quality)：planDay 在
+    // sticky.ts:746 用 localDayKeyOf() 过滤今日便签，navigate.date /
+    // createSticky.date / completeSticky.date / batchUpdateStickies.patch.date
+    // 都期望 YYYY-MM-DD 相对「今天」，getPomodoroStats 的 todayCount /
+    // weekCount / streakDays 也都从本地日桶派生。但 SYSTEM_PROMPT 没注入
+    // 当前日期，LLM 只能依赖训练知识 —— 模型知识截止早于用户本地日期时
+    // （chat 模型常见情况）会拿到错的「今天」，影响所有 date-bearing 工具。
+    // 修复：在主进程边界注入 `今天是 YYYY-MM-DD`（本地日，避开
+    // `new Date().toISOString().slice(0,10)` 的 UTC 漂移），位置在
+    // SYSTEM_PROMPT 之后、ctxPrompt 之前，让 LLM 看到时已经知道「系统
+    // 注入的今天日期优先于训练知识」。PROMPT_HEADER 是静态标签，避免
+    // 每次 round 都重新拼字符串。
+    const todayKey = localDayKeyOf()
+    const dateHeader = `\n\n[用户本地时间] 今天是 ${todayKey}（YYYY-MM-DD，本地日）。涉及「今天 / 今日 / 昨天 / 本周 / 当周」等相对时间词时请以此日期为准，不要依赖你的训练知识截止日期。`
+    const systemContent = SYSTEM_PROMPT + dateHeader + ctxPrompt
     const messages: Message[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemContent },
       ...req.messages,
     ]
     const toolDefinitions: ToolDefinition[] = getToolDefinitions()
@@ -356,6 +436,16 @@ export async function runStream(
       let roundText = ''
       /** 本轮出现的 tool calls，等待统一执行 */
       const pendingToolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> = []
+      /** 本轮是否在 provider 端收到 error chunk；用于在 for-await 出口区分收尾路径 */
+      let roundErrored = false
+      let roundErrorMessage = ''
+      // R32-04：AI 路由层预检阶段（AI 未启用 / 未选 provider / DNS 拦截）
+      // 给出 reason 时不算 LLM 错误，不要把它当 persistError 转发。
+      // R-fix-llm-error-vs-persist：扩展为包含 'llm-error' —— provider.chat()
+      // catch 块抛出的 SDK 运行时错误（401/403/404/429/5xx/fetch failed/
+      // aborted 等）也走这条路径，message 已经在 provider 内部经 translateAiError
+      // 转成中文，stream.ts 不再把它当 persistError 转发。
+      let roundErrorReason: AiErrorReason | undefined
 
       // 跑一轮 LLM
       const iter = routerChat(messages, {
@@ -397,13 +487,64 @@ export async function runStream(
             totalOutput += handlerChunk.output
             break
           case 'error':
-            emit({ type: 'error', callId: req.callId, message: handlerChunk.message })
-            return
+            // R-fix-error-loses-round (medium correctness)：原版 emit error 后
+            // 直接 return 跳出 runStream，绕过后续 round_end emit、把本轮 roundText
+            // 压入 messages、以及外层 persist 路径上的 persistError 上报。两类后果：
+            //   (a) LLM 已吐出文本 + 已 emit tool_call → 网络抖动触发 error chunk
+            //       → 本轮累积全部丢失，下次 reload conversation 时没有这部分历史；
+            //   (b) first round 就出错 → 用户只看到 error 事件、runStream 提前
+            //       return，渲染端拿不到 done 收尾、spinner 不关。
+            // 改为 break 退出 for-await，由出口处的收尾分支决定怎么处理：
+            //   - 完全空（无 roundText、无 pendingToolCalls）：跳过 round_end 和
+            //     空消息 push，直接 emit done + persistError（用 LLM 错误消息填充
+            //     persistError 字段，渲染端可据此区分「AI 流异常收尾」与正常 done）
+            //   - 有文本 + 无 orphan tool_call：仍 emit round_end + push messages
+            //     让 persist 保住可见内容，然后 break 出 while 走正常 done 路径
+            //   - 有 orphan tool_call（无对应 tool 结果会破坏下次 reload 的多轮
+            //     链路）：同样丢弃，走 done + persistError 收尾
+            //
+            // R32-04：handlerChunk 携带的 reason（ai-disabled / no-provider /
+            // dns-blocked）说明这是 router 在发起请求前做的预检拒绝，
+            // 不是 LLM 流中途的运行时错误。把它原样透传给渲染端，
+            // 同时禁止在 done 里把这条消息当 persistError（避免把
+            // 「AI 已禁用」误报成"对话未持久化（DB 写入失败）"）。
+            roundErrored = true
+            roundErrorMessage = handlerChunk.message
+            roundErrorReason = handlerChunk.reason
+            emit({
+              type: 'error',
+              callId: req.callId,
+              message: handlerChunk.message,
+              ...(handlerChunk.reason ? { reason: handlerChunk.reason } : {}),
+            })
+            break
           case 'done':
             break
           default:
             break
         }
+      }
+
+      // R-fix-error-loses-round：本轮出错时的收尾分支（见 case 'error' 注释）。
+      if (roundErrored) {
+        if (roundText !== '' && pendingToolCalls.length === 0) {
+          emit({ type: 'round_end', callId: req.callId, round })
+          messages.push({
+            role: 'assistant',
+            content: roundText,
+          })
+          break
+        }
+        // R32-04：若错误来自路由层预检（reason 已设置），是配置/安全拒绝，
+        // 不是 DB 持久化失败 —— 不要把消息塞进 persistError，避免渲染端
+        // 把「AI 已禁用 / 未选 provider / DNS 拦截」误报为「对话未持久化」。
+        // 真正的错误内容已通过前面的 error 事件单独推到渲染端（带 reason）。
+        if (roundErrorReason) {
+          emit({ type: 'done', callId: req.callId })
+        } else {
+          emit({ type: 'done', callId: req.callId, persistError: roundErrorMessage })
+        }
+        return
       }
 
       emit({ type: 'round_end', callId: req.callId, round })
@@ -428,7 +569,19 @@ export async function runStream(
       // 都会丢失，并在 messages 里留下一个没有对应 tool 结果的 assistant 消息。
       // 这里单独捕获，合成一个 { ok:false, error } 结果，保证 round 干净结束。
       for (const tc of pendingToolCalls) {
-        // R8I-3：one-shot 重放保护 —— 同一 toolCallId 已执行过则跳过
+        // R8I-3 + R-fix-toctou-one-shot (MEDIUM correctness)：one-shot 重放
+        // 保护 + 并发抢占。用 add-and-check 而非单纯 has() —— 进入工具
+        // 执行分支前先把 toolCallId 暂存到 consumedOneShotIds（占位），
+        // 后续同 id 进入（同一流多 round / 并发 runStream 重用 tool_call.id）
+        // 会在 has() 处直接跳过，避免两个流都通过检查、各自弹 confirm 弹窗、
+        // 各自执行同一副作用（删除笔记 / 创建便签等非幂等操作的「执行两次」）。
+        //
+        // 占位语义：本次 tc.id 在 await 边界前已被「预定」。最终 outcome：
+        //   - 成功（非 confirm_create）→ 留作永久消费（markToolConsumed 同效）
+        //   - 成功（confirm_create，createNote 等待用户确认）→ 释放占位，
+        //     让 ai-handlers 在用户接受/拒绝落盘后再行 markToolConsumed
+        //   - 用户拒绝 / 超时 / 执行抛错 / 工具返回 ok:false → 释放占位，
+        //     LLM 重试同一 toolCallId 时不会被误判为已消费
         if (consumedOneShotIds.has(tc.id)) {
           const skipped = JSON.stringify({
             ok: false,
@@ -443,11 +596,17 @@ export async function runStream(
           emit({
             type: 'tool_result',
             callId: req.callId,
+            toolCallId: tc.id,
             toolName: tc.name,
             result: { ok: false, error: 'one-shot already consumed' },
           })
           continue
         }
+        // 暂存占位；本次循环内的失败/拒绝分支会在末尾 delete 回滚。
+        consumedOneShotIds.add(tc.id)
+        // 标记本次 tc.id 是否最终要被回滚（拒绝/失败/confirm_create 等待）
+        // —— 默认 false；成功（非 confirm_create）路径保留；其余路径置 true。
+        let releaseTentative = false
 
         // R8I-2：从工具定义表里查 risk / oneShot，决定是否需要用户确认。
         const toolDef = toolDefinitions.find((d) => d.name === tc.name)
@@ -481,9 +640,13 @@ export async function runStream(
             emit({
               type: 'tool_result',
               callId: req.callId,
+              toolCallId: tc.id,
               toolName: tc.name,
               result: { ok: false, error: 'user-denied' },
             })
+            // R-fix-toctou-one-shot：拒绝路径释放占位，让 LLM 重试
+            // 同一 toolCallId 时不会被误判为已消费。
+            consumedOneShotIds.delete(tc.id)
             continue
           }
         }
@@ -512,6 +675,8 @@ export async function runStream(
           const msg = err instanceof Error ? err.message : String(err)
           log.warn(`[ai/stream] tool ${tc.name} failed`, err)
           result = JSON.stringify({ ok: false, error: msg })
+          // R-fix-toctou-one-shot：执行抛错视为失败，释放占位让 LLM 重试
+          releaseTentative = true
         }
         // R8I-3：执行成功后标为已消费；失败 / 拒绝时不算（LLM 可以重试别的方案）。
         // R10 修复：原版无条件 markToolConsumed，导致工具执行失败（ok:false）时仍
@@ -538,8 +703,25 @@ export async function runStream(
         } catch {
           toolSucceeded = false
         }
+        // R-fix-toctou-one-shot：toolSucceeded=false（工具返回 ok:false 或
+        // result 不是合法 JSON）时也要释放占位，让 LLM 重试同一 toolCallId
+        // 不会被误判为已消费。
+        if (!toolSucceeded) {
+          releaseTentative = true
+        }
         if (toolDef?.oneShot && toolSucceeded && !isConfirmOnlyCreateNote) {
           markToolConsumed(tc.id)
+        } else if (isConfirmOnlyCreateNote) {
+          // R-fix-toctou-one-shot：confirm_create 等待用户确认期间释放占位
+          // —— ai-handlers 在用户接受/拒绝落盘后会再次 markToolConsumed。
+          // 释放是为了让 LLM 在用户尚未回应前重发同一 toolCallId 时能再次
+          // 执行（拿到新的 confirm_create 载荷），不被误判为重放。
+          releaseTentative = true
+        }
+        // 兜底释放：成功路径保留占位（markToolConsumed 已 add 一次），其他
+        // 路径释放。
+        if (releaseTentative) {
+          consumedOneShotIds.delete(tc.id)
         }
         messages.push({
           role: 'tool',
@@ -547,11 +729,35 @@ export async function runStream(
           toolCallId: tc.id,
           name: tc.name,
         })
+        // R-fix-stream-tool-abort-visibility：executeTool 完成后用户已中止时
+        // （createSticky / updateSticky / batchUpdateStickies 等 side-effect 工具
+        // 已经落 DB，无法回滚），messages 仍会被外层 persist 块（762-851）写进
+        // conversation 历史 —— 这是设计 tradeoff：rollback 需要给工具包
+        // BEGIN/COMMIT + ROLLBACK 包装，cost 远超收益。改为在 tool_result 事件
+        // 上挂 toolAborted=true，让渲染端能区分「工具已成功落盘 + 用户中途取消」
+        // （toast / banner / AriaAnnouncer 显示"操作已执行，对话已中断"），而
+        // 不是把这条工具结果当成正常完成静默吞掉。toolAborted=false 时字段不传，
+        // 保持既有渲染端字段兼容。
+        const toolAborted = signal.aborted
+        const toolResultBase = {
+          callId: req.callId,
+          toolCallId: tc.id,
+          toolName: tc.name,
+          ...(toolAborted ? { toolAborted: true as const } : {}),
+        }
         try {
           const parsed = JSON.parse(result)
-          emit({ type: 'tool_result', callId: req.callId, toolName: tc.name, result: parsed })
+          emit({
+            type: 'tool_result',
+            ...toolResultBase,
+            result: parsed,
+          })
         } catch {
-          emit({ type: 'tool_result', callId: req.callId, toolName: tc.name, result })
+          emit({
+            type: 'tool_result',
+            ...toolResultBase,
+            result,
+          })
         }
       }
     }

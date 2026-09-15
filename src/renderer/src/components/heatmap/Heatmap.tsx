@@ -35,6 +35,8 @@ import {
   weekdayLabel,
 } from './heatmapData'
 import { useHeatmapStore } from '../../stores/heatmap'
+import { useSettingsStore } from '../../stores/settings'
+import { getCalendarMessages, getHeatmapMessages } from '@shared/i18n/locales'
 
 interface HeatmapProps {
   days?: number
@@ -54,6 +56,16 @@ export function Heatmap({
   const storeData = useHeatmapStore((s) => s.data)
   const storeLoading = useHeatmapStore((s) => s.loading)
   const fetchRange = useHeatmapStore((s) => s.fetch)
+
+  // R-fix-i18n-weekday-label (medium)：左侧 weekday 表头跟随 settings.language 切换；
+  // 只订阅 language 字段避免 settings store 其它字段变化触发重渲染。
+  const language = useSettingsStore((s) => s.language)
+  const calendarMessages = useMemo(() => getCalendarMessages(language), [language])
+  // R-fix-i18n-heatmap-strings (high)：卡片标题 / loading / 3 张 summary 卡 /
+  // caption / 信息栏 aria-label + 3 项标签 / sr-only 完整摘要 —— 这些用户
+  // 可见字符串原本是 13+ 处硬编码中文，与 weekday 列走 i18n 的结构不一致；
+  // 集中到 HeatmapMessages 后统一从 getHeatmapMessages(language) 取。
+  const heatmapMessages = useMemo(() => getHeatmapMessages(language), [language])
 
   const [hoverDay, setHoverDay] = useState<HeatmapDay | null>(null)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
@@ -171,8 +183,14 @@ export function Heatmap({
 
   const data = useMemo<HeatmapData>(() => {
     if (externalData) return externalData
-    return buildHeatmapLastNDays(storeData, days, endDate, firstDayOfWeek)
-  }, [externalData, storeData, days, endDate, firstDayOfWeek])
+    return buildHeatmapLastNDays(
+      storeData,
+      days,
+      endDate,
+      firstDayOfWeek,
+      calendarMessages.monthShort,
+    )
+  }, [externalData, storeData, days, endDate, firstDayOfWeek, calendarMessages.monthShort])
 
   /** 每月第一列的 week index —— 用于 CSS 「细的月份分隔线」。
  *  R31-A11yPerf-6 修复：原版用 Array.includes，O(W*M) 比较；
@@ -203,7 +221,11 @@ export function Heatmap({
 
   const totalRangeDays =
     Math.round((data.endDate.getTime() - data.startDate.getTime()) / 86400000) + 1
-  const caption = `${totalRangeDays} 天 · 总计 ${data.totalCount} 次 · 活跃 ${data.activeDays} 天`
+  const caption = heatmapMessages.caption({
+    days: totalRangeDays,
+    total: data.totalCount,
+    active: data.activeDays,
+  })
 
   return (
     <div className={['heatmap-wrapper', compact ? 'compact' : ''].filter(Boolean).join(' ')}>
@@ -211,24 +233,24 @@ export function Heatmap({
         <div className="heatmap-card-topbar">
           <div className="heatmap-header-title">
             <span className="heatmap-header-year">{data.year}</span>
-            <span className="heatmap-header-sub">贡献热力图</span>
+            <span className="heatmap-header-sub">{heatmapMessages.title}</span>
           </div>
-          {storeLoading && <div className="heatmap-loading muted">加载中...</div>}
+          {storeLoading && <div className="heatmap-loading muted">{heatmapMessages.loading}</div>}
         </div>
 
         {/* 顶部 3 张数字卡：今年总览一眼看到 */}
-        <div className="heatmap-summary" aria-label="年度统计">
+        <div className="heatmap-summary" aria-label={heatmapMessages.summaryAriaLabel}>
           <div className="heatmap-summary-card highlight">
             <span className="heatmap-summary-value">{data.totalCount}</span>
-            <span className="heatmap-summary-label">年总完成</span>
+            <span className="heatmap-summary-label">{heatmapMessages.summaryTotalLabel}</span>
           </div>
           <div className="heatmap-summary-card">
             <span className="heatmap-summary-value">{data.activeDays}</span>
-            <span className="heatmap-summary-label">活跃天数</span>
+            <span className="heatmap-summary-label">{heatmapMessages.summaryActiveLabel}</span>
           </div>
           <div className="heatmap-summary-card highlight">
             <span className="heatmap-summary-value">{data.currentStreak}</span>
-            <span className="heatmap-summary-label">当前连胜</span>
+            <span className="heatmap-summary-label">{heatmapMessages.summaryStreakLabel}</span>
           </div>
         </div>
 
@@ -251,7 +273,14 @@ export function Heatmap({
                 <div
                   className="sr-only"
                   role="img"
-                  aria-label={`${data.year} 年共完成 ${data.totalCount} 次，活跃 ${data.activeDays} 天，当前连胜 ${data.currentStreak} 天，最长连胜 ${data.longestStreak} 天，单日峰值 ${data.maxCount}。详细分布见下方图例与网格。`}
+                  aria-label={heatmapMessages.srSummary({
+                    year: data.year,
+                    total: data.totalCount,
+                    active: data.activeDays,
+                    currentStreak: data.currentStreak,
+                    longestStreak: data.longestStreak,
+                    maxCount: data.maxCount,
+                  })}
                 />
 
                 {/* 月份标签条 */}
@@ -284,7 +313,7 @@ export function Heatmap({
                   <div className="heatmap-weekday-col">
                     {Array.from({ length: 7 }).map((_, i) => (
                       <div key={i} className="heatmap-weekday-label">
-                        {weekdayLabel(i, firstDayOfWeek)}
+                        {weekdayLabel(i, firstDayOfWeek, calendarMessages.weekdayShort)}
                       </div>
                     ))}
                   </div>
@@ -331,17 +360,17 @@ export function Heatmap({
           </div>
 
           {/* 信息栏：扩展统计 */}
-          <aside className="heatmap-stats-sidebar" aria-label="热力图统计">
+          <aside className="heatmap-stats-sidebar" aria-label={heatmapMessages.sidebarAriaLabel}>
             <div className="heatmap-stat">
-              <span className="heatmap-stat-label">最长连胜</span>
+              <span className="heatmap-stat-label">{heatmapMessages.sidebarLongestStreak}</span>
               <span className="heatmap-stat-value">{data.longestStreak}</span>
             </div>
             <div className="heatmap-stat">
-              <span className="heatmap-stat-label">日均</span>
+              <span className="heatmap-stat-label">{heatmapMessages.sidebarAvg}</span>
               <span className="heatmap-stat-value">{data.avgPerDay.toFixed(1)}</span>
             </div>
             <div className="heatmap-stat">
-              <span className="heatmap-stat-label">峰值</span>
+              <span className="heatmap-stat-label">{heatmapMessages.sidebarPeak}</span>
               <span className="heatmap-stat-value">{data.maxCount}</span>
             </div>
           </aside>

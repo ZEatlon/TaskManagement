@@ -16,6 +16,9 @@ import {
   type AiStreamEvent,
   type AiProviderInfo,
 } from '../lib/ipc'
+import { translateAiError } from '@shared/i18n/aiErrorTranslate'
+import { getRelativeTimeMessages } from '@shared/i18n/locales'
+import { useSettingsStore } from './settings'
 
 /** UI 层的扩展消息：除基础 AiMessage 外还携带渲染所需的临时数据 */
 export interface UiMessage {
@@ -47,6 +50,33 @@ export interface UiMessage {
 }
 
 /**
+ * 用户当前上下文的轻量描述。
+ *
+ * 由 InlineAIButton + 各 store 订阅推过来（render-side 独立于 LLM 工具调用）。
+ * 主要用途：
+ *   1. 注入到 LLM system prompt 末尾，让模型知道"用户正在编辑 X / 番茄钟
+ *      正在跑 Y"以便给出更贴切的回答（详见 main/ai/stream.ts）
+ *   2. 通过 IPC 推到主进程，主进程在 LLM 工具调用时也用同一份上下文（详见
+ *      main/ai/tools.ts 的 setCurrentStickyId / setCurrentNoteId /
+ *      setCurrentPomodoroContext helpers）
+ *
+ * 注意：AIContext 是渲染端 UI 状态，不参与持久化；切换页面 / 卸载组件 / 重启
+ * 都重置为初始空对象。
+ */
+export interface AIContext {
+  /** 当前选中的便签 ID（点击 InlineAIButton 时由 StickyNoteCard 提供） */
+  stickyId?: string
+  /** 当前编辑的笔记 ID（NoteEditor mount 时写入） */
+  noteId?: string
+  /** 番茄钟是否正在运行 */
+  pomodoroRunning?: boolean
+  /** 番茄钟当前阶段 */
+  pomodoroMode?: 'focus' | 'shortBreak' | 'longBreak'
+  /** 番茄钟关联的便签 ID（若用户在跑一个与某便签绑定的番茄钟） */
+  pomodoroStickyNoteId?: string | null
+}
+
+/**
  * 等待用户确认的 createNote 工具请求
  *
  * 当 AI 工具返回 `{ kind: 'confirm_create', ok, id, title, filename, content }` 时，
@@ -72,6 +102,45 @@ export interface PendingConfirm {
   args: Record<string, unknown>
 }
 
+/**
+ * 把 AI 调用 / IPC / SDK 抛出的 raw err 翻译成中文用户可见错误文案，
+ * 然后 set 进 store 的 error 字段。
+ *
+ * R-fix-ai-chat-error-i18n (high)：原版 `set({ error: (err as Error).message })`
+ * 在 15 处 catch 块里把英文 SDK 文本（'fetch failed' / 'socket hang up' /
+ * 'Request failed with status code 401' / 'model_not_found' 等）直接塞进
+ * ChatPanel banner —— 与 translateAiError 已覆盖的 testConnection 路径形成
+ * 一致性缺口。本函数把 chat 流路径也收口到 translateAiError，调用方只需
+ * 替换 set 调用即可：
+ *
+ *   catch (err) {
+ *     setUserFacingError(set, err)                                  // 仅 error
+ *     setUserFacingError(set, err, { streaming: false, activeCallId: null }) // 多字段
+ *   }
+ *
+ * 实现：复用 @shared/i18n/aiErrorTranslate.translateAiError（覆盖 status /
+ * SDK error.type / 网络层 message 子串，未命中走内置兜底），并额外给一层
+ * translateAiError 自身抛错时的"请求级"兜底（语义比"服务异常"更贴合 chat
+ * 流路径 banner）。
+ *
+ * extra：允许同时写入其它会话级字段（如 streaming: false / loaded: true），
+ *       但禁止覆盖 error 自身。
+ */
+function setUserFacingError(
+  set: (partial: Partial<AiState>) => void,
+  err: unknown,
+  extra?: Omit<Partial<AiState>, 'error'>,
+  fallback = 'AI 请求异常，请稍后重试',
+): void {
+  let msg: string
+  try {
+    msg = translateAiError(err, err instanceof Error ? err.message : String(err))
+  } catch {
+    msg = fallback
+  }
+  set({ error: msg, ...extra })
+}
+
 interface AiState {
   providers: AiProviderInfo[]
   conversations: AiConversation[]
@@ -82,6 +151,12 @@ interface AiState {
    * generation 不匹配 → 静默丢弃，不写 store。
    */
   selectGeneration: number
+  /**
+   * 当前 UI 上下文快照（便签 / 笔记 / 番茄钟）。流式请求时主进程把它
+   * 注入到 system prompt 末尾（详见 main/ai/stream.ts）。
+   * 见 AIContext 接口说明。
+   */
+  context: AIContext
   /** 当前消息（UI 渲染形态） */
   messages: UiMessage[]
   /** 当前助手消息的累积文本 */
@@ -153,6 +228,22 @@ interface AiState {
   openCommandBar: () => Promise<void>
   closeCommandBar: () => void
   toggleCommandBar: () => Promise<void>
+  /**
+   * 打开 CommandBar 并把 prompt 预填到输入框；后续可由 CommandBar 自行
+   * 发送，也可由用户接着修改。InlineAIButton 触发具体场景（拆解 / 润色
+   * / 续写 等）时调用此方法。
+   */
+  openWithPrompt: (prompt: string) => Promise<void>
+  /**
+   * 同步当前 UI 上下文（便签 / 笔记 / 番茄钟）。各 store 订阅相关字段
+   * 变化时调用，store 内部仅浅 merge，不会触发 stream 中断 / 重启。
+   */
+  setContext: (patch: Partial<AIContext>) => void
+  /**
+   * 清空 AIContext（页面卸载 / 长时间无活动时由调用方主动重置，避免
+   * stale id 被下次流式请求用作 system prompt 上下文）。
+   */
+  resetContext: () => void
 
   // ===== AI 文件夹操作 =====
   createFolder: (input: { name: string; color?: AiConversationFolder['color'] }) => Promise<AiConversationFolder | null>
@@ -240,6 +331,33 @@ function appendOrPatchLastAssistant(
 }
 
 /**
+ * 清空「当前对话的流式 / 等待确认 / 错误」等会话级状态。
+ *
+ * 之前 newConversation / selectConversation / deleteConversation 三个动作
+ * 都手抄了一份 `{ streaming: false, activeCallId: null, pendingConfirm: null,
+ * pendingCreateNote: null, error: null }` —— R12 加了 4 个字段，R24-Corr-6
+ * 补了 `error: null`，handleStreamEvent 的 done / aborted / error 分支则
+ * 只清了 3 个字段。下一轮新加会话级字段（如 prefillInput / persistError）
+ * 极易在某一处漏掉，让残留状态跨对话泄漏。
+ *
+ * 本函数作为单一来源：调用方只需 `...resetChatSessionState()` 即可；
+ * 新增字段只需改这里。`Pick<AiState, ...>` 是为了拿到精确的字段子集
+ * 类型（与 set 的 Partial<AiState> 签名对齐）。
+ */
+function resetChatSessionState(): Pick<
+  AiState,
+  'streaming' | 'activeCallId' | 'pendingConfirm' | 'pendingCreateNote' | 'error'
+> {
+  return {
+    streaming: false,
+    activeCallId: null,
+    pendingConfirm: null,
+    pendingCreateNote: null,
+    error: null,
+  }
+}
+
+/**
  * 安装 AI 流事件监听：主进程推送 ai:chunk 时自动路由到 store。
  * 由渲染端入口（main.tsx）调用一次，返回的解绑函数供 HMR dispose 使用。
  */
@@ -268,6 +386,8 @@ export const useAiStore = create<AiState>((set, get) => {
     commandBarOpen: false,
     prefillInput: null,
     persistError: null,
+    // 当前 UI 上下文（便签 / 笔记 / 番茄钟）。见 AIContext 接口。
+    context: {},
 
     // AI 文件夹
     folders: [],
@@ -279,7 +399,7 @@ export const useAiStore = create<AiState>((set, get) => {
         const list = await aiApi.listProviders()
         set({ providers: list })
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -291,7 +411,7 @@ export const useAiStore = create<AiState>((set, get) => {
         )
         set({ conversations: list, loaded: true })
       } catch (err) {
-        set({ error: (err as Error).message, loaded: true })
+        setUserFacingError(set, err, { loaded: true })
       }
     },
 
@@ -300,7 +420,7 @@ export const useAiStore = create<AiState>((set, get) => {
         const folders = await aiConvFoldersApi.list()
         set({ folders, foldersLoaded: true })
       } catch (err) {
-        set({ error: (err as Error).message, foldersLoaded: true })
+        setUserFacingError(set, err, { foldersLoaded: true })
       }
     },
 
@@ -320,12 +440,22 @@ export const useAiStore = create<AiState>((set, get) => {
       }
       try {
         const activeFolderId = get().activeFolderId
+        // R-fix-i18n-conv-title-placeholder-flag：占位标题前缀走 locale 字典
+        // （getRelativeTimeMessages.conversationTitlePlaceholder），不再硬编码
+        // 『新对话』。日期部分用 settings.language 直接驱动 toLocaleString，
+        // zh-CN → '2026/10/15 14:30:00'、en-US → '10/15/2026, 2:30:00 PM'
+        // 形态自然跟随。分隔符 `·` 与标题一起走字典：若未来需要按 locale
+        // 切换分隔符（en-US 用 ' - '），把字段升级为 (args) => string 即可。
+        const language = useSettingsStore.getState().language
+        const placeholder = getRelativeTimeMessages(language).conversationTitlePlaceholder
         const conv = await conversationsApi.create({
           provider,
           model,
-          title: `新对话 · ${new Date().toLocaleString('zh-CN')}`,
+          title: `${placeholder} · ${new Date().toLocaleString(language)}`,
           // 当选中具体 folder 时，新对话默认归入该 folder；选中「全部」或「未分类」则保持 null
           folderId: typeof activeFolderId === 'string' ? activeFolderId : null,
+          // 占位 flag：title_updated 事件据此判定是否覆盖，不用 prefix-match 字面量
+          titleIsAuto: true,
         })
         set((s) => ({
           conversations: [conv, ...s.conversations],
@@ -334,18 +464,11 @@ export const useAiStore = create<AiState>((set, get) => {
           tokenInput: 0,
           tokenOutput: 0,
           // 与 selectConversation / deleteConversation 保持一致：清掉跨会话泄漏
-          streaming: false,
-          activeCallId: null,
-          pendingConfirm: null,
-          pendingCreateNote: null,
-          // R24-Corr-6 修复 (high state staleness)：原版只重置 messages /
-          // streaming / pendingConfirm 等，不清 error —— 上一对话的失败
-          // （网络超时 / LLM 拒绝 / 用户中止）会作为残留错误显示在新对话
-          // 顶部，误导用户以为新会话一打开就有问题。一并清掉。
-          error: null,
+          // （详见 resetChatSessionState 的注释 —— 这是单一来源）。
+          ...resetChatSessionState(),
         }))
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -363,15 +486,12 @@ export const useAiStore = create<AiState>((set, get) => {
           set({
             currentId: null,
             messages: [],
-            pendingCreateNote: null,
             // R10 修复：清空流式状态，否则切对话时遗留的 streaming=true /
             // activeCallId=旧值 会让 UI 显示"正在生成"和等待旧流的 pendingConfirm，
             // 用户在 B 对话看到 A 对话的 ConfirmDialog 残留。
-            streaming: false,
-            activeCallId: null,
-            pendingConfirm: null,
             // R24-Corr-6 修复：同上，残留 error 会污染"对话已删除/丢失"的 UI。
-            error: null,
+            // 单一来源 —— 详见 resetChatSessionState 的注释。
+            ...resetChatSessionState(),
           })
           return
         }
@@ -380,18 +500,15 @@ export const useAiStore = create<AiState>((set, get) => {
           messages: conv.messages.map(toUiMessage),
           tokenInput: conv.tokenInput ?? 0,
           tokenOutput: conv.tokenOutput ?? 0,
-          pendingCreateNote: null,
-          streaming: false,
-          activeCallId: null,
-          pendingConfirm: null,
           // R24-Corr-6 修复：成功切到存在的对话时也清掉残留 error —— 上一对
           // 话的错误不该出现在新对话的 UI 上。
-          error: null,
+          // 单一来源 —— 详见 resetChatSessionState 的注释。
+          ...resetChatSessionState(),
         })
       } catch (err) {
         // generation 已更新同样不写错误（旧对话的错误会污染新对话 UI）
         if (get().selectGeneration !== myGen) return
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -413,20 +530,20 @@ export const useAiStore = create<AiState>((set, get) => {
           }
         }
         const next = get().conversations.filter((c) => c.id !== id)
+        const isCurrent = get().currentId === id
+        // R24-Corr-6 修复：删除当前对话时清掉残留 error，避免「刚删了 A
+        // 对话但 toast 还显示 A 的网络超时」。
+        // 单一来源 —— 详见 resetChatSessionState 的注释。仅当删除的是当前
+        // 对话时整组 reset；删的是非当前对话时只清 error（保留其它会话级
+        // 状态 —— 它们属于当前对话，与被删对话无关）。
         set({
           conversations: next,
-          currentId: get().currentId === id ? null : get().currentId,
-          messages: get().currentId === id ? [] : get().messages,
-          streaming: get().currentId === id ? false : get().streaming,
-          activeCallId: get().currentId === id ? null : get().activeCallId,
-          pendingConfirm: get().currentId === id ? null : get().pendingConfirm,
-          pendingCreateNote: get().currentId === id ? null : get().pendingCreateNote,
-          // R24-Corr-6 修复：删除当前对话时清掉残留 error，避免「刚删了 A
-          // 对话但 toast 还显示 A 的网络超时」。
-          error: null,
+          currentId: isCurrent ? null : get().currentId,
+          messages: isCurrent ? [] : get().messages,
+          ...(isCurrent ? resetChatSessionState() : { error: null }),
         })
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -571,11 +688,7 @@ export const useAiStore = create<AiState>((set, get) => {
             .removeLastMessage(targetConvId)
             .catch(() => undefined)
         }
-        set({
-          streaming: false,
-          activeCallId: null,
-          error: (err as Error).message,
-        })
+        setUserFacingError(set, err, { streaming: false, activeCallId: null })
         return false
       }
     },
@@ -586,7 +699,7 @@ export const useAiStore = create<AiState>((set, get) => {
       try {
         await aiApi.abort(id)
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -716,12 +829,26 @@ export const useAiStore = create<AiState>((set, get) => {
             if (!last || last.role !== 'assistant' || !last.toolCalls) {
               return {}
             }
-            // 找到同名最新的 calling 项标记为 done；只克隆最后一条消息
+            // R-fix-parallel-tool-result：优先按 toolCallId 精确匹配，
+            // 避免 LLM 在同一轮并发调用同名工具时结果被颠倒；老事件没有
+            // toolCallId 时回退到按 name+status 反向匹配（保持向后兼容）。
             const tcs = last.toolCalls.slice()
-            for (let i = tcs.length - 1; i >= 0; i -= 1) {
-              if (tcs[i].name === e.toolName && tcs[i].status === 'calling') {
-                tcs[i] = { ...tcs[i], result: e.result, status: 'done' as const }
-                break
+            let matched = false
+            if (e.toolCallId) {
+              for (let i = 0; i < tcs.length; i += 1) {
+                if (tcs[i].id === e.toolCallId) {
+                  tcs[i] = { ...tcs[i], result: e.result, status: 'done' as const }
+                  matched = true
+                  break
+                }
+              }
+            }
+            if (!matched) {
+              for (let i = tcs.length - 1; i >= 0; i -= 1) {
+                if (tcs[i].name === e.toolName && tcs[i].status === 'calling') {
+                  tcs[i] = { ...tcs[i], result: e.result, status: 'done' as const }
+                  break
+                }
               }
             }
             const next = messages.slice()
@@ -808,17 +935,16 @@ export const useAiStore = create<AiState>((set, get) => {
           // 触发两轮 store-wide subscriber render（每次 done 都会
           // 影响所有 useAiStore 消费者：TokenUsage / MessageInput /
           // ConversationList / MessageList / CommandBar 等）。
+          //
+          // 单一来源 —— resetChatSessionState 一并清掉 pendingCreateNote
+          // 与 error（上一轮的错误 / 未消费的 confirmCreateNote 不该跨
+          // 流次泄漏）。persistError 是另一条独立通道，不在这里覆盖。
           set((s) => {
             const messages = s.messages
             const lastIdx = messages.length - 1
             const last = messages[lastIdx]
             const updates: Partial<AiState> = {
-              streaming: false,
-              activeCallId: null,
-              // R9 修复：done 收到时清掉 pendingConfirm，否则 ConfirmDialog 会
-              // 一直挂着（主进程超时拒绝 → 工具循环继续 → 流自然结束 → 但 UI 上
-              // pendingConfirm 没收到清理信号就一直显示）。
-              pendingConfirm: null,
+              ...resetChatSessionState(),
             }
             if (last && last.role === 'assistant') {
               const next = messages.slice()
@@ -834,14 +960,15 @@ export const useAiStore = create<AiState>((set, get) => {
           break
         }
         case 'aborted': {
+          // 单一来源 —— resetChatSessionState 一并清掉 pendingCreateNote
+          // 与 error（同 done 的处理：上一轮的 confirmCreateNote / 错误
+          // 不该跨流次泄漏）。
           set((s) => {
             const messages = s.messages
             const lastIdx = messages.length - 1
             const last = messages[lastIdx]
             const updates: Partial<AiState> = {
-              streaming: false,
-              activeCallId: null,
-              pendingConfirm: null,
+              ...resetChatSessionState(),
             }
             if (last && last.role === 'assistant') {
               const next = messages.slice()
@@ -858,12 +985,35 @@ export const useAiStore = create<AiState>((set, get) => {
             const messages = s.messages
             const lastIdx = messages.length - 1
             const last = messages[lastIdx]
+            // R32-04 修复 (medium error-handling)：error 事件可能携带
+            // reason（ai-disabled / no-provider / dns-blocked），这是
+            // AI 路由层预检阶段的拒绝，不是 DB 失败。给出"上下文对应"
+            // 的横幅文案，让用户知道该去哪改设置 / 哪个域名被拦截，
+            // 而不是看到一个看起来像 DB 故障的原始 provider 错误。
+            //
+            // R-fix-llm-error-vs-persist：新增 reason='llm-error' 表示
+            // SDK 在 chat() catch 块抛出的真实 LLM 错误（401/403/404/429/
+            // 5xx/fetch failed/aborted 等）。provider.chat() 内部已经把
+            // message 走 translateAiError 转中文（如「API Key 无效或已过期」、
+            // 「网络连接失败，请检查网络后重试」），渲染端直接展示 message，
+            // 不再误报为「对话未持久化（DB 写入失败）」（那是
+            // ai.ts:917 persistError 的逻辑，与 error 事件分流）。
+            const reason = e.reason
+            const banner = reason
+              ? reason === 'ai-disabled'
+                ? 'AI 已禁用 — 请在设置中开启 AI 总开关'
+                : reason === 'no-provider'
+                  ? '无可用 AI 提供方 — 请在设置中选择 OpenAI / Anthropic / MiniMax'
+                  : reason === 'dns-blocked'
+                    ? '自定义 baseUrl 被 DNS 防护拦截（可能指向了内网/已变更的地址）'
+                    : errMsg
+              : errMsg
             // R9 修复：error 时也要清 pendingConfirm，否则 ConfirmDialog 滞留
+            // 单一来源 —— resetChatSessionState 把所有会话级字段清零；
+            // error 字段用 banner 覆盖（reset 默认是 null，这里改成具体错误）。
             const updates: Partial<AiState> = {
-              streaming: false,
-              activeCallId: null,
-              pendingConfirm: null,
-              error: errMsg,
+              ...resetChatSessionState(),
+              error: banner,
             }
             let next: UiMessage[]
             if (last && last.role === 'assistant') {
@@ -872,8 +1022,8 @@ export const useAiStore = create<AiState>((set, get) => {
                 ...last,
                 streaming: false,
                 content: last.content
-                  ? `${last.content}\n\n⚠️ ${errMsg}`
-                  : `⚠️ ${errMsg}`,
+                  ? `${last.content}\n\n⚠️ ${banner}`
+                  : `⚠️ ${banner}`,
               }
             } else {
               next = [
@@ -881,7 +1031,7 @@ export const useAiStore = create<AiState>((set, get) => {
                 {
                   id: crypto.randomUUID(),
                   role: 'assistant',
-                  content: `⚠️ ${errMsg}`,
+                  content: `⚠️ ${banner}`,
                   ts: new Date().toISOString(),
                 },
               ]
@@ -893,15 +1043,19 @@ export const useAiStore = create<AiState>((set, get) => {
         case 'title_updated': {
           // 自动生成标题：主进程 stream.ts 末尾异步触发，把新标题推过来。
           // 改 conversations 列表中对应项的 title + 把当前对话的 title 同步更新。
-          // 二次校验：只在 title 仍是「新对话」占位时才覆盖（用户已手动改过就不动）。
+          // 二次校验：只在 titleIsAuto===true（系统占位）时才覆盖；用户已手动
+          // 改过（titleIsAuto===false）就跳过。详见 R-fix-i18n-conv-title-placeholder-
+          // flag + migrations/015-ai-conv-title-is-auto.sql。
           const cid = e.conversationId
           const newTitle = e.title
           if (!cid || !newTitle) break
           set((s) => {
             const updatedList = s.conversations.map((c) => {
               if (c.id !== cid) return c
-              if (c.title && !c.title.startsWith('新对话')) return c
-              return { ...c, title: newTitle }
+              // 占位 flag 才允许覆盖 + 覆盖后把 flag 置 false，避免下一次
+              // 流事件再次覆盖（极端情况下 stream 推两次 title_updated）
+              if (!c.titleIsAuto) return c
+              return { ...c, title: newTitle, titleIsAuto: false }
             })
             return { conversations: updatedList }
           })
@@ -990,14 +1144,20 @@ export const useAiStore = create<AiState>((set, get) => {
                 content: note.content,
                 ts,
               })
-            } catch {
-              // 错误反馈落库失败不关键，吞掉。
+            } catch (persistErr) {
+              // 与成功分支对齐：appendMessage 失败时记 warn，不覆盖已被
+              // `result.error` 设好的用户可见 error 字段（保留失败主因）。
+              // R-fix acceptCreateNote-failure-silent-catch：失败路径的
+              // appendMessage 同样属于审计链，不该比成功路径更安静。
+              console.warn(
+                '[ai/store] acceptCreateNote: failure feedback appendMessage failed:',
+                (persistErr as Error).message,
+              )
             }
           }
         }
       } catch (err) {
-        const msg = (err as Error).message
-        set({ error: msg })
+        setUserFacingError(set, err)
       }
     },
 
@@ -1035,7 +1195,7 @@ export const useAiStore = create<AiState>((set, get) => {
           })
         }
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -1052,7 +1212,7 @@ export const useAiStore = create<AiState>((set, get) => {
           }
         })
         .catch((err) => {
-          set({ error: (err as Error).message })
+          setUserFacingError(set, err)
         })
     },
 
@@ -1083,13 +1243,57 @@ export const useAiStore = create<AiState>((set, get) => {
       }
     },
 
+    /**
+     * InlineAIButton 的"打开 AI 命令栏并预填 prompt"入口：
+     *   1) 先确保 CommandBar 打开（自动新建一个对话避免空状态报错）
+     *   2) 用 requestPrefillInput 把 prompt 灌入 CommandBar 的输入框
+     *
+     * 这样设计的好处：
+     *   - 复用了 CommandBar 既有的 prefillInput 机制（与 /ai 页面共享逻辑）
+     *   - 不破坏 sendMessage 的并发安全：用户可接着修改 prompt，再按 Enter 发送
+     *   - 不直接 sendMessage，避免在没有当前对话时 IPC 串错
+     */
+    async openWithPrompt(prompt: string) {
+      const text = (prompt ?? '').trim()
+      if (!text) return
+      // 先灌文本再打开：CommandBar 内部 useEffect 监听 prefillInput.seq
+      // 变化 → 触发 setValue，因此即使已经打开，再次灌入也能更新输入框。
+      useAiStore.getState().requestPrefillInput(text)
+      await useAiStore.getState().openCommandBar()
+    },
+
+    /**
+     * 浅合并当前 UI 上下文。
+     * 不做任何去抖（每个 store 的 selector 都已细粒度；setContext 仅在
+     * stickyId / noteId / pomodoro 三类真正变化时由订阅者调用），避免
+     * 引入额外复杂度。
+     */
+    setContext(patch) {
+      set((s) => {
+        const next = { ...s.context, ...patch }
+        // 浅比较：若 patch 后与原值全等则跳过 set（避免无变更触发订阅者）
+        let changed = false
+        for (const k of Object.keys(patch) as Array<keyof AIContext>) {
+          if (next[k] !== s.context[k]) {
+            changed = true
+            break
+          }
+        }
+        return changed ? { context: next } : {}
+      })
+    },
+
+    resetContext() {
+      set({ context: {} })
+    },
+
     async createFolder(input) {
       try {
         const folder = await aiConvFoldersApi.create(input)
         set((s) => ({ folders: [...s.folders, folder] }))
         return folder
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
         return null
       }
     },
@@ -1101,7 +1305,7 @@ export const useAiStore = create<AiState>((set, get) => {
           set((s) => ({ folders: s.folders.map((f) => (f.id === id ? updated : f)) }))
         }
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
 
@@ -1119,7 +1323,7 @@ export const useAiStore = create<AiState>((set, get) => {
         }))
         return { detachedConversations: result.detachedConversations }
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
         return null
       }
     },
@@ -1133,19 +1337,23 @@ export const useAiStore = create<AiState>((set, get) => {
     async moveConversationToFolder(id, folderId) {
       try {
         await conversationsApi.setFolder(id, folderId)
-        // 同步本地 conversations 列表
-        set((s) => ({
-          conversations: s.conversations.map((c) =>
-            c.id === id ? { ...c, folderId } : c,
-          ),
-        }))
-        // 若当前 activeFolderId 已限制，重载一次确保一致
         const active = get().activeFolderId
-        if (active !== undefined) {
+        // 无筛选：本地 patch 即可（避免一次 IPC + SQL 重载）
+        if (active === undefined) {
+          set((s) => ({
+            conversations: s.conversations.map((c) =>
+              c.id === id ? { ...c, folderId } : c,
+            ),
+          }))
+        } else {
+          // 有筛选：reload 才能让该 conv 离开当前 folder 视图（patch 不够，
+          // 因为 reload 会按 activeFolderId 过滤整体替换数组）。此时跳过
+          // 本地 patch —— 会被 reload 立刻覆盖，徒增一次 O(N) map 分配
+          // 与一次 React re-render。
           void get().loadConversations()
         }
       } catch (err) {
-        set({ error: (err as Error).message })
+        setUserFacingError(set, err)
       }
     },
   }

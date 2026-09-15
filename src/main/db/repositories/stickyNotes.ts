@@ -13,6 +13,7 @@
 import { dbClient } from '../client'
 import { validateDayKey } from './completions'
 import log from '../../log'
+import { localDayKeyOf } from '@shared/lib/dayKey'
 import type {
   StickyNote,
   StickyNoteStep,
@@ -122,6 +123,21 @@ async function prepare(sql: string): Promise<number> {
   stmtCache.set(sql, id)
   return id
 }
+
+/**
+ * R35 修复 (HIGH cache-stale-after-respawn)：worker respawn 后 dbClient
+ * 会广播 stmtCacheInvalidators（client.ts:101-104）让所有 Repository 清空
+ * 本地 stmtCache，否则下一次 prepare 命中 stale stmtId → "no such prepared
+ * statement" → 整应用对该 SQL 路径永久失败。原版漏注册（与 notifier.ts:212-217
+ * / cachedStmt.ts:36-45 不一致），R25-DI-5 修复 dbClient 端广播机制时这一
+ * 仓库未被纳入自动失效范围。
+ *
+ * 修复：模块顶层一次性注册，无 startNotifier() 等入口；与 notifier.ts
+ * registerStmtCacheInvalidator 钩子保持同语义。
+ */
+dbClient.registerStmtCacheInvalidator(() => {
+  stmtCache.clear()
+})
 
 /**
  * 批量加载 steps 并按 note_id 分组。
@@ -446,7 +462,7 @@ async function create(input: StickyNoteCreate): Promise<StickyNote> {
               params: [stepId, id, s.content, s.done ? 1 : 0, fallbackOrder, now],
             })
             order = fallbackOrder
-            console.warn(
+            log.warn(
               `[stickyNotes.create] step order conflict for note ${id}; fell back to ${fallbackOrder}`,
               err,
             )
@@ -942,6 +958,93 @@ async function update(id: ID, patch: StickyNoteUpdate): Promise<StickyNote | nul
   return updateResult ?? findById(id)
 }
 
+/**
+ * R33 修复 (MEDIUM stickyNotes-updateMany-no-batch-cap)：updateMany 在
+ * 仓库层硬封顶 ids.length，防 N+1-style IN-list 把 SQLite 的
+ * SQLITE_MAX_VARIABLE_NUMBER（999 on 旧版 / 32766 on 新版）+ IPC 载荷
+ * 一起打爆。原来只靠 tools.ts 的 BATCH_UPDATE_MAX_IDS=100 把守，任何
+ * 绕过工具层的新调用方（迁移脚本、未来 bulk-update UI 等）拿到一个
+ * 未限界的 ids 数组就可能让 worker OOM 或 prepare 抛错 —— 防御深度
+ * 仅一层时新增调用方都要记得加 cap，违反 invariant。
+ *
+ * 同时把这个常量 export，tools.ts 直接 import 共用同一个数字，避免
+ * 仓库层改了上限工具层忘同步导致 O(n²) IPC 退化（1000 条 limit 但工具
+ * 还在按 100 切批）。
+ */
+export const STICKY_UPDATE_MANY_MAX_IDS = 100
+
+/** 批量把多条便签设为同一组 patch 字段。返回实际被 UPDATE 命中的 id 列表。
+ *
+ * 设计要点：
+ *   - 用单条 `UPDATE ... WHERE id IN (?, ?, ...)` 一次 IPC + 一次 SQLite 写，
+ *     避免 N+1。对应 tools.ts batchUpdateStickies 的 N≤STICKY_UPDATE_MANY_MAX_IDS
+ *     调用场景：100 条原本 100 次 IPC → 现在 1 次。
+ *   - 仅支持 tools.ts batchUpdate 白名单的标量字段（priority/status/date/
+ *     archived），不会触发 update() 里的 status transition（completed_at /
+ *     completions 表）副作用 —— 因此不需要事务包 UPDATE + completions。
+ *   - 不走 CAS：批次场景下 LLM / 用户明确给出完整 patch，不存在并发 update()
+ *     CAS 抢锁问题；若调用方需要乐观锁请走单条 update()。
+ *   - 占位符按 ids.length 动态生成（不上限 sentinel pad 风格），适配 ≤
+ *     STICKY_UPDATE_MANY_MAX_IDS 的输入边界。
+ *   - ids.length 上限是仓库层 invariant：超长输入直接 throw 而不是部分
+ *     执行 —— 半截更新会留下「这条改了那条没改」的诡异状态。
+ */
+async function updateMany(
+  ids: ID[],
+  patch: { priority?: Priority; status?: StickyStatus; date?: string; archived?: boolean },
+): Promise<ID[]> {
+  if (ids.length === 0) return []
+  // R33 修复：仓库层 invariant —— 任何调用方传超长 ids 数组直接 throw。
+  // 拒绝半截执行，宁可让调用方在更上层降级为 per-row update()。
+  if (ids.length > STICKY_UPDATE_MANY_MAX_IDS) {
+    throw new Error(
+      `stickyNotesRepo.updateMany: ids.length ${ids.length} exceeds MAX ${STICKY_UPDATE_MANY_MAX_IDS}`,
+    )
+  }
+  const setFragments: string[] = []
+  const params: unknown[] = []
+  if (patch.priority !== undefined) {
+    setFragments.push('priority = ?')
+    params.push(patch.priority)
+  }
+  if (patch.status !== undefined) {
+    setFragments.push('status = ?')
+    params.push(patch.status)
+  }
+  if (patch.date !== undefined) {
+    setFragments.push('date = ?')
+    params.push(patch.date)
+  }
+  if (patch.archived !== undefined) {
+    setFragments.push('archived = ?')
+    params.push(patch.archived ? 1 : 0)
+  }
+  if (setFragments.length === 0) return []
+  const now = new Date().toISOString()
+  setFragments.push('updated_at = ?')
+  params.push(now)
+  const placeholders = ids.map(() => '?').join(',')
+  const sql = `UPDATE sticky_notes SET ${setFragments.join(', ')} WHERE id IN (${placeholders})`
+  const stmtId = await prepare(sql)
+  const result = (await dbClient.call('run', {
+    stmtId,
+    params: [...params, ...ids],
+  })) as { changes?: number }
+  const changed = result?.changes ?? 0
+  if (changed === ids.length) return ids.slice()
+  // 部分命中：1 次 SELECT 拿现存 ids，找出 not-found 子集返回给调用方
+  // 上报 errors（仍走单条 IPC，比 N 次 SELECT 省得多）。
+  const probeStmtId = await prepare(
+    `SELECT id FROM sticky_notes WHERE id IN (${placeholders})`,
+  )
+  const existing = (await dbClient.call('all', {
+    stmtId: probeStmtId,
+    params: ids,
+  })) as { id: string }[]
+  const existingSet = new Set(existing.map((r) => r.id))
+  return ids.filter((id) => existingSet.has(id))
+}
+
 async function remove(id: ID): Promise<boolean> {
   // R32-DI-HIGH-1 修复 (HIGH orphan-completions-inflate-heatmap)：原版
   // 直接 `DELETE FROM sticky_notes WHERE id = ?`。completions 表的 FK 是
@@ -994,10 +1097,31 @@ async function remove(id: ID): Promise<boolean> {
   return changes > 0
 }
 
-/** 完成便签：status=done + completedAt=now + 写入 completions */
-async function complete(id: ID, opts?: { date?: string }): Promise<StickyNote | null> {
+/** 完成便签：status=done + completedAt=now + 写入 completions
+ *
+ * opts.bumpPomodoroCount (默认 false)：若 true，UPDATE 里同时
+ * `pomodoro_count = pomodoro_count + 1`，让 pomodoro 完成时
+ * sticky_notes.pomodoro_count++ 与 status='done' / completions INSERT
+ * 落在同一个 BEGIN/COMMIT 边界——避免 R34 修复的「pomodoro_service Tx1 提交
+ * count++ 后 stickyNotesRepo.complete() Tx2 失败，导致 sticky.status='todo'
+ * 但 pomodoro_count 已 ++、completions 表缺行」的双事务非原子性。
+ */
+async function complete(
+  id: ID,
+  opts?: { date?: string; bumpPomodoroCount?: boolean },
+): Promise<StickyNote | null> {
   const now = new Date().toISOString()
-  const completionDate = opts?.date ?? localDayKeyOf() // 本地 YYYY-MM-DD（D2-fix）
+  // R34-Corr-2 修复 (LOW complete-date-unvalidated-asymmetric)：与 recordCompletion()
+  // 同根问题 —— opts.date 直接 INSERT completions.date 但此前无 validateDayKey 守卫。
+  // R28-DI-2 已修过 recordCompletion()（line 1505 复用 completionsRepo.validateDayKey），
+  // 但 complete()（更高频路径：IPC STICKY_NOTE_COMPLETE + pomodoro phase-complete）
+  // 漏了同样的纵深防御。handler 层（STICKY_NOTE_COMPLETE line 222）已先校验过
+  // isValidDayKey，这里再校验一次让任何绕过 handler 的未来 caller（AI tool /
+  // batchUpdate / 内部 cron）也守住。
+  const completionDate = opts?.date !== undefined
+    ? validateDayKey(opts.date)
+    : localDayKeyOf() // 本地 YYYY-MM-DD（D2-fix）
+  const bumpPomodoroCount = opts?.bumpPomodoroCount === true
 
   // R24-Corr-3 修复 (high atomicity)：BEGIN/COMMIT 跨多次 dbClient.call IPC
   // 让出事件循环，并发 complete()（用户连点完成 + AI 工具 / 多窗口同步）会
@@ -1079,14 +1203,28 @@ async function complete(id: ID, opts?: { date?: string }): Promise<StickyNote | 
       // R22 修复 (high correctness)：corrupted row 也走跨天分支 —— 谓词
       // `status != 'done'` 对 corrupted 行 (status=done) 不匹配，changes=0，
       // 会让 corrupted 自愈失效。
+      // R34 修复 (high data integrity)：bumpPomodoroCount 时把
+      // `pomodoro_count = pomodoro_count + 1` 塞进同一 UPDATE，让番茄完成时
+      // count++ 与 status='done' 落在同一行写入，避免之前双事务的非原子性。
+      //   - isCrossDayReComplete：跨天 re-complete 时同样要 ++（一天一次完成
+      //     触发一次计数累加）；用 `completed_at IS ?` 做 CAS 谓词。
+      //   - isCorruptedRow：自愈场景同样要 ++（与 becameDone 路径语义一致）。
+      //   - 默认路径：WHERE 仍带 `status != 'done'`，并发 complete() 至多
+      //     changes=1，避免 completions.count 双增（R14 修复的语义保留）。
       const updateSql = isCrossDayReComplete || isCorruptedRow
-        ? `UPDATE sticky_notes SET status = 'done', completed_at = ?, updated_at = ?
-           WHERE id = ? AND archived = 0 AND completed_at IS ?`
+        ? bumpPomodoroCount
+          ? `UPDATE sticky_notes SET status = 'done', completed_at = ?, updated_at = ?, pomodoro_count = pomodoro_count + 1
+             WHERE id = ? AND archived = 0 AND completed_at IS ?`
+          : `UPDATE sticky_notes SET status = 'done', completed_at = ?, updated_at = ?
+             WHERE id = ? AND archived = 0 AND completed_at IS ?`
         : // R14 修复 (high)：把 status != 'done' 写进 WHERE，两个并发
           // complete() 调用最多只有一个 changes=1，第二个的 changes=0 走
           // 早返回分支，避免 completions.count 双增。
-          `UPDATE sticky_notes SET status = 'done', completed_at = ?, updated_at = ?
-           WHERE id = ? AND archived = 0 AND status != 'done'`
+          bumpPomodoroCount
+          ? `UPDATE sticky_notes SET status = 'done', completed_at = ?, updated_at = ?, pomodoro_count = pomodoro_count + 1
+             WHERE id = ? AND archived = 0 AND status != 'done'`
+          : `UPDATE sticky_notes SET status = 'done', completed_at = ?, updated_at = ?
+             WHERE id = ? AND archived = 0 AND status != 'done'`
       const updateStmtId = await prepare(updateSql)
       const updateParams: unknown[] = isCrossDayReComplete
         ? [now, now, id, cur.completed_at]
@@ -1136,6 +1274,18 @@ async function complete(id: ID, opts?: { date?: string }): Promise<StickyNote | 
 
 /** 显式设置状态（todo / in_progress / done / cancelled） */
 async function setStatus(id: ID, status: StickyStatus): Promise<StickyNote | null> {
+  // R33-Corr-3 补 (MEDIUM set-status-bypass-whitelist)：handler 层已加 enum 校验，
+  // repo 这里再加一次纵深防御 —— 任何未来 caller（tool 路径、batchUpdateStickies、
+  // conversation handler、未来的 cron / IPC）拿到的 status 都要先过白名单，
+  // 否则 SQLite TEXT 列会被污染，下游 filter / sort / 通知调度失灵。
+  const VALID_STATUS: ReadonlySet<string> = new Set([
+    'todo', 'in_progress', 'done', 'cancelled',
+  ])
+  if (typeof status !== 'string' || !VALID_STATUS.has(status)) {
+    throw new Error(
+      `[stickyNotes.setStatus] status must be one of ${[...VALID_STATUS].join(',')}`,
+    )
+  }
   const now = new Date().toISOString()
   // M7：当目标 status==='done' 且当前已是 done 且同一天，跳过 completions 写入
   let skipCompletion = false
@@ -1550,8 +1700,8 @@ async function addStep(noteId: ID, content: string, order?: number): Promise<Sti
           next_order: number
         } | null
         resolvedOrder = row?.next_order ?? 0
-         
-        console.warn(
+
+        log.warn(
           `[stickyNotes.addStep] order=${order} for note ${noteId} was taken; falling back to append order=${resolvedOrder}`,
         )
       } else {
@@ -1722,18 +1872,10 @@ async function bumpUpdatedAtWithCas(noteId: ID, now: string): Promise<void> {
   )
 }
 
-/**
- * D2-fix（timezone mismatch）：写 completions.date 时原本用 now.slice(0, 10)，
- * 拿到的是 UTC 日期；读侧（renderer 的 dayKeyOf）用的是本地日期。
- * 在 UTC+8 凌晨完成的任务会被存到前一天去，StatsCards / heatmap 统计少 1。
- * 这里提供一个本地 YYYY-MM-DD 帮助函数，并替换所有 UTC 切片用法。
- */
-function localDayKeyOf(d: Date = new Date()): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
+// R28-D2-fix（timezone mismatch）的 `localDayKeyOf` 副本已删除；
+// 现在统一从 `src/shared/lib/dayKey.ts` 导入，与 tools.ts / statsBridge.ts /
+// notesWatcher.ts 共用同一个权威实现。文件本地副本之前的 D2 修复注释保留在这里
+// 是为了不抹掉 review 评审的历史轨迹。
 
 export const stickyNotesRepo = {
   findByDateRange,
@@ -1743,6 +1885,7 @@ export const stickyNotesRepo = {
   search,
   create,
   update,
+  updateMany,
   remove,
   complete,
   setStatus,

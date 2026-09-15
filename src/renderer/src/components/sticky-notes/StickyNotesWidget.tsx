@@ -11,8 +11,8 @@ import { Link } from '@tanstack/react-router'
 import { useStickyNotesStore } from '../../stores/stickyNotes'
 import { useTodayKey } from '../../lib/useDayRollover'
 import { formatDayLabel } from '../../lib/formatDate'
-
-const PRIORITY_WEIGHT: Record<string, number> = { p0: 0, p1: 1, p2: 2, p3: 3 }
+import { useSettingsStore } from '../../stores/settings'
+import { priorityRankOf } from '@shared/lib/priorities'
 
 interface Props {
   /** 最多展示多少条（默认 4） */
@@ -27,6 +27,11 @@ export function StickyNotesWidget({ limit = 4 }: Props) {
   // 跨过午夜后视图会一直停留在昨天。改用 useTodayKey 订阅 rollover。
   const todayKey = useTodayKey()
 
+  // R-fix-i18n-format-date (high)：formatDayLabel 跟随 settings.language 切
+  // 换；只订阅 language 字段避免 settings store 其它字段变化触发整 widget
+  // 重渲染。
+  const language = useSettingsStore((s) => s.language)
+
   // 进入 widget 时拉一次今日数据（轻量：单日窗口）
   useEffect(() => {
     if (!byDate[todayKey]) {
@@ -38,8 +43,8 @@ export function StickyNotesWidget({ limit = 4 }: Props) {
 
   const sorted = useMemo(() => {
     return [...todayNotes].sort((a, b) => {
-      const pa = PRIORITY_WEIGHT[a.priority] ?? 99
-      const pb = PRIORITY_WEIGHT[b.priority] ?? 99
+      const pa = priorityRankOf(a.priority)
+      const pb = priorityRankOf(b.priority)
       if (pa !== pb) return pa - pb
       return a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0
     })
@@ -56,8 +61,8 @@ export function StickyNotesWidget({ limit = 4 }: Props) {
           <h3 className="widget-title">今日便签</h3>
           <p className="widget-sub">
             {sorted.length > 0
-              ? `${formatDayLabel(todayKey)} · ${totalDone}/${totalSteps} 步完成`
-              : `${formatDayLabel(todayKey)} · 还没有便签`}
+              ? `${formatDayLabel(todayKey, language)} · ${totalDone}/${totalSteps} 步完成`
+              : `${formatDayLabel(todayKey, language)} · 还没有便签`}
           </p>
         </div>
         <Link to="/today" className="widget-link" title="打开今日便签">

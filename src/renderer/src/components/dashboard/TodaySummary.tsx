@@ -12,12 +12,11 @@
 import { useMemo } from 'react'
 import type { StickyNote } from '@shared/types'
 import { useTodayKey } from '../../lib/useDayRollover'
+import { aggregateStickies, type TodayStats } from '../../lib/stickyAggregates'
 
-export interface TodayStats {
-  todayStickies: number
-  todayDoneSteps: number
-  overdue: number
-}
+// R-perf-dashboard-aggregates：TodayStats 类型已收敛到 lib/stickyAggregates.ts，
+// 这里 re-export 保持旧 import 路径（其它文件可能从 './TodaySummary' 拿类型）继续可用。
+export type { TodayStats }
 
 interface Props {
   /** 当前便签列表 */
@@ -26,35 +25,11 @@ interface Props {
   todayStats?: TodayStats
 }
 
-function computeTodayStats(stickies: StickyNote[], todayKey: string): TodayStats {
-  // 今日 0~24h 区间（毫秒时间戳）
-  const todayStart = new Date(`${todayKey}T00:00:00.000`).getTime()
-
-  let todayStickies = 0
-  let todayDoneSteps = 0
-  let overdue = 0
-
-  for (const n of stickies) {
-    if (n.date === todayKey) todayStickies++
-    // 已完成步骤：数的是 step 本身（不是 sticky），分母是 sticky 数 ——
-    // 见 stepCompletion 处的封顶处理。
-    if (n.date === todayKey) {
-      todayDoneSteps += n.steps.filter((s) => s.done).length
-    }
-    if (n.status !== 'done' && n.dueAt) {
-      const due = new Date(n.dueAt).getTime()
-      if (due < todayStart) overdue++
-    }
-  }
-
-  return { todayStickies, todayDoneSteps, overdue }
-}
-
 export function TodaySummary({ stickies, todayStats: providedStats }: Props) {
   // R5R-4：跨午夜后必须重新计算 todayKey，否则 stats 会停留在昨天。
   const todayKey = useTodayKey()
   const stats = useMemo<TodayStats>(
-    () => providedStats ?? computeTodayStats(stickies, todayKey),
+    () => providedStats ?? aggregateStickies(stickies, todayKey).todayStats,
     [stickies, providedStats, todayKey],
   )
 

@@ -157,11 +157,13 @@ export async function* chat(
 ): AsyncIterable<ChatChunk> {
   const cfg = await loadAiConfig()
   if (!cfg.aiEnabled) {
-    yield { type: 'error', message: 'AI 总开关未开启，请前往设置启用' }
+    // R32-04：AI 总开关未开启是用户配置问题，不是 DB 失败。
+    // 带 reason 让 stream.ts 不要把这条错误塞进 persistError。
+    yield { type: 'error', message: 'AI 总开关未开启，请前往设置启用', reason: 'ai-disabled' }
     return
   }
   if (!cfg.aiProvider) {
-    yield { type: 'error', message: '尚未选择 AI 提供商' }
+    yield { type: 'error', message: '尚未选择 AI 提供商', reason: 'no-provider' }
     return
   }
 
@@ -199,7 +201,9 @@ export async function* chat(
       await assertHostnameStillPublic(parsed.hostname)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      yield { type: 'error', message: `[ai/router] ${msg}` }
+      // R32-04：DNS rebinding 防护拦截了自定义 baseUrl，是安全预检失败，
+      // 不是 DB 写入失败。带 reason 让 stream.ts 不要把它当 persistError 转发。
+      yield { type: 'error', message: `[ai/router] ${msg}`, reason: 'dns-blocked' }
       return
     }
   }

@@ -6,12 +6,18 @@
  */
 import { useCallback } from 'react'
 import type { Priority } from '@shared/types'
+import { PRIORITY_LABEL } from '@shared/lib/priorities'
 
-const META: Record<Priority, { label: string; emoji: string }> = {
-  p0: { label: 'P0 紧急', emoji: '🔥' },
-  p1: { label: 'P1 高', emoji: '★' },
-  p2: { label: 'P2 中', emoji: '●' },
-  p3: { label: 'P3 低', emoji: '○' },
+/**
+ * R36 修复 (medium a11y)：emoji 仍按调用方偏好（badge 用 pill+emoji），
+ * 但语义 label 与 QuickCaptureOverlay 共享 @shared/lib/priorities 的
+ * PRIORITY_LABEL 单一来源，避免 SR 念出"P zero"。
+ */
+const EMOJI: Record<Priority, string> = {
+  p0: '🔥',
+  p1: '★',
+  p2: '●',
+  p3: '○',
 }
 
 interface Props {
@@ -20,7 +26,7 @@ interface Props {
 }
 
 export function StickyPriorityBadge({ priority, onChange }: Props) {
-  const m = META[priority]
+  const label = PRIORITY_LABEL[priority]
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -41,16 +47,16 @@ export function StickyPriorityBadge({ priority, onChange }: Props) {
           onChange={handleChange}
           aria-label="切换优先级"
         >
-          {(Object.keys(META) as Priority[]).map((p) => (
+          {(Object.keys(PRIORITY_LABEL) as Priority[]).map((p) => (
             <option key={p} value={p}>
-              {META[p].label}
+              {PRIORITY_LABEL[p]}
             </option>
           ))}
         </select>
       ) : (
         <>
-          <span aria-hidden>{m.emoji}</span>
-          <span>{m.label}</span>
+          <span aria-hidden>{EMOJI[priority]}</span>
+          <span>{label}</span>
         </>
       )}
     </span>
