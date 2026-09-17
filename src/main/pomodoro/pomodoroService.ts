@@ -242,7 +242,9 @@ export function stopPomodoroService(): void {
   void import('./audio').then((m) => {
     m.setWhiteNoise('none')
     m.disposeAudio()
-  }).catch(() => undefined)
+  }).catch((err) => {
+    log.warn('[pomodoro] failed to dispose audio on service stop', err)
+  })
   // 退出专注模式
   emitFocusMode(false, 'stop')
   log.info('[pomodoro] service stopped')
@@ -332,7 +334,9 @@ export async function start(stickyNoteId: string | null = null): Promise<Pomodor
   const cfg = timerEngine.config
   void import('./audio').then((m) => {
     m.setWhiteNoise(cfg.whiteNoise)
-  }).catch(() => undefined)
+  }).catch((err) => {
+    log.warn('[pomodoro] failed to apply white noise on start', err)
+  })
   if (cfg.autoEnterFocusMode) {
     emitFocusMode(true, 'start')
   }
@@ -352,7 +356,9 @@ export function resume(): PomodoroState {
 export function stop(): PomodoroState {
   timerEngine.stop()
   // 用户主动 stop：停白噪音 + 退专注模式
-  void import('./audio').then((m) => m.setWhiteNoise('none')).catch(() => undefined)
+  void import('./audio').then((m) => m.setWhiteNoise('none')).catch((err) => {
+    log.warn('[pomodoro] failed to clear white noise on user stop', err)
+  })
   emitFocusMode(false, 'stop')
   return getState()
 }
