@@ -279,7 +279,7 @@ export function MenuBar({ editor, disabled = false, onPickImage }: Props) {
       onClick: () => {
         const latex = promptText('输入 LaTeX 公式（行内）', 'E = mc^2')
         if (!latex) return
-        editor.chain().focus().insertMathInline(latex).run()
+        editor.chain().focus().tpInsertMathInline(latex).run()
       },
     },
     {
@@ -290,7 +290,7 @@ export function MenuBar({ editor, disabled = false, onPickImage }: Props) {
       onClick: () => {
         const latex = promptText('输入 LaTeX 公式（块级）', '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}')
         if (!latex) return
-        editor.chain().focus().insertMathBlock(latex).run()
+        editor.chain().focus().tpInsertMathBlock(latex).run()
       },
     },
     {
@@ -304,7 +304,7 @@ export function MenuBar({ editor, disabled = false, onPickImage }: Props) {
           'graph TD\n  A[开始] --> B{判断}\n  B -->|是| C[结束]\n  B -->|否| D[继续]',
         )
         if (!code) return
-        editor.chain().focus().insertMermaid(code).run()
+        editor.chain().focus().tpInsertMermaid(code).run()
       },
     },
   ]

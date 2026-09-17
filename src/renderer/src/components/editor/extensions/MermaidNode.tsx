@@ -278,7 +278,9 @@ export const MermaidNode = Node.create<MermaidNodeOptions>({
 
   addCommands() {
     return {
-      insertMermaid:
+      // W2-A②：原 insertMermaid → tpInsertMermaid（避开与全局 Tiptap
+      // 命令名撞名 + 给所有 TP 自定义命令统一前缀）
+      tpInsertMermaid:
         (code = 'graph TD\n  A[开始] --> B{判断}\n  B -->|是| C[结束]\n  B -->|否| D[继续]') =>
         ({ commands }) => {
           return commands.insertContent({
@@ -297,7 +299,7 @@ export const MermaidNode = Node.create<MermaidNodeOptions>({
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     mermaid: {
-      insertMermaid: (code?: string) => ReturnType
+      tpInsertMermaid: (code?: string) => ReturnType
     }
   }
 }

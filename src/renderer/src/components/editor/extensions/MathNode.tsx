@@ -239,7 +239,9 @@ export const MathInlineNode = Node.create({
 
   addCommands() {
     return {
-      insertMathInline:
+      // W2-A②：原 insertMathInline → tpInsertMathInline（避开与全局 Tiptap
+      // 命令名撞名 + 给所有 TP 自定义命令统一前缀）
+      tpInsertMathInline:
         (latex = 'E = mc^2') =>
         ({ commands }) => {
           return commands.insertContent({
@@ -401,7 +403,8 @@ export const MathBlockNode = Node.create({
 
   addCommands() {
     return {
-      insertMathBlock:
+      // W2-A②：原 insertMathBlock → tpInsertMathBlock（同前缀统一）
+      tpInsertMathBlock:
         (latex = '\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}') =>
         ({ commands }) => {
           return commands.insertContent({
@@ -420,8 +423,8 @@ export const MathBlockNode = Node.create({
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     math: {
-      insertMathInline: (latex?: string) => ReturnType
-      insertMathBlock: (latex?: string) => ReturnType
+      tpInsertMathInline: (latex?: string) => ReturnType
+      tpInsertMathBlock: (latex?: string) => ReturnType
     }
   }
 }
