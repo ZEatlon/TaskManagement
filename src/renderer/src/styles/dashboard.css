@@ -1409,33 +1409,74 @@
   font-variant-numeric: tabular-nums;
 }
 
-.dashboard-heatmap-sources {
-  display: flex;
-  gap: 4px;
-  padding: 6px var(--space-3);
-  border-bottom: 1px solid var(--border);
-}
-
-.dashboard-heatmap-source {
-  font-size: var(--fs-xs);
-  padding: 3px 10px;
+/* W2-C④：数据源切换从 inline 3 按钮条 → 顶部小齿轮 + 弹层 checkbox。
+   .dashboard-heatmap-source* 旧样式不再使用（保留 .dashboard-heatmap-source
+   类名仅作 grep 锚点，新代码用 .dashboard-heatmap-source-item 区分）。
+   gear 按钮放在 .card-header 右侧，~20×20px，hover 高亮。*/
+.dashboard-heatmap-gear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
-  border: 1px solid var(--border);
-  cursor: pointer;
   color: var(--text-secondary);
-  font-weight: 500;
+  cursor: pointer;
   transition: background var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out),
-    border-color var(--motion-fast) var(--ease-out);
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
-.dashboard-heatmap-source:hover {
+.dashboard-heatmap-gear:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+  color: var(--accent);
 }
-.dashboard-heatmap-source.is-on {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+.dashboard-heatmap-gear.is-open {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.dashboard-heatmap-sources-popover {
+  position: absolute;
+  right: var(--space-3);
+  top: 38px;
+  z-index: 10;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 18%);
+}
+.dashboard-heatmap-widget {
+  position: relative;
+}
+.dashboard-heatmap-source-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  user-select: none;
+}
+.dashboard-heatmap-source-item:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.dashboard-heatmap-source-item input[type='checkbox'] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.dashboard-heatmap-source-label {
+  flex: 1;
+}
+.dashboard-heatmap-source-tick {
+  color: var(--accent);
 }
 
 /* 单月视图：cell 放大，weekday 列完整 7 行 */

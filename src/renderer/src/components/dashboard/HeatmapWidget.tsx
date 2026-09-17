@@ -13,7 +13,7 @@
  *   - Heatmap.tsx 用于设置 / 数据页，整年 365 天
  *   - HeatmapWidget 嵌在 dashboard，近三个月视图，周一首
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useHeatmapStore } from '../../stores/heatmap'
 import {
   buildHeatmapLastNDays,
@@ -25,6 +25,7 @@ import { dayKeyOf, fromDayKey } from '../../lib/date'
 import { useTodayKey } from '../../lib/useDayRollover'
 import { useSettingsStore } from '../../stores/settings'
 import { getCalendarMessages, getHeatmapMessages } from '@shared/i18n/locales'
+import { Settings, Check } from '../../lib/icon'
 
 const FIRST_DOW: FirstDayOfWeek = 1 // 周一首（与中文月历对齐）
 const DAYS_WINDOW = 90 // 近三月
@@ -112,8 +113,45 @@ export function HeatmapWidget() {
   )
 
   function toggleSource(src: Source) {
-    setSources((prev) => ({ ...prev, [src]: !prev[src] }))
+    setSources((prev) => ({ ...prev, [src] : !prev[src] }))
   }
+
+  // W2-C④：数据源切换从「3 个 inline 按钮条」收敛到「顶部小齿轮 + 弹层
+  // 复选框」。inline 按钮条占 widget 顶 ~36px 高度且挤占月份标签视觉焦点；
+  // 改成 gear 弹层后默认隐藏，仅在用户主动点击 Settings 图标时浮出
+  // 3 个 checkbox（stickies / notes / pomodoros），widget 顶部只露一颗
+  // ~20px 的图标，月份标题成为视觉焦点。
+  const [sourcesOpen, setSourcesOpen] = useState(false)
+  const sourcesRef = useRef<HTMLDivElement | null>(null)
+  const sourcesBtnRef = useRef<HTMLButtonElement | null>(null)
+  // outside-click + Escape 关闭弹层（与 ConflictDialog / SyncConfirmDialog
+  // 走同一份 a11y 关闭契约 —— R6A / R25-a11y-2 一致）。
+  useEffect(() => {
+    if (!sourcesOpen) return
+    const onDown = (e: MouseEvent) => {
+      const el = sourcesRef.current
+      if (el && !el.contains(e.target as Node)) {
+        setSourcesOpen(false)
+        sourcesBtnRef.current?.focus()
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        setSourcesOpen(false)
+        sourcesBtnRef.current?.focus()
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [sourcesOpen])
+  const activeSourceCount = useMemo(
+    () => Object.values(sources).filter(Boolean).length,
+    [sources],
+  )
 
   // R-fix-i18n-weekday-label (medium)：左侧 weekday 标签跟随 settings.language 切换。
   // 只订阅 language 字段避免 settings store 其它字段变化触发整 widget 重渲染。
@@ -153,30 +191,53 @@ export function HeatmapWidget() {
     <div className="dashboard-heatmap-widget" aria-label="近期活动热力图">
       <header className="card-header">
         <h3>近期活动</h3>
+        {/* W2-C④：数据源切换从 inline 按钮条收敛到顶部小齿轮。
+            aria-label 显式声明当前激活的源数（屏幕阅读器可听到「数据源，
+            当前 1 项」），不依赖视觉读数。aria-expanded 控制弹层显隐。 */}
+        <button
+          ref={sourcesBtnRef}
+          type="button"
+          className={`dashboard-heatmap-gear ${sourcesOpen ? 'is-open' : ''}`}
+          onClick={() => setSourcesOpen((o) => !o)}
+          aria-label={`数据源（当前 ${activeSourceCount} 项）`}
+          aria-haspopup="menu"
+          aria-expanded={sourcesOpen}
+        >
+          <Settings size={14} aria-hidden />
+        </button>
       </header>
+
+      {/* 数据源弹层 —— outside-click / Escape 关闭。menu role 让 SR 把
+          内部 checkbox 视作 menuitemcheckbox。*/}
+      {sourcesOpen && (
+        <div
+          ref={sourcesRef}
+          className="dashboard-heatmap-sources-popover"
+          role="menu"
+          aria-label="数据源"
+        >
+          {(Object.keys(SOURCE_LABELS) as Source[]).map((src) => (
+            <label
+              key={src}
+              className="dashboard-heatmap-source-item"
+              role="menuitemcheckbox"
+              aria-checked={sources[src]}
+            >
+              <input
+                type="checkbox"
+                checked={sources[src]}
+                onChange={() => toggleSource(src)}
+              />
+              <span className="dashboard-heatmap-source-label">{SOURCE_LABELS[src]}</span>
+              {sources[src] && <Check size={12} aria-hidden className="dashboard-heatmap-source-tick" />}
+            </label>
+          ))}
+        </div>
+      )}
 
       {/* 月份标题：单独一行 + 加大字号，作为 widget 的视觉焦点 */}
       <div className="dashboard-heatmap-period-row">
         <span className="dashboard-heatmap-period">{periodLabel}</span>
-      </div>
-
-      {/* 数据源切换 */}
-      <div
-        className="dashboard-heatmap-sources"
-        role="group"
-        aria-label="数据源"
-      >
-        {(Object.keys(SOURCE_LABELS) as Source[]).map((src) => (
-          <button
-            key={src}
-            type="button"
-            className={`dashboard-heatmap-source ${sources[src] ? 'is-on' : ''}`}
-            onClick={() => toggleSource(src)}
-            aria-pressed={sources[src]}
-          >
-            {SOURCE_LABELS[src]}
-          </button>
-        ))}
       </div>
 
       <div className="dashboard-heatmap-sub muted small">{sub}</div>
