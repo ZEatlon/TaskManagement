@@ -13,7 +13,7 @@
  *   - 当前选中 folder 时「新建对话」自动归入该 folder
  */
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight } from '@renderer/lib/icon'
 import { useShallow } from 'zustand/react/shallow'
 import { useAiStore } from '../../stores/ai'
 import { ConfirmDialog } from '../common/ConfirmDialog'

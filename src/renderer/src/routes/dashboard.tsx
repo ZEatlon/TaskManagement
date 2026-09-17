@@ -15,7 +15,7 @@
  * 编辑态用 draft layout 与已保存的 layout 隔离；保存才写 localStorage。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Eye, EyeOff, GripVertical, Pencil, Plus } from 'lucide-react'
+import { Eye, EyeOff, GripVertical, Pencil, Plus } from '@renderer/lib/icon'
 import type { StickyNote, StickyNoteUpdate, StickyNoteStepPatch } from '@shared/types'
 import { GreetingCard } from '../components/dashboard/GreetingCard'
 import { TodaySummary } from '../components/dashboard/TodaySummary'

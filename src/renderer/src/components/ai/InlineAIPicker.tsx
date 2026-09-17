@@ -31,7 +31,7 @@
  *     但可被 roving focus 操作
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Sparkles } from 'lucide-react'
+import { Sparkles } from '@renderer/lib/icon'
 import { useAiStore } from '../../stores/ai'
 import { isImeComposing } from '../../lib/useImeGuard'
 

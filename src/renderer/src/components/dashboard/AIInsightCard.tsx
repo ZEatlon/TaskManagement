@@ -25,7 +25,7 @@
  *   - 不持久化选择历史
  */
 import { useMemo } from 'react'
-import { Sparkles, ChevronRight } from 'lucide-react'
+import { Sparkles, ChevronRight } from '@renderer/lib/icon'
 import { useAiStore } from '../../stores/ai'
 import { usePomodoroStore } from '../../stores/pomodoro'
 import type { TodayStats } from './TodaySummary'

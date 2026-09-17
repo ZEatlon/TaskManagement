@@ -16,7 +16,7 @@
  */
 import * as React from 'react'
 import { Slot } from '@radix-ui/react-slot'
-import { Loader2 } from 'lucide-react'
+import { Spinner as Loader2 } from '@renderer/lib/icon'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@renderer/lib/utils'
 

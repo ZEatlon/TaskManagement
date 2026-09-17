@@ -16,7 +16,7 @@
  *   - 与右侧 NoteMetaPanel 上下堆叠
  */
 import { useEffect, useRef, useState } from 'react'
-import { Plus, X, Pencil, Check, Tag as TagIcon } from 'lucide-react'
+import { Plus, X, Pencil, Check, Tag as TagIcon } from '@renderer/lib/icon'
 import { useTagsStore } from '../../stores/tags'
 import { useNotesStore } from '../../stores/notes'
 

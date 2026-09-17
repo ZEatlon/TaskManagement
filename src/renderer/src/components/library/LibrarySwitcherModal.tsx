@@ -15,7 +15,7 @@
  * 设计：所有 IPC 串行 await + 错误内联展示；modal 内部状态机自管理。
  */
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { X, FolderInput, HardDriveDownload, FolderPlus, Loader2 } from 'lucide-react'
+import { X, FolderInput, HardDriveDownload, FolderPlus, Spinner as Loader2 } from '@renderer/lib/icon'
 import { libraryApi, type LibraryScanResult } from '@renderer/lib/ipc'
 import { useSettingsStore } from '../../stores/settings'
 import { useFocusTrap } from '@renderer/lib/useFocusTrap'
@@ -46,7 +46,13 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
   // R37-perf-2：精确订阅本 modal 实际用到的字段（libraryPath + update 方法）。
   // 全 store 订阅会让任意字段（如 accentColor）写入触发本 modal 重新挂载状态机。
   const currentLibraryPath = useSettingsStore((s) => s.libraryPath)
-  const update = useSettingsStore((s) => s.update)
+  // R-fix-setlibrarypath-channel：库目录切换必须走专用 lib:set-current
+  // 通道；不能用 settings.update({ libraryPath }) —— 主进程 setting:set
+  // 把 libraryPath 当作特权字段拒绝。原代码在 init / use-existing /
+  // migrate 三个分支调 libraryApi.setCurrent 之后又额外调
+  // update({ libraryPath }) 导致 "field 'libraryPath' in 'app.settings'
+  // is privileged" 错误。改用 setLibraryPath()（内部走 libraryApi.setCurrent）。
+  const setLibraryPath = useSettingsStore((s) => s.setLibraryPath)
   const [step, setStep] = useState<Step>('pick')
   const [pickedPath, setPickedPath] = useState<string | null>(null)
   const [scan, setScan] = useState<LibraryScanResult | null>(null)
@@ -146,13 +152,11 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
         if (chosen === 'init') {
           // 在新目录建立新库：init + setCurrent
           await libraryApi.initialize(pickedPath)
-          await libraryApi.setCurrent(pickedPath)
-          await update({ libraryPath: pickedPath })
+          await setLibraryPath(pickedPath)
           setResult('已在新目录建立新库并切换')
         } else if (chosen === 'use-existing') {
           // 解析原有仓库数据：只 setCurrent，不动 dest 数据
-          await libraryApi.setCurrent(pickedPath)
-          await update({ libraryPath: pickedPath })
+          await setLibraryPath(pickedPath)
           setResult('已切换到新目录（新目录数据已就绪）')
         } else {
           // 从当前库迁移：migrate + setCurrent
@@ -170,8 +174,7 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
             return
           }
           const m = await libraryApi.migrate(pickedPath)
-          await libraryApi.setCurrent(pickedPath)
-          await update({ libraryPath: pickedPath })
+          await setLibraryPath(pickedPath)
           setResult(
             `已迁移 ${m.copiedFiles} 个文件（${formatBytes(m.copiedBytes)}），并切换到新目录`,
           )
@@ -187,7 +190,7 @@ export function LibrarySwitcherModal({ open, onClose, onSwitched }: Props) {
         setAction(null)
       }
     },
-    [pickedPath, update, onSwitched],
+    [pickedPath, setLibraryPath, onSwitched],
   )
 
   if (!open) return null

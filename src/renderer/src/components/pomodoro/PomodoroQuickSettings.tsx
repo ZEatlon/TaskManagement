@@ -30,7 +30,7 @@ import {
   Square,
   Volume2,
   VolumeX,
-} from 'lucide-react'
+} from '@renderer/lib/icon'
 import { usePomodoroStore } from '../../stores/pomodoro'
 import {
   POMODORO_CYCLE_LIMITS,
@@ -242,6 +242,17 @@ export function PomodoroQuickSettings(): JSX.Element {
   // 不影响 config / 主进程 audio 模块。组件卸载或切换预览 kind 时也清理。
   const [previewing, setPreviewing] = useState(false)
   const previewTimerRef = useRef<number | null>(null)
+  // 修复 (high async-race)：组件卸载哨兵。handlePreview 在 await import(...)
+  // 之后才 setTimeout：若组件在 await 期间卸载，import 晚到 resolve 后
+  // setTimeout 调度到未来，3 秒后 m.stopWhiteNoise() 会把主进程 IPC
+  // 派发的白噪音一刀斩。mountedRef 让 resolve 后能识别卸载态并自我清理。
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const stopPreview = useCallback(() => {
     if (previewTimerRef.current !== null) {
       window.clearTimeout(previewTimerRef.current)
@@ -260,10 +271,24 @@ export function PomodoroQuickSettings(): JSX.Element {
     const kind = config.whiteNoise
     if (kind === 'none') return
     void import('../../audio/noise').then((m) => {
+      // 修复：await 期间若组件已卸载，立即停掉噪音并直接返回，
+      // 不再调度 setTimeout 也不再 setState（setState on unmounted 警告）。
+      if (!mountedRef.current) {
+        m.stopWhiteNoise()
+        return
+      }
       m.startWhiteNoise(kind)
       setPreviewing(true)
       // 3 秒后自动停
       previewTimerRef.current = window.setTimeout(() => {
+        // setTimeout 真正触发时再做一次 mounted 检查（用户在 3s 内
+        // 切路由也可能让组件卸载；卸载时 stopWhiteNoise 已被 unmount
+        // cleanup 提前放过一遍，这里再放一次幂等）。
+        if (!mountedRef.current) {
+          m.stopWhiteNoise()
+          previewTimerRef.current = null
+          return
+        }
         m.stopWhiteNoise()
         setPreviewing(false)
         previewTimerRef.current = null

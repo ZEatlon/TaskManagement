@@ -19,7 +19,7 @@
  *            底部一行（见 PomodoroQuickSettings），无需独立 widget。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, GripVertical, Plus, X } from 'lucide-react'
+import { Eye, EyeOff, GripVertical, Plus, X } from '@renderer/lib/icon'
 import { useFocusTrap } from '@renderer/lib/useFocusTrap'
 
 export const DASHBOARD_LAYOUT_STORAGE_KEY = 'dashboard.layout.v5'

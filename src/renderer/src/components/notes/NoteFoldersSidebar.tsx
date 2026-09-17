@@ -17,7 +17,7 @@
  *   - 拖拽用原生 HTML5：source 在 .note-item 的 .note-drag-handle，target 在 .folder-row
  */
 import { memo, useEffect, useState } from 'react'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight } from '@renderer/lib/icon'
 import { useNotesStore, type FolderSelection } from '../../stores/notes'
 import type { NoteFolder, NoteFolderColor, NoteMeta } from '@shared/types'
 import { noteFoldersApi } from '../../lib/ipc'

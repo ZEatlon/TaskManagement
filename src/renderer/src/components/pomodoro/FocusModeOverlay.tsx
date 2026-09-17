@@ -12,7 +12,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { X } from '@renderer/lib/icon'
 import { usePomodoroStore } from '../../stores/pomodoro'
 import { formatMmSs } from '../../lib/formatDate'
 import { useFocusTrap } from '../../lib/useFocusTrap'

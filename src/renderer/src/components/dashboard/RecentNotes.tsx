@@ -9,7 +9,7 @@
  */
 import { useCallback, useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { FileText, Pin } from 'lucide-react'
+import { FileText, Pin } from '@renderer/lib/icon'
 import type { NoteMeta } from '@shared/types'
 import { useNotesStore } from '../../stores/notes'
 import { useSettingsStore } from '../../stores/settings'

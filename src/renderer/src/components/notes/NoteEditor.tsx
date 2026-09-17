@@ -17,7 +17,7 @@
  * 无需修改路由层。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download } from 'lucide-react'
+import { Download } from '@renderer/lib/icon'
 import { useNotesStore } from '../../stores/notes'
 import { TipTapEditor, type EditorContentSource } from '../editor/TipTapEditor'
 import { NotePreview } from './NotePreview'

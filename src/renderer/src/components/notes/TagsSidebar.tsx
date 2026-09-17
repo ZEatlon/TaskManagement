@@ -11,7 +11,7 @@
  *   - 当前笔记的 tag 仍由 useNotesStore 维护（写在 frontmatter），不在此处同步
  */
 import { useEffect, useRef, useState } from 'react'
-import { Plus, X, Pencil, Check } from 'lucide-react'
+import { Plus, X, Pencil, Check } from '@renderer/lib/icon'
 import { useTagsStore } from '../../stores/tags'
 import { useNotesStore } from '../../stores/notes'
 

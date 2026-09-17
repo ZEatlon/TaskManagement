@@ -18,8 +18,8 @@ import {
   FilePlus2,
   NotebookPen,
   Play,
-  type LucideIcon,
-} from 'lucide-react'
+  type AppIcon,
+} from '@renderer/lib/icon'
 import { dayKeyOf } from '../../lib/date'
 import { useStickyNotesStore } from '../../stores/stickyNotes'
 import { useNotesStore } from '../../stores/notes'
@@ -29,7 +29,7 @@ interface QuickAction {
   key: string
   label: string
   description: string
-  icon: LucideIcon
+  icon: AppIcon
   disabled?: boolean
   onClick: () => void | Promise<void>
 }
