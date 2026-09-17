@@ -21,11 +21,12 @@ import { registerLibraryHandlers } from './library-handlers'
 import { registerNotifyHandlers } from './notify-handlers'
 import { registerAiHandlers } from './ai-handlers'
 import { registerPomodoroHandlers } from './pomodoro-handlers'
-import { registerNoteHandlers } from './note-handlers'
+import { registerNoteHandlers } from './notes'
 import { registerAttachmentHandlers } from './attachment-handlers'
 import { registerShellHandlers } from './shell-handlers'
 import { registerWindowHandlers } from './window-handlers'
 import { registerStickyNoteHandlers } from './sticky-note-handlers'
+import { registerUpdaterHandlers } from './updater-handlers'
 
 export function registerIpcHandlers(): void {
   log.info('[ipc] Registering handlers...')
@@ -92,6 +93,7 @@ export function registerIpcHandlers(): void {
   registerShellHandlers()
   registerWindowHandlers()
   registerStickyNoteHandlers()
+  registerUpdaterHandlers()
 
   // Mock 数据清理：一次性把历史版本自动写入的 mock 笔记 / sticky /
   // pomodoros 从用户 library 移除。不受 MOCK_SEED 控制（清理是破坏性
