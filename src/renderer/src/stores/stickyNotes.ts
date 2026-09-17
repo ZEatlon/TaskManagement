@@ -281,6 +281,95 @@ function applyNotePatch(
 }
 
 /**
+ * R-fix-update-rollback-concurrent-overwrite (MEDIUM concurrency)：
+ * CAS 冲突回滚专用：保留比"无脑 rollback 到 snapshot"更保守的语义——
+ * 当且仅当「没有任何其他 in-flight 写操作」时，把本次乐观 patch 从
+ * byDate / all 中剥离（基于当前 state 减去本次 patch），其余并发已
+ * merge 的状态一律保留。这避免：
+ *   (a) 跨窗口并发 update：B 的成功 merge 被 A 的 rollback 误清
+ *   (b) 同窗口连续 update：A 的 rollback 把 B 的乐观 patch 也清掉
+ *
+ * 实现细节：「从当前 state 找 optimistic.id 对应 row，替换为
+ * snapshot 里的旧 row；如 snapshot 没有该 id 则从 all / bucket 删除」。
+ * 这是 mirror-of-applyNotePatch 的反向 —— applyNotePatch 是把 bucket
+ * 里的 oldRow 换成 newRow；本函数把 newRow 换回 snapshot 的 oldRow。
+ */
+function rollbackOptimisticByDate(
+  snapshot: Record<string, StickyNote[]>,
+  optimistic: StickyNote,
+  cur: Record<string, StickyNote[]>,
+): Record<string, StickyNote[]> {
+  // 1) 在当前 byDate 里找 optimistic.id 所在桶 ——
+  // 跨日期 move 时它可能在 optimistic.date（新桶）或某个旧桶里。
+  let foundBucket = ''
+  for (const [dk, list] of Object.entries(cur)) {
+    if (list.some((n) => n.id === optimistic.id)) {
+      foundBucket = dk
+      break
+    }
+  }
+  if (!foundBucket) {
+    // 找不到乐观 entry，可能并发已把它整体替换。snapshot 是基准，
+    // 不动即可。
+    return cur
+  }
+  // 2) 在 snapshot 里找同一 id —— 这是回滚要还原到的「旧值」。
+  //    跨日期 move 的特殊场景：optimistic.id 在 snapshot[oldDate] 而
+  //    cur 中已跑到 optimistic.date 桶。这里我们能可靠复原的只有
+  //    snapshot 里的状态；如果 snapshot 也没记录（极少见，e.g. update
+  //    之前的 view 已不含此 note），则仅把该 row 从 cur 中删除。
+  let restored: StickyNote | null = null
+  for (const list of Object.values(snapshot)) {
+    const found = list.find((n) => n.id === optimistic.id)
+    if (found) {
+      restored = found
+      break
+    }
+  }
+  if (restored) {
+    const oldArr = cur[foundBucket] ?? []
+    // 把乐观 entry 替换回 snapshot 的旧 entry；如果旧 entry 的 date 与
+    // foundBucket 不同（跨日期 move 场景），仍保留当前 foundBucket 不动
+    // —— 因为我们无法确定其他并发的 move 是否已把它再次迁走。
+    const idx = oldArr.findIndex((n) => n.id === optimistic.id)
+    if (idx >= 0) {
+      const cloned = oldArr.slice()
+      cloned[idx] = restored
+      return { ...cur, [foundBucket]: cloned }
+    }
+    return cur
+  }
+  // snapshot 没记录 —— 从 cur 移除该 row（追加型乐观 patch 的回滚）
+  const oldArr = cur[foundBucket] ?? []
+  const filtered = oldArr.filter((n) => n.id !== optimistic.id)
+  if (filtered.length === oldArr.length) return cur
+  if (filtered.length === 0) {
+    const next = { ...cur }
+    delete next[foundBucket]
+    return next
+  }
+  return { ...cur, [foundBucket]: filtered }
+}
+
+function rollbackOptimisticInAll(
+  snapshotAll: StickyNote[],
+  optimistic: StickyNote,
+  curAll: StickyNote[],
+): StickyNote[] {
+  const idx = curAll.findIndex((n) => n.id === optimistic.id)
+  if (idx < 0) return curAll
+  // 优先用 snapshot 里的旧 row 还原；其次（snapshot 不含）直接删除
+  const restored = snapshotAll.find((n) => n.id === optimistic.id) ?? null
+  const cloned = curAll.slice()
+  if (restored) {
+    cloned[idx] = restored
+  } else {
+    cloned.splice(idx, 1)
+  }
+  return cloned
+}
+
+/**
  * R32-Corr-1 修复 (HIGH stale-fetch race on timeline rapid paging)：
  * 复用 notes.ts (line 105-114) 的 seq 守卫 + heatmap.ts (line 39-41) 的
  * 「互不冲突的 fetch 路径独立 seq」思路。
@@ -573,6 +662,12 @@ export const useStickyNotesStore = create<StickyNotesState>((rawSet, get) => {
         updatedAt: now,
       }
       // R6S-1：all[] 也要同步放占位，否则 dashboard 读 all 时看不到新建中的便签。
+      // R-fix-loadAllFiltered-vs-create-race (MEDIUM concurrency)：
+      // 用 beginOp(tempId) 标记占位为「在飞行中」，让并发触发的
+      // loadAllFiltered 在合并时把 placeholder 视为 in-flight 而非直接
+      // 丢弃。否则 IPC 返回恰好落在 create 完成之前会让 UI 短暂看不到
+      // 这条便签（dashboard 卡闪烁）。
+      beginOp(tempId)
       set({
         byDate: {
           ...get().byDate,
@@ -586,14 +681,46 @@ export const useStickyNotesStore = create<StickyNotesState>((rawSet, get) => {
           ...input,
           status: input.status ?? inferredStatus,
         })
+        // R-fix-create-placeholder-leak (HIGH data-integrity)：原版直接
+        // set(applyNotePatch(get, real))。applyNotePatch 内部按 id 找桶内
+        // entry —— 但 placeholder 的 id 是 temp-xxx，real id 是新 UUID，桶
+        // 内 idx === -1 → byDate 不动、patchAll 追加 real。结果 byDate
+        // 留下 [placeholder, real] 两个同 date 的 entry，timeline 渲染
+        // 两张卡，dashboard 的 all 同样双计入。修复：先把 tempId 从
+        // byDate[input.date] 与 all 都移除，再调 applyNotePatch 让 real
+        // 走标准的「同 id 替换」路径。
+        const stateBefore = get()
+        const bucket = stateBefore.byDate[input.date] ?? []
+        const cleanedBucket =
+          bucket.findIndex((n) => n.id === tempId) >= 0
+            ? bucket.filter((n) => n.id !== tempId)
+            : bucket
+        const cleanedAll =
+          stateBefore.all.findIndex((n) => n.id === tempId) >= 0
+            ? stateBefore.all.filter((n) => n.id !== tempId)
+            : stateBefore.all
+        set({
+          byDate:
+            cleanedBucket.length === bucket.length
+              ? stateBefore.byDate
+              : { ...stateBefore.byDate, [input.date]: cleanedBucket },
+          all: cleanedAll,
+        })
         // 用真实记录替换占位 —— byDate 与 all 都要同步
         bumpNoteVersion(real.id)
+        // R-fix-loadAllFiltered-vs-create-race：占位被 real 替换后
+        // 把 inflightOps 计数器清零（endOp 会顺带 noteVersion.delete
+        // 但 bumpNoteVersion 已写入 real.id 的 version 1，无需清）。
+        endOp(tempId)
         set(applyNotePatch(get, real))
         // R8A-5：通知屏幕阅读器
         announce(`已创建便签 ${real.title}`)
         return real
       } catch (err) {
         // 回滚：byDate 与 all 都要移除占位
+        // R-fix-loadAllFiltered-vs-create-race：失败路径必须也 endOp
+        // 让 inflightOps 归零，否则该 tempId 永远挂在 Map 里占内存。
+        endOp(tempId)
         const arr = (get().byDate[input.date] ?? []).filter((n) => n.id !== tempId)
         set({
           byDate: { ...get().byDate, [input.date]: arr },
@@ -669,11 +796,21 @@ export const useStickyNotesStore = create<StickyNotesState>((rawSet, get) => {
         // CAS 冲突时返回 null（粘性 update() R26-DI-5 修复），但原版留
         // 下乐观 patch 在 store 里 → UI 显示"已保存"，下次 reload 又丢。
         // 修复：CAS 冲突时回滚乐观 patch + 重新拉最新 row。
-         
+
         console.warn(`[stickyNotes.update] CAS conflict for id=${id}; rolling back optimistic patch`)
-        // 把版本号还原，让并发的更高优先级操作不被本次回滚打扰
+        // R-fix-update-rollback-concurrent-overwrite (MEDIUM concurrency)：
+        // 原版直接 `set({ byDate: before, all: beforeAll })` —— 但 `before`
+        // 是 beginOp 前捕获的快照，若期间另一条 update 已成功合并（无论是
+        // 跨窗口还是同窗口连续编辑），它们的乐观 patch + IPC merge 都会
+        // 被本次回滚一刀切掉。把回滚语义改为「从当前状态扣掉本次乐观
+        // patch」（仅清除本次 myVersion 引入的 entry 改动），其它 in-flight
+        // 已 merge 的状态保留。
         noteVersion.delete(id)
-        set({ byDate: before, all: beforeAll, error: '保存冲突：便签已被其他窗口修改，请重试' })
+        set({
+          byDate: rollbackOptimisticByDate(before, optimistic, get().byDate),
+          all: rollbackOptimisticInAll(beforeAll, optimistic, get().all),
+          error: '保存冲突：便签已被其他窗口修改，请重试',
+        })
         // 异步拉一次最新 row，让 UI 与后端状态对齐（不抛错给 caller）。
         void stickyNotesApi
           .get(id)

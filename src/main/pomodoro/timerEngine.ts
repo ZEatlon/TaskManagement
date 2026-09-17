@@ -315,7 +315,21 @@ export class TimerEngine {
         this.state.remainingSec = this.state.totalSec
         return
       }
-      startedAtMs = parsed
+      // R-fix-clock-jump-backwards (LOW clock-anomaly)：用户手动调时间 /
+      // NTP 校时往回拨 / DST 切换都会让 Date.now() 变小。原版
+      // Math.max(0, 负值) 把 elapsedSec 静默归零，剩余秒数回到 totalSec，
+      // 每秒 tick 永远到不了 remainingSec<=0 分支，phase 卡死。改为
+      // 检测到 startedAtMs > Date.now() 时把 startedAt 重锚到当前 wall
+      // clock（resync），让下一帧 tick 从 elapsedSec=0 重新推进。
+      if (parsed > Date.now()) {
+        log.warn(
+          `[pomodoro] tick: clock jumped backwards (startedAt=${this.state.startedAt} parsed=${parsed} now=${Date.now()}); resyncing to current wall clock`,
+        )
+        this.state.startedAt = new Date().toISOString()
+        startedAtMs = Date.now()
+      } else {
+        startedAtMs = parsed
+      }
     } else {
       startedAtMs = Date.now()
     }

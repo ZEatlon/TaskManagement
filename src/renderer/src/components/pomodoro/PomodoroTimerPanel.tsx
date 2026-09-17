@@ -25,6 +25,7 @@ import { MonthStats } from './MonthStats'
 import { PomodoroQuickSettings } from './PomodoroQuickSettings'
 import { FocusModeOverlay } from './FocusModeOverlay'
 import { InlineAIButton } from '../ai/InlineAIButton'
+import { announce } from '../common/AriaAnnouncer'
 
 // Props 曾经有过 `embedded?: boolean` 等字段；当前仓库内所有 caller
 // 都不传任何 prop（dashboard.tsx / PomodoroPanel 全部走嵌入默认态），
@@ -164,6 +165,30 @@ export function PomodoroTimerPanel(_props: Props = {}) {
       void aiApi.setCurrentPomodoroContext(null).catch(() => undefined)
     }
   }, [])
+
+  // R-fix-pomodoro-persist-silent-fail (medium error-handling)：主进程
+  // phase 完成 INSERT pomodoros 表失败时通过 POMODORO_PERSIST_FAILED 推送，
+  // store 缓存到 persistError。面板订阅它，弹一次性 toast 让用户知情
+  // （原本只在 main 进程 log，用户看不到失败现象 → 热力图 / 统计未更新
+  // 也以为是软件 bug）。仅渲染端展示失败时不阻塞 UI，只提示一下。
+  const persistError = usePomodoroStore((s) => s.persistError)
+  const clearPersistError = usePomodoroStore((s) => s.setPersistError)
+  useEffect(() => {
+    if (!persistError) return
+    const phaseLabel =
+      persistError.phase === 'focus'
+        ? '专注'
+        : persistError.phase === 'shortBreak'
+          ? '短休息'
+          : '长休息'
+    announce(
+      `本次${phaseLabel}未记录：${persistError.reason}`,
+      'assertive',
+    )
+    // 一次性 toast：8 秒后清掉，避免再次切换组件时旧 toast 重弹。
+    const tid = window.setTimeout(() => clearPersistError(null), 8000)
+    return () => window.clearTimeout(tid)
+  }, [persistError, clearPersistError])
 
   // R-InfLoop 修复：拆字段订阅 + useMemo 合成 displayState
   // modeV / runningV / cycleIndexV / startedAtV / totalSecV / remainingSecV /

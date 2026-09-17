@@ -231,6 +231,11 @@ export function startWhiteNoise(kind: PomodoroWhiteNoise): boolean {
     lfoGain.gain.value = 0.04
     osc.connect(lfoGain)
     lfoGain.connect(gain.gain)
+    // 修复 (medium correctness)：把 1Hz LFO 连到 lfoGain.gain AudioParam，
+    // 让 lfoGain 的 gain 在 0~0.04 之间缓慢起伏，调制 chirp 振幅。
+    // 原版 lfoOsc 完全未连，被 Chrome GC 视为 dead oscillator 默默丢弃，
+    // 同时 CPU 持续在跑 1800Hz 振荡器却永远听不见。
+    lfoOsc.connect(lfoGain.gain)
     osc.start()
     lfoOsc.start()
     chirp = { osc, lfo: lfoOsc, lfoGain }

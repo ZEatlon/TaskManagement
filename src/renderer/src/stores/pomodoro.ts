@@ -89,6 +89,13 @@ interface PomodoroStoreState {
   applyPhaseComplete: () => void
   /** 切换 focus mode overlay（由组件直接调或主进程推送） */
   setFocusMode: (v: boolean) => void
+  /**
+   * R-fix-pomodoro-persist-silent-fail (medium error-handling)：主进程
+   * 在 phase 完成写入 pomodoros 表失败时推送。store 缓存最近一次失败
+   * payload，渲染端可订阅后弹 toast「本次专注未记录：<reason>」。
+   */
+  persistError: { phase: PomodoroMode; durationMin: number; reason: string; at: number } | null
+  setPersistError: (e: { phase: PomodoroMode; durationMin: number; reason: string } | null) => void
 }
 
 /** 通用 IPC 调用包装 */
@@ -164,6 +171,7 @@ export const usePomodoroStore = create<PomodoroStoreState>((set, get) => ({
   loaded: false,
   todayRecords: [],
   focusMode: false,
+  persistError: null,
 
   async loadConfig(isCancelled) {
     try {
@@ -272,6 +280,17 @@ export const usePomodoroStore = create<PomodoroStoreState>((set, get) => ({
     if (get().focusMode === v) return
     set({ focusMode: v })
   },
+
+  setPersistError(e) {
+    if (e === null) {
+      if (get().persistError === null) return
+      set({ persistError: null })
+      return
+    }
+    set({
+      persistError: { ...e, at: Date.now() },
+    })
+  },
 }))
 
 /**
@@ -338,6 +357,24 @@ export function installPomodoroListeners(): () => void {
     },
   )
 
+  // R-fix-pomodoro-persist-silent-fail：主进程 phase 完成 INSERT
+  // pomodoros 表失败时推送，store 缓存最近一次失败，渲染端
+  // PomodoroTimerPanel 订阅后弹一次性 toast 让用户知情。
+  const offPersistFailed = window.api.on(
+    IPC_CHANNELS.POMODORO_PERSIST_FAILED,
+    (
+      _e,
+      payload: { phase: PomodoroMode; durationMin: number; reason: string },
+    ) => {
+      if (!payload || typeof payload.reason !== 'string') return
+      usePomodoroStore.getState().setPersistError({
+        phase: payload.phase,
+        durationMin: Number(payload.durationMin) || 0,
+        reason: payload.reason,
+      })
+    },
+  )
+
   return () => {
     offTick?.()
     offStateChanged?.()
@@ -345,5 +382,6 @@ export function installPomodoroListeners(): () => void {
     offFocusModeChanged?.()
     offAudioSet?.()
     offAudioPlaySound?.()
+    offPersistFailed?.()
   }
 }

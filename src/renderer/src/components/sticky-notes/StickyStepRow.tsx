@@ -209,7 +209,16 @@ function StickyStepRowInner({
       } else if (
         e.key === 'Backspace' &&
         step.content === '' &&
-        e.currentTarget.selectionStart === 0
+        e.currentTarget.selectionStart === 0 &&
+        // R-fix-step-backspace-ime (MEDIUM ux-bug)：中文 / 日文 / 韩文
+        // IME 拼音选词期间按 Backspace 用来删除拼音字符 —— 此时
+        // step.content 仍为 ''（input 提交前的 IME 草稿不入 React 受控
+        // state），selectionStart 也仍为 0，若不守卫则直接把新加的 step
+        // 行当成空 step 删掉，用户以为在改拼音但行已被 180ms 动画移除。
+        // contentDraft 持有正在输入的 IME 草稿；只要草稿非空就说明
+        // 这次 Backspace 是给 IME 的，让 IME 自行处理。
+        contentDraft === '' &&
+        !isImeComposing(e)
       ) {
         e.preventDefault()
         handleRemoveWithAnimation()
