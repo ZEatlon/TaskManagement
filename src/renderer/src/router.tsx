@@ -4,7 +4,6 @@
  */
 import { createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { RootRoute } from './routes/__root'
-import { DashboardRoute } from './routes/dashboard'
 import { ClockRoute } from './routes/clock'
 import { TodayRoute } from './routes/today'
 import { SettingsRoute } from './routes/settings'
@@ -15,10 +14,11 @@ const rootRoute = createRootRoute({
   component: RootRoute,
 })
 
+// W3-A：删除 Dashboard，/ 直接落地 Clock 页（番茄钟为新首页）。
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  component: DashboardRoute,
+  component: ClockRoute,
 })
 
 const clockRoute = createRoute({

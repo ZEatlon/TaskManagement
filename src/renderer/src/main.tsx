@@ -29,15 +29,30 @@ import './styles/notes.css'
 import './styles/today.css'
 import './styles/sticky-notes.css'
 import './styles/clock.css'
-/* dashboard.css 必须放在 pomodoro.css 之后 —— 让嵌入态 .is-embedded 覆盖
-   pomodoro.css 里的玻璃感 backdrop-filter / box-shadow 等重样式。 */
-import './styles/dashboard.css'
 
 const router = createAppRouter()
 // R33-fix：把 router 实例注入到 lib/navigateBridge，AI navigate 工具的
 // `app:navigate` 事件会通过它调 router.navigate()。必须在 installNavigateListener
 // 之前调用，否则 listener 收到的首条事件会因 router 为 null 而 no-op。
 setAppRouter(router)
+
+// W3-A 一次性清理：Dashboard widget 编辑器已在 W2-C① 下线、路由在 W3-A
+// 注销，但旧 localStorage key（如 `dashboard.layout.v5`）仍可能残留在用户
+// profile 里，污染未来的 store 重命名空间 / 让人怀疑 widget 编辑器是不是
+// 被某个 if 分支偷偷复活。启动时扫一遍 localStorage，匹配 `dashboard.*`
+// 前缀的全部清掉。仅此一次，未来若再加 widget 编辑器应走独立前缀。
+if (typeof localStorage !== 'undefined') {
+  try {
+    const keysToRemove: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k && k.startsWith('dashboard.')) keysToRemove.push(k)
+    }
+    for (const k of keysToRemove) localStorage.removeItem(k)
+  } catch {
+    /* localStorage 不可用（隐私模式 / 极端配置）吞掉 */
+  }
+}
 
 /**
  * H4 修复 (high reliability)：原版 installPomodoroListeners /

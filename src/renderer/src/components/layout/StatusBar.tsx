@@ -19,7 +19,8 @@ interface RouteMeta {
 }
 
 const ROUTE_META: Record<string, RouteMeta> = {
-  '/': { label: 'Dashboard', icon: '◐' },
+  // W3-A：删除 Dashboard，/ 直接落地 Clock 页（番茄钟为新首页）。
+  '/': { label: '番茄', icon: '⏱' },
   '/today': { label: '今日', icon: '☀' },
   '/notes': { label: '笔记', icon: '✎' },
   '/pomodoro': { label: '番茄钟', icon: '⏱' },
