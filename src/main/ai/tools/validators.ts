@@ -18,11 +18,11 @@ import { isValidDayKey } from '@shared/lib/dayKey'
 
 /**
  * R30-DI-3 修复 (HIGH invariant-violation)：LLM 可绕过 JSON Schema 的
- * enum 校验，直接塞 `status: "in_progress_extra"` 给 repo —— DB schema
- * 没有 CHECK 约束，垃圾 status 写入后下游所有 listFiltered / scheduler
- * `status IN ('todo','in_progress')` / heatmap 聚合全部漏掉这些幽灵行。
- * 同样 priority 也要走白名单（不然 'p0_EXTRA' 也会漏过滤）。白名单
- * 与 shared/types 完全对齐。
+ * enum 校验，直接塞 `status: "todo_extra"` 给 repo —— DB schema 没有
+ * CHECK 约束，垃圾 status 写入后下游所有 listFiltered / scheduler
+ * `status IN ('todo')` / heatmap 聚合全部漏掉这些幽灵行。同样 priority
+ * 也要走白名单（不然 'p0_EXTRA' 也会漏过滤）。白名单与 shared/types
+ * 完全对齐。
  *
  * R-fix-tools-enum-dedup：原版白名单用 ReadonlySet<string>，但 JSON Schema
  * enum 字段需要数组形式，导致同一组字符串在 4 个工具的参数 schema 里被
@@ -34,12 +34,16 @@ import { isValidDayKey } from '@shared/lib/dayKey'
  *
  * R36 修复（enum-dedup-全栈）：原 validators.ts 自维护 `VALID_PRIORITIES` /
  * `VALID_STICKY_STATUSES`，但 IPC handler / 渲染端下拉 / 排序权重等 9+ 处
- * 仍独立硬编码 'p0..p3' / 'todo..cancelled' 字面量，新增 p-1 / 子状态时
- * 漏改任何一处都会让 schema enum 与运行时白名单漂移。修复：把这两个数组
- * + 对应 Set 收敛到 `@shared/lib/priorities`，本文件 re-export 旧名
+ * 仍独立硬编码 'p0..p3' / 'todo..done' 字面量，新增 p-1 / 子状态时漏改
+ * 任何一处都会让 schema enum 与运行时白名单漂移。修复：把这两个数组 +
+ * 对应 Set 收敛到 `@shared/lib/priorities`，本文件 re-export 旧名
  * `VALID_PRIORITIES` / `VALID_STICKY_STATUSES` 保持向后兼容（sticky.ts
  * / ai/tools.ts / 多处 JSON Schema enum 仍在用旧名），下游新代码统一
  * 从 `@shared/lib/priorities` import。
+ *
+ * W2-C③：sticky status 从 4 值 (todo/in_progress/done/cancelled) 砍到
+ * 2 值 (todo/done)。in_progress / cancelled 不再是合法值，normalizeStatus
+ * 遇到会拒收；旧 row 由 migration 020 回填。
  */
 export const VALID_STICKY_STATUSES = STICKY_STATUSES
 export const VALID_PRIORITIES = PRIORITIES

@@ -3,7 +3,7 @@
  *
  * 行为：
  *   - 每分钟扫描 sticky_notes 表
- *   - 找出 status='todo'/'in_progress' 且 due_at 或 scheduled_at 在过去 N 分钟内
+ *   - 找出 status='todo' 且 due_at 或 scheduled_at 在过去 N 分钟内
  *   - 触发 showStickyDue；幂等通过 UNIQUE(task_id, type, date(fired_at)) 约束保证
  *     （notifications 表沿用旧 task_id 列名；语义上是"便签 id"）
  *   - 重复便签在扫描时根据 RRULE 推进下次到期时间
@@ -135,7 +135,7 @@ export async function scanDueStickies(): Promise<{ hit: number }> {
       sql: `SELECT id, title, status, priority, due_at, scheduled_at, recurrence, archived, completed_at
             FROM sticky_notes
             WHERE archived = 0
-              AND status IN ('todo','in_progress')
+              AND status = 'todo'
               AND completed_at IS NULL
               AND (
                 (due_at IS NOT NULL AND due_at >= ? AND due_at <= ?)

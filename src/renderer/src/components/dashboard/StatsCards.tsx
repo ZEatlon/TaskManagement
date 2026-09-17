@@ -115,11 +115,6 @@ export function StatsCards({ stickies, breakdown }: Props) {
             title={`待办 ${stats.todo}`}
           />
           <span
-            className="stats-bar-seg is-in-progress"
-            style={{ flexGrow: Math.max(stats.inProgress, 0.001) }}
-            title={`进行中 ${stats.inProgress}`}
-          />
-          <span
             className="stats-bar-seg is-done"
             style={{ flexGrow: Math.max(stats.done, 0.001) }}
             title={`已完成 ${stats.done}`}
@@ -130,11 +125,6 @@ export function StatsCards({ stickies, breakdown }: Props) {
             <span className="stats-legend-dot is-todo" />
             <span className="stats-legend-num">{stats.todo}</span>
             <span>待办</span>
-          </span>
-          <span className="stats-legend-item">
-            <span className="stats-legend-dot is-in-progress" />
-            <span className="stats-legend-num">{stats.inProgress}</span>
-            <span>进行</span>
           </span>
           <span className="stats-legend-item">
             <span className="stats-legend-dot is-done" />

@@ -350,7 +350,7 @@ export function registerStickyNoteHandlers(): void {
     return result
   })
 
-  /** 显式设置状态（不限于 done；可在 todo/in_progress/done/cancelled 之间切换） */
+  /** 显式设置状态（不限于 done；可在 todo/done 之间切换） */
   handle(IPC_CHANNELS.STICKY_NOTE_SET_STATUS, async (_e, args: { id: IDType; status: StickyStatus }) => {
     // R34-Corr-1a 修复 (MEDIUM id-no-runtime-validation-sibling)：args.id 同上。
     assertId(args.id, IPC_CHANNELS.STICKY_NOTE_SET_STATUS)
@@ -372,9 +372,13 @@ export function registerStickyNoteHandlers(): void {
     // R29-DI-9 修复补充：setStatus 在「已是 done 同一天」走 skipCompletion
     // 早返回（line 1000 return，finalResult = null）。result 在 status
     // 已变 + 写 completions 时才非 null。仅当 result 真值且本次真的把
-    // status 改成 done/cancelled（args.status 等于 result.status，说明
-    // 没被早返回吞掉）才 ack。
-    if (result && (args.status === 'done' || args.status === 'cancelled') && result.status === args.status) {
+    // status 改成 done（args.status 等于 result.status，说明没被早返回吞掉）
+    // 才 ack。
+    //
+    // W2-C③：sticky status 砍到 todo/done，'cancelled' 已下线。ack 守卫的
+    // cancelled 分支随之删除（args.status 只剩 'todo'/'done'，'cancelled'
+    // 已被白名单拒）。
+    if (result && args.status === 'done' && result.status === args.status) {
       ackPendingDue(1)
     }
     return result

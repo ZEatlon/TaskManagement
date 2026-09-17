@@ -36,7 +36,7 @@ function deriveUpcoming(stickies: StickyNote[], limit: number): StickyNote[] {
 
   const list: StickyNote[] = []
   for (const n of stickies) {
-    if (n.status === 'done' || n.status === 'cancelled') continue
+    if (n.status === 'done') continue
     if (n.archived) continue
     if (!n.dueAt) continue
     const due = new Date(n.dueAt)

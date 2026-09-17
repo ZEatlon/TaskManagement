@@ -428,7 +428,7 @@ export const stickyNotesApi = {
       IPC_CHANNELS.STICKY_NOTE_COMPLETE,
       date ? { id, date } : { id },
     ),
-  /** 显式设置状态（todo / in_progress / done / cancelled） */
+  /** 显式设置状态（todo / done） */
   setStatus: (id: ID, status: StickyNote['status']) =>
     invoke<{ id: ID; status: StickyNote['status'] }, StickyNote | null>(
       IPC_CHANNELS.STICKY_NOTE_SET_STATUS,

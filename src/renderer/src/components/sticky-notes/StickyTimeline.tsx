@@ -474,7 +474,7 @@ export function StickyTimeline({ todayKey: todayKeyProp }: Props) {
   }, [renderDays.length])
 
   // ===== handler passthroughs =====
-  // 内联新建：创建一条空标题便签；status 由 store 推断（今日 = in_progress，否则 = todo）
+  // 内联新建：创建一条空标题便签；status 统一默认为 todo（W2-C③：'in_progress' 已下线）
   const handleCreateEmpty = useCallback(
     async (dateKey: string): Promise<string | null> => {
       try {

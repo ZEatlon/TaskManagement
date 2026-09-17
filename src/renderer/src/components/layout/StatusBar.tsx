@@ -72,7 +72,7 @@ export function StatusBar() {
     const countIfActive = (n: { id: string; archived?: boolean; status?: string }) => {
       if (seen.has(n.id)) return
       seen.add(n.id)
-      if (!n.archived && n.status !== 'done' && n.status !== 'cancelled') count++
+      if (!n.archived && n.status !== 'done') count++
     }
     for (const list of Object.values(byDate)) for (const n of list) countIfActive(n)
     const allFallback = useStickyNotesStore.getState().all

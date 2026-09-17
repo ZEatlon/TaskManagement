@@ -641,15 +641,19 @@ await test('ack: setStatus result.status !== args.status → NOT acked', async (
   assert.equal(getAckCalls().length, 0)
 })
 
-await test('ack: setStatus args.status === "in_progress" → NOT acked (not in done/cancelled set)', async () => {
+// W2-C③：sticky status 砍到 todo/done 两值。in_progress / cancelled 不再是合法值，
+// IPC handler 通过 ALLOWED_STATUS 白名单拒收（不调 repo），无 ack 测试场景。
+// 替换原 in_progress → "NOT acked" + cancelled → "ack fired" 两个测试：
+// 现在它们会先被白名单抛错阻断，永远不会触达 ack 逻辑。
+await test('W2-C③: setStatus args.status === "in_progress" → 白名单抛错，无 ack', async () => {
   resetAll()
   handlers.registerStickyNoteHandlers()
-  ;(globalThis as Record<string, unknown>).__test_stickySetStatusReturn = {
-    id: 'valid-id',
-    status: 'in_progress',
-  }
-  await getHandler('sticky-note:set-status')(fakeEvent(), { id: 'valid-id', status: 'in_progress' })
-  assert.equal(getAckCalls().length, 0, 'in_progress must not trigger ack')
+  await assert.rejects(
+    () => getHandler('sticky-note:set-status')(fakeEvent(), { id: 'valid-id', status: 'in_progress' }),
+    /status must be one of/,
+    'in_progress must be rejected by ALLOWED_STATUS whitelist',
+  )
+  assert.equal(getAckCalls().length, 0)
 })
 
 await test('ack: setStatus args.status === "done" && result.status === "done" → ack fired', async () => {
@@ -663,15 +667,15 @@ await test('ack: setStatus args.status === "done" && result.status === "done" �
   assert.equal(getAckCalls().length, 1)
 })
 
-await test('ack: setStatus args.status === "cancelled" && result.status === "cancelled" → ack fired', async () => {
+await test('W2-C③: setStatus args.status === "cancelled" → 白名单抛错，无 ack', async () => {
   resetAll()
   handlers.registerStickyNoteHandlers()
-  ;(globalThis as Record<string, unknown>).__test_stickySetStatusReturn = {
-    id: 'valid-id',
-    status: 'cancelled',
-  }
-  await getHandler('sticky-note:set-status')(fakeEvent(), { id: 'valid-id', status: 'cancelled' })
-  assert.equal(getAckCalls().length, 1)
+  await assert.rejects(
+    () => getHandler('sticky-note:set-status')(fakeEvent(), { id: 'valid-id', status: 'cancelled' }),
+    /status must be one of/,
+    'cancelled must be rejected by ALLOWED_STATUS whitelist',
+  )
+  assert.equal(getAckCalls().length, 0)
 })
 
 // archive

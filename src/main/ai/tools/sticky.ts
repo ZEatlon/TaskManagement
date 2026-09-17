@@ -352,7 +352,7 @@ const updateStickyTool: RunnableTool = {
         description:
           '便签状态。不传则保持不变。' +
           '**不接受 null** —— status 没有"清空"语义（不能回到"无状态"），' +
-          '请省略字段（保持原值）或传有效 todo/in_progress/done/cancelled。',
+          '请省略字段（保持原值）或传有效 todo/done。',
       },
       dueAt: {
         type: 'string',
@@ -457,7 +457,7 @@ const updateStickyTool: RunnableTool = {
     if (args['status'] === null) {
       return JSON.stringify({
         ok: false,
-        error: 'status 不支持传 null；请省略字段（保持原值）或传有效 todo/in_progress/done/cancelled',
+        error: 'status 不支持传 null；请省略字段（保持原值）或传有效 todo/done',
       })
     }
 
@@ -529,14 +529,17 @@ const completeStickyTool: RunnableTool = {
   // "把指定 ID 的便签标记为完成。会自动写入 completions 表。" 没告诉 LLM
   // 三个关键契约：
   //   1) 幂等：同便签同一天重复调用返回 ok:false + 专属错误，不会双增 completions
-  //   2) cancelled 状态的便签会被拒（仓库层 R21 修复返回 null）
-  //   3) date 字段仅指定归属日，**不会**改动 sticky.status='done' 之外的其他字段
+  //   2) date 字段仅指定归属日，**不会**改动 sticky.status='done' 之外的其他字段
+  //   3) 已 done 但跨天的会再写一条 completions（热力图按日累加）
   // 与 searchStickies / planDay 的 description 详细程度对齐。明示 ok:false 的
-  // 三种语义让 LLM 能精准告诉用户「已完成 / 已取消 / 不存在」中的哪一种。
+  // 两种语义让 LLM 能精准告诉用户「已完成 / 不存在」中的哪一种。
+  //
+  // W2-C③：sticky status 砍到 todo/done，'cancelled' 已下线。cancelled 拒绝
+  // 契约删除（ok:false 不再有"该便签已取消"分支）；下面 description 中的
+  // 「cancelled 状态的便签会被拒」行随之移除。
   description:
     '把指定 ID 的便签标记为完成。会自动写入 completions 表。**幂等**：同一便签同一天' +
-    '重复调用返回 ok:false + error="该便签今日已标记完成"（不会写第二次 completions / 双增计数）；' +
-    'cancelled 状态的便签会被拒（ok:false + error="该便签已取消，无法标记完成"）；' +
+    '重复调用返回 ok:false + error="该便签今日已标记完成"（不会写第二次 completions / 双增计数）。' +
     '已 done 但跨天的会再写一条 completions（热力图按日累加）。' +
     '`date` 字段仅指定归属日（YYYY-MM-DD，默认今日），**不会**改动 sticky.status="done" 之外的' +
     '其他字段（如 title / description / tags / 步骤）。',
@@ -598,36 +601,32 @@ const completeStickyTool: RunnableTool = {
       date = safe
     }
     // R-fix-completeSticky-error-collapsed (HIGH ai-quality)：stickyNotesRepo.complete
-    // 的 null 返回值现在承载三种语义：
+    // 的 null 返回值现在承载两种语义：
     //   (1) sticky 真的不存在（cur==undefined）
-    //   (2) sticky 处于 cancelled 状态被拒（R21 修复返回 null）
-    //   (3) sticky 已是 done 且 completed_at 是今天（同一天幂等，R15/R33-Corr-1 返回 null）
-    // 工具层此前把三者统一翻译成「便签不存在」—— LLM 据此告诉用户「找不到这条便签」
+    //   (2) sticky 已是 done 且 completed_at 是今天（同一天幂等，R15/R33-Corr-1 返回 null）
+    // 工具层此前把两者统一翻译成「便签不存在」—— LLM 据此告诉用户「找不到这条便签」
     // 并建议 searchStickies 重新查找，但实际情况可能是「已完成（重复调用是幂等
-    // 的）」或「已取消」，错误归类会误导用户。先用 findById 区分三种语义，
-    // 不引入新分支（依然依赖仓库的 null 语义，不绕过 R21/R15/R33-Corr-1 的 invariant）。
+    // 的）」，错误归类会误导用户。先用 findById 区分两种语义，不引入新分支
+    // （依然依赖仓库的 null 语义，不绕过 R15/R33-Corr-1 的 invariant）。
+    //
+    // W2-C③：sticky status 砍到 todo/done，'cancelled' 已下线。R21 的 cancelled
+    // 拒绝分支随之删除（cur.status / recheck.status 不会再是 'cancelled'），
+    // null 返回值的语义从 3 种收敛到 2 种。
     const cur = await stickyNotesRepo.findById(id)
     if (!cur) return JSON.stringify({ ok: false, error: '便签不存在' })
-    if (cur.status === 'cancelled') {
-      return JSON.stringify({ ok: false, error: '该便签已取消，无法标记完成' })
-    }
     try {
       const note = await stickyNotesRepo.complete(id, date ? { date } : undefined)
       if (!note) {
         // R-fix-completeSticky-toctou (LOW correctness)：complete() 返回 null
-        // 有三种语义，findById 的快照不能覆盖（另一个 webContents / IPC handler
-        // 在 findById 与 complete() 之间可能 updateSticky → cancelled 或 deleteSticky），
-        // 原版一律报"今日已标记完成"会误导 LLM：在已取消/已删除场景下错把这条
-        // 当成幂等完成回执。重 fetch 一次按最新 status 渲染文案：
+        // 有两种语义，findById 的快照不能覆盖（另一个 webContents / IPC handler
+        // 在 findById 与 complete() 之间可能 deleteSticky），原版一律报"今日已
+        // 标记完成"会误导 LLM：在已删除场景下错把这条当成幂等完成回执。重 fetch
+        // 一次按最新 status 渲染文案：
         //   (a) sticky 已删 → 「便签不存在」
-        //   (b) sticky 已 cancelled → 「该便签已取消，无法标记完成」
-        //   (c) sticky 存在且非 cancelled → 真正同一天幂等 → 「今日已标记完成」
+        //   (b) sticky 存在 → 真正同一天幂等 → 「今日已标记完成」
         const recheck = await stickyNotesRepo.findById(id)
         if (!recheck) {
           return JSON.stringify({ ok: false, error: '便签不存在' })
-        }
-        if (recheck.status === 'cancelled') {
-          return JSON.stringify({ ok: false, error: '该便签已取消，无法标记完成' })
         }
         return JSON.stringify({ ok: false, error: '该便签今日已标记完成' })
       }
@@ -693,7 +692,7 @@ const searchStickiesTool: RunnableTool = {
       status: {
         type: 'string',
         enum: [...VALID_STICKY_STATUSES],
-        description: '过滤便签状态（todo/in_progress/done/cancelled）；不传则不过滤',
+        description: '过滤便签状态（todo/done）；不传则不过滤',
       },
       priority: {
         type: 'string',
@@ -829,7 +828,7 @@ const planDayTool: RunnableTool = {
       1,
       Math.min(1440, Math.round(Number(args['focusMinutes'] ?? 240))),
     )
-    const all = await stickyNotesRepo.listFiltered({ status: ['todo', 'in_progress'] })
+    const all = await stickyNotesRepo.listFiltered({ status: ['todo'] })
     // R6S-8：复用 shared localDayKeyOf 帮助函数，避免与 src/shared/lib/dayKey.ts
     // 的实现重复 / 漂移。今日区间用本地 00:00:00 → 次日 00:00:00。
     const todayKey = localDayKeyOf()
@@ -967,7 +966,7 @@ const batchUpdateStickiesTool: RunnableTool = {
           status: {
             type: 'string',
             enum: [...VALID_STICKY_STATUSES],
-            description: 'todo/in_progress/done/cancelled；非法值会被静默丢弃',
+            description: 'todo/done；非法值会被静默丢弃',
           },
           date: {
             type: 'string',

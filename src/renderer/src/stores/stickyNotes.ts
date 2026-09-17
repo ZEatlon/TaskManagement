@@ -609,13 +609,10 @@ export const useStickyNotesStore = create<StickyNotesState>((rawSet, get) => {
 
   async create(input) {
     // 智能默认 status：
-    //   - 创建在今天 → 'in_progress'（用户正在着手的事项）
-    //   - 创建在未来 → 'todo'（待办）
-    //   - 已过去的日期 → 'todo'（补救清单）
     //   - 用户显式传 status 时尊重用户选择
-    const today = dayKeyOf(new Date())
-    const inferredStatus: StickyNote['status'] =
-      input.status ?? (input.date === today ? 'in_progress' : 'todo')
+    //   - 否则统一默认为 'todo'（W2-C③：'in_progress' 已下线，便签只有 todo/done
+    //     两值；创建时一律 todo，等用户主动勾选/取消勾选才转 done）
+    const inferredStatus: StickyNote['status'] = input.status ?? 'todo'
 
     // R8R-6 / R9：连续两次连点「新建」按钮会触发两次 IPC 调用。
     //   R8 原版：返回占位（temp-${uuid}），违反 StickyNote 契约（ID 应是 DB 真 ID）。
@@ -937,25 +934,27 @@ export const useStickyNotesStore = create<StickyNotesState>((rawSet, get) => {
     // === 智能 status 联动 ===
     // 规则（用户需求）：
     //   - 完成一个 step（done=true）：
-    //       - 若便签原状态是 todo / cancelled → 自动切到 in_progress
     //       - 若所有 step 都完成且状态 !== done → 自动切到 done（走 complete API 写 completions）
     //   - 取消完成一个 step（done=false）：
-    //       - 若便签当前状态是 done → 自动切回 in_progress（不允许从 done 直接退回 todo）
+    //       - 若便签当前状态是 done → 自动切回 todo（用户在撤销完成，UI 应当呈现待办状态）
     // 只对 status 字段做推断；其它字段不动。推断结果乐观先行，失败时连同 status 一起回滚。
+    //
+    // W2-C③：sticky status 砍到 todo/done，'in_progress' / 'cancelled' 已下线。
+    // 原「step done → todo/cancelled 自动切 in_progress」中间态删除 —— 用户手动勾选
+    // step 不再触发中间状态，便签保持在 todo 直到所有 step 勾完才走 done。
+    // 「撤销 step done」从原「退回 in_progress」改为「退回 todo」，与 done/todo
+    // 两值语义对齐。
     const newSteps = note.steps.map((s) => (s.id === stepId ? { ...s, ...patch } : s))
     const allDone = newSteps.length > 0 && newSteps.every((s) => s.done)
     let targetStatus: StickyNote['status'] = note.status
     let shouldCompleteViaApi = false
     if (patch.done === true) {
-      if (note.status === 'todo' || note.status === 'cancelled') {
-        targetStatus = 'in_progress'
-      }
       if (allDone && note.status !== 'done') {
         targetStatus = 'done'
         shouldCompleteViaApi = true
       }
     } else if (patch.done === false && note.status === 'done') {
-      targetStatus = 'in_progress'
+      targetStatus = 'todo'
     }
     const statusChanged = targetStatus !== note.status
 

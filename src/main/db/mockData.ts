@@ -463,7 +463,7 @@ function makeStickyCreates(): StickyNoteCreate[] {
     title: '完成项目 A 需求评审',
     date: todayKey,
     priority: 'p0',
-    status: 'in_progress',
+    status: 'todo',
     tags: [],
     steps: [
       { content: '准备评审材料', done: true },

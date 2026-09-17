@@ -30,10 +30,9 @@ export interface TodayStats {
   overdue: number
 }
 
-/** 状态分布桶：todo / inProgress / done + 非归档 total */
+/** 状态分布桶：todo / done + 非归档 total（inProgress 已下线，见 W2-C③） */
 export interface StickyStatusBreakdown {
   todo: number
-  inProgress: number
   done: number
   total: number
 }
@@ -62,7 +61,6 @@ export function aggregateStickies(stickies: StickyNote[], todayKey: string): Sti
   let overdue = 0
 
   let todo = 0
-  let inProgress = 0
   let done = 0
   let totalActive = 0
 
@@ -87,13 +85,12 @@ export function aggregateStickies(stickies: StickyNote[], todayKey: string): Sti
     if (!n.archived) {
       totalActive++
       if (n.status === 'todo') todo++
-      else if (n.status === 'in_progress') inProgress++
       else if (n.status === 'done') done++
     }
   }
 
   return {
     todayStats: { todayStickies, todayDoneSteps, overdue },
-    breakdown: { todo, inProgress, done, total: totalActive },
+    breakdown: { todo, done, total: totalActive },
   }
 }

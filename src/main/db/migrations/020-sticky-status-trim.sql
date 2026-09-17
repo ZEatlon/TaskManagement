@@ -1,0 +1,22 @@
+-- W2-C③：sticky status 从 4 值 (todo/in_progress/done/cancelled)
+-- 砍到 2 值 (todo/done)。
+--
+-- 背景：validators.ts / sticky.ts / stickyNotes.ts 维护的合法 status 列表
+-- 现在只剩 todo/done；in_progress / cancelled 不再是合法值。运行时所有写入
+-- 路径（repo.setStatus / ai/tools/sticky.ts createSticky+updateSticky /
+-- renderer quickCapture）都走白名单拒收。DB 端没有 CHECK 约束，遗留 row
+-- 会让 listFiltered / scheduler `status IN ('todo')` / heatmap 聚合全部漏算，
+-- 幽灵行静默丢进统计。
+--
+-- 回填策略：
+--   - in_progress → todo：进行中与未开始对用户而言无差（勾选 = done），
+--     用户体感最一致。
+--   - cancelled → done：取消等同于「不打算做了」—— 但已经有 completed_at /
+--     曾经走过 complete() 流程的 cancelled 行，需要保留在 completion 统计里，
+--     否则 heatmap 当天少算一次。回填到 done 同步 keep「完成日」语义。
+--     （未来若用户想区分 cancelled，可在 completion 表上加 reason 字段，
+--     不需要 status 多值 —— W4 Cleanup 阶段考虑。）
+--
+-- 幂等：UPDATE WHERE status IN (...) 不存在即 0 rows affected，可重跑。
+UPDATE sticky_notes SET status = 'todo' WHERE status = 'in_progress';
+UPDATE sticky_notes SET status = 'done' WHERE status = 'cancelled';

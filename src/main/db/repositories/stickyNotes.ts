@@ -527,14 +527,15 @@ async function update(id: ID, patch: StickyNoteUpdate): Promise<StickyNote | nul
   }
 
   // R20 修复 (high data integrity)：update() 之前直接 UPDATE sticky_notes，
-  // 不区分 status 转移方向。攻击者 / 用户可在编辑 modal 里把 status 从 'done'
-  // 改成 'cancelled'，UPDATE 把 completed_at 保留（旧值），completions 表的
-  // 当日行不动 → 热力图多算一个；但 render UI 已不显示为完成 → 计数与可见状态
-  // 不一致。同步发生在：done→cancelled 后 render 走 useStickyNotesStore 看
-  // status='cancelled' 不显示，但 heatmap widget 看 completions 表把这一行
-  // 也算进去。
+  // 不区分 status 转移方向。用户在编辑 modal 里把 status 从 'done' 改回
+  // 'todo'，UPDATE 把 completed_at 保留（旧值），completions 表的当日行不动
+  // → 热力图多算一个；但 render UI 已不显示为完成 → 计数与可见状态不一致。
   // 修复：检测 prevStatus / merged.status 转移方向，把对应 completions 操作
   // 包进与 UPDATE 同一事务；CAS 失败时整体放弃，无副作用。
+  //
+  // W2-C③：sticky status 砍到 todo/done 两值，'cancelled' 已下线（migration 020
+  // 回填 cancelled→done）。原 done→cancelled 攻击面不存在，prevStatus 守卫的
+  // 'cancelled' 分支与下方 cancelled 拒绝一并移除。
   const statusChanged = patch.status !== undefined && patch.status !== prevStatus
   const becameDone = statusChanged && prevStatus !== 'done' && merged.status === 'done'
   const becameUndone =
@@ -672,10 +673,17 @@ async function update(id: ID, patch: StickyNoteUpdate): Promise<StickyNote | nul
   // 修复：autoPromotedToDone flag 增加 `prevStatus !== 'cancelled'` 守卫。
   // 与 stickyNotes.complete() 的「cancelled 拒绝」（R21 修复）对齐 —— 取消
   // 是用户的明确意图，不能被后续 edit / 第三方同步 / AI tool 静默反转。
+  //
+  // W2-C③：sticky status 砍到 todo/done 两值，'cancelled' 不再是合法值。
+  // prevStatus 守卫的 cancelled 分支随之失去意义（迁移已把历史 cancelled
+  // 回填为 done，下方合并时 prevStatus 只可能是 'todo' 或 'done'），守卫
+  // 整体删除。下方 autoPromoteToDone 的核心条件退化为「merged.completed_at
+  // 有值但 status 还未到 done 且非显式改 status」—— 这种 row 来自历史
+  // completed_at 漂移 + 用户改其它字段触发的副作用，依然要写 completions
+  // 抹平（与 R32-Corr-5 的「auto-promote-missed-completions」修复同源）。
   const autoPromotedToDone =
     merged.completed_at != null &&
     merged.status !== 'done' &&
-    prevStatus !== 'cancelled' &&
     !statusChanged
   if (autoPromotedToDone) {
     merged.status = 'done'
@@ -836,10 +844,11 @@ async function update(id: ID, patch: StickyNoteUpdate): Promise<StickyNote | nul
         //
         // R32-Corr-5 修复 (HIGH 1970-pollution-via-null-cast)：原版
         // `new Date(merged.completed_at as string)` unsafe cast —— 即使
-        // R32-CRIT-1 修了 cancelled 守卫，仍有其他分支顺序改动把
-        // merged.completed_at 改成 null 的可能。`new Date(null as string)`
-        // 静默返回 epoch 0，localDayKeyOf 出 '1970-01-01' → heatmap 永久
-        // 多出 1970 年的诡异完成点。用 `?? now` 兜底，与 sibling 分支对齐。
+        // R32-CRIT-1 修了 cancelled 守卫（现 W2-C③ 已下线），仍有其他
+        // 分支顺序改动把 merged.completed_at 改成 null 的可能。
+        // `new Date(null as string)` 静默返回 epoch 0，localDayKeyOf 出
+        // '1970-01-01' → heatmap 永久多出 1970 年的诡异完成点。用 `?? now`
+        // 兜底，与 sibling 分支对齐。
         //
         // R32-MED-2 + R32-Corr-10 修复 (MEDIUM double-count-on-conflict)：
         // ON CONFLICT(sticky_note_id, date) DO UPDATE SET count = count + 1
@@ -1147,14 +1156,9 @@ async function complete(
       // 主动取消的 sticky 若被 AI tool completeSticky / 撤销恢复 / 第三方调用
       // 触发 complete()，会被默默改回 done 并写 completions，热力图统计出现
       // 「已取消却完成」的不一致。返回 null 让上层调用方知道此 sticky 已 cancelled。
-      if (cur.status === 'cancelled') {
-        await dbClient.call('exec', { sql: 'ROLLBACK' })
-        log.warn(
-          `[stickyNotes.complete] refusing to complete cancelled sticky id=${id}; returning null`,
-        )
-        finalResult = null
-        return
-      }
+      //
+      // W2-C③：sticky status 砍到 todo/done 两值，'cancelled' 已下线（migration 020
+      // 回填 cancelled→done）。cur.status 不会再是 'cancelled'，整段守卫删除。
       // R15 修复 (high)：原来「同一天直接早返回」只覆盖同一天；跨天时
       // （cur.status==='done' && completed_at 已是昨天）会落到下面的 UPDATE，
       // 但 UPDATE 的 WHERE 仍有 `status != 'done'`，changes=0 → 直接走
@@ -1272,15 +1276,15 @@ async function complete(
   return finalResult
 }
 
-/** 显式设置状态（todo / in_progress / done / cancelled） */
+/** 显式设置状态（todo / done） */
+// W2-C③：sticky status 砍到 todo/done 两值。in_progress / cancelled 不再
+// 是合法值，旧 row 由 migration 020 回填（in_progress→todo、cancelled→done）。
 async function setStatus(id: ID, status: StickyStatus): Promise<StickyNote | null> {
   // R33-Corr-3 补 (MEDIUM set-status-bypass-whitelist)：handler 层已加 enum 校验，
   // repo 这里再加一次纵深防御 —— 任何未来 caller（tool 路径、batchUpdateStickies、
   // conversation handler、未来的 cron / IPC）拿到的 status 都要先过白名单，
   // 否则 SQLite TEXT 列会被污染，下游 filter / sort / 通知调度失灵。
-  const VALID_STATUS: ReadonlySet<string> = new Set([
-    'todo', 'in_progress', 'done', 'cancelled',
-  ])
+  const VALID_STATUS: ReadonlySet<string> = new Set(['todo', 'done'])
   if (typeof status !== 'string' || !VALID_STATUS.has(status)) {
     throw new Error(
       `[stickyNotes.setStatus] status must be one of ${[...VALID_STATUS].join(',')}`,
@@ -1305,6 +1309,9 @@ async function setStatus(id: ID, status: StickyStatus): Promise<StickyNote | nul
   // 个便签" 计数无法撤销，用户取消勾选后热力图仍显示 +1。
   // 同时存在「done → cancelled → done 同日」序列双计：第一次完成写 row(count=1)
   // → 取消时 row 不删 → 再次完成 INSERT ON CONFLICT 把 count=2 → 热力图虚增。
+  // W2-C③：cancelled 已下线（migration 020 回填 cancelled→done），序列不复存在；
+  // 但 done → todo → done 同日仍可能由用户反复勾选/取消勾选触发 → 双计防御位仍
+  // 有价值，保留下方 INSERT/DELETE completions 的同步逻辑。
   //
   // 修复：进入事务前先 SELECT cur.status / cur.completed_at；事务内根据状态
   // 转移方向同步 INSERT/DELETE completions 行（同一事务原子化）：
@@ -1398,7 +1405,9 @@ async function setStatus(id: ID, status: StickyStatus): Promise<StickyNote | nul
       //   statusGuard 的情况下需要 5 个 ?。statusGuard='' 分支（status 非
       //   done 且非跨天重完成）只占 4 个 ?，多余一个 status 会触发 better-sqlite3
       //   「Too many parameter values were provided」抛错 → 渲染端的 status
-      //   todo↔in_progress↔cancelled 切换全部 500 → 用户无法改便签状态。
+      //   todo↔done 切换全部 500 → 用户无法改便签状态。
+      // W2-C③：sticky status 砍到 todo/done，'in_progress' / 'cancelled' 不再
+      // 是合法值，不再可能触发这些状态切换的 500。
       // 修复：按 statusGuard 实际占位符数组装 params，每个分支独立。
       const updateParams: unknown[] = isCrossDayReComplete
         ? [status, completedAt, now, id, curCompletedAt]
@@ -1548,13 +1557,19 @@ async function recordCompletion(id: ID, date: string): Promise<{ id: string; dat
   // 让热力图出现「已取消却完成」的伪数据，与「status=done iff
   // completed_at IS NOT NULL」的核心不变式冲突。修复：同一次 SELECT
   // 一起读 status，cancelled 直接拒绝抛错，与 complete() 行为对齐。
+  //
+  // W2-C③：sticky status 砍到 todo/done 两值，'cancelled' 已下线。cancelled
+  // 拒绝抛错守卫失效（下方 INSERT 子查询已经只看 status='done'），但
+  // 「status=done iff completed_at IS NOT NULL」不变量保留 —— 不再有
+  // 「已取消却完成」的伪数据来源。下方的 existsRow.status === 'cancelled'
+  // 分支随之删除，archived 守卫仍在。
   // R31-Corr-2b 修复 (MEDIUM SELECT-then-INSERT race)：原版分两步走 IPC：
   // 先 SELECT status / archived 校验，再 INSERT completions。两步之间
   // worker 单连接串行保证 SELECT 看到的值就是下一次 INSERT 看到的值吗？
   // 并不保证：别的 webContents / IPC handler / 自动归档脚本可能在这之
-  // 间改 status='cancelled' / archived=1。R30-DI-1 的不变式守卫会被绕过：
-  // SELECT 时 status='done' → 通过守卫 → 中间被改成 'cancelled' →
-  // INSERT 仍写 completion，与 cancelled 不该有 completion 的不变式冲突。
+  // 间改 status='archived' / archived=1。R30-DI-1 的不变式守卫会被绕过：
+  // SELECT 时 status='done' → 通过守卫 → 中间被改成 'archived' →
+  // INSERT 仍写 completion，与 archived 不该有 completion 的不变式冲突。
   // 修复：把校验条件编码进 INSERT 的 WHERE 谓词。SQLite 单条 INSERT 的
   // 子查询在同一事务的同一时刻读 sticky_notes，原子语义保留：
   // `INSERT INTO completions SELECT ?, id, ?, 1, ? FROM sticky_notes
@@ -1591,14 +1606,6 @@ async function recordCompletion(id: ID, date: string): Promise<{ id: string; dat
           )
           throw new Error(
             `[stickyNotes.recordCompletion] sticky_note ${id} does not exist; refusing to write orphan completion`,
-          )
-        }
-        if (existsRow.status === 'cancelled') {
-          log.warn(
-            `[stickyNotes.recordCompletion] refusing completion on cancelled sticky ${id}`,
-          )
-          throw new Error(
-            `[stickyNotes.recordCompletion] sticky_note ${id} has status='cancelled'; refusing to write completion`,
           )
         }
         if (existsRow.archived === 1) {

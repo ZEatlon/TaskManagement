@@ -212,14 +212,18 @@ await test('parseSafeDayKey: non-string / garbage → null (does not throw)', ()
 // =====================================================================
 
 await test('normalizeStatus: each value in VALID_STICKY_STATUSES passes through', () => {
-  for (const v of ['todo', 'in_progress', 'done', 'cancelled']) {
+  // W2-C③：sticky status 砍到 todo/done 两值。in_progress / cancelled 不再是合法值。
+  for (const v of ['todo', 'done']) {
     assert.equal(validators.normalizeStatus(v), v)
   }
 })
 
-await test('normalizeStatus: in_progress_extra / done_evil → undefined (whitelist enforcement)', () => {
-  // R30-DI-3 防线：DB schema 无 CHECK 约束，LLM 绕过 JSON Schema enum 写
-  // 'in_progress_extra' 会成为幽灵行，必须白名单拒绝。
+await test('normalizeStatus: in_progress / cancelled → undefined (W2-C③ retired values)', () => {
+  // W2-C③ 防线：DB schema 无 CHECK 约束，LLM 绕过 JSON Schema enum 写
+  // 'in_progress' / 'cancelled' / 任何拼写错误必须白名单拒绝，否则会变
+  // 幽灵行（migration 020 不再回填新写入的）。
+  assert.equal(validators.normalizeStatus('in_progress'), undefined)
+  assert.equal(validators.normalizeStatus('cancelled'), undefined)
   assert.equal(validators.normalizeStatus('in_progress_extra'), undefined)
   assert.equal(validators.normalizeStatus('done_evil'), undefined)
   assert.equal(validators.normalizeStatus('DONE'), undefined, 'case sensitive')
@@ -449,9 +453,10 @@ await test('sanitizeNoteFilename: non-string input is coerced via String(title ?
 
 await test('VALID_STICKY_STATUSES / VALID_PRIORITIES: re-export from shared lib (back-compat)', () => {
   // R36 修复后 validators.ts 仍 re-export 旧名，保持向后兼容。
+  // W2-C③：sticky status 砍到 todo/done 两值。
   assert.deepEqual(
     [...validators.VALID_STICKY_STATUSES],
-    ['todo', 'in_progress', 'done', 'cancelled'],
+    ['todo', 'done'],
   )
   assert.deepEqual(
     [...validators.VALID_PRIORITIES],

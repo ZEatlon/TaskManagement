@@ -18,11 +18,11 @@ import type { Priority, StickyStatus } from '@shared/types'
 export const PRIORITIES = ['p0', 'p1', 'p2', 'p3'] as const satisfies readonly Priority[]
 
 /** sticky status 数组（喂 JSON Schema enum） */
+// W2-C③：sticky status 砍到 todo/done 两值。in_progress / cancelled 已下线，
+// 历史 row 由 migration 020 把 in_progress→todo、cancelled→done 回填。
 export const STICKY_STATUSES = [
   'todo',
-  'in_progress',
   'done',
-  'cancelled',
 ] as const satisfies readonly StickyStatus[]
 
 /** O(1) 校验白名单 */

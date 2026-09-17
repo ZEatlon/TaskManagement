@@ -339,29 +339,10 @@ await test('completeSticky: sticky not found → ok:false "便签不存在"', as
   assert.match(result.error ?? '', /便签不存在/)
 })
 
-await test('completeSticky: cancelled status → ok:false "该便签已取消" (R-fix-completeSticky-error-collapsed)', async () => {
-  resetAll()
-  const id = 'sticky-cancelled-test-id-xxxxxxxxxxxxxxx'
-  stickies().push({
-    id,
-    title: 'T',
-    description: null,
-    date: '2026-01-01',
-    priority: 'p2',
-    status: 'cancelled',
-    tags: [],
-    steps: [],
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  })
-  const tool = getTool('completeSticky')
-  const result = JSON.parse(await tool.execute({ id }))
-  // 关键防线：cancelled 状态早返，complete 不被调
-  assert.equal(result.ok, false)
-  assert.match(result.error ?? '', /已取消/)
-  assert.equal(stickyCompleteCalls().length, 0, 'complete must NOT be called when status=cancelled')
-})
-
+// W2-C③：sticky status 砍到 todo/done 两值。cancelled 不再是合法 status。
+// 原「cancelled 状态早返」测试删除：完整调用路径不再有 cancelled 分支；
+// 若真有 cancelled 数据，是 migration 020 回填漏掉的，会让 complete 走完整
+// repo 路径（与 todo 同语义），错误归类由 repo 层承担。
 await test('completeSticky: todo status + sticky exists → calls complete (R-fix-completeSticky-error-collapsed happy path)', async () => {
   resetAll()
   const id = 'sticky-todo-test-id-xxxxxxxxxxxxxxxxx'
@@ -428,54 +409,11 @@ await test('completeSticky: TOCTOU recheck (a) sticky already deleted → ok:fal
   ;(globalThis as { __test_stickyCompleteReturnsNull?: boolean }).__test_stickyCompleteReturnsNull = undefined
 })
 
-await test('completeSticky: TOCTOU recheck (b) sticky became cancelled → ok:false "该便签已取消"', async () => {
-  resetAll()
-  const id = 'sticky-toctou-cancelled-xxxxxxxxxxxxxxx'
-  // 首查：todo；二次查：cancelled（模拟并发 updateSticky → cancelled）
-  let n = 0
-  ;(globalThis as { __test_stickyFindByIdFn?: (id: string) => unknown }).__test_stickyFindByIdFn = (
-    _id: string,
-  ) => {
-    n += 1
-    if (n === 1) {
-      return {
-        id,
-        title: 'T',
-        date: '2026-01-01',
-        priority: 'p2',
-        status: 'todo',
-        tags: [],
-        steps: [],
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z',
-      }
-    }
-    return {
-      id,
-      title: 'T',
-      date: '2026-01-01',
-      priority: 'p2',
-      status: 'cancelled',
-      tags: [],
-      steps: [],
-      createdAt: '2026-01-01T00:00:00Z',
-      updatedAt: '2026-01-01T00:00:01Z',
-    }
-  }
-  ;(globalThis as { __test_stickyCompleteReturnsNull?: boolean }).__test_stickyCompleteReturnsNull = true
-  const tool = getTool('completeSticky')
-  const result = JSON.parse(await tool.execute({ id }))
-  // 关键防线：recheck 返 cancelled → 「该便签已取消」（line 600），
-  // 而不是误报「今日已标记完成」。这是 R-fix-completeSticky-toctou 的核心不变式。
-  assert.equal(result.ok, false)
-  assert.match(result.error ?? '', /已取消/)
-  assert.doesNotMatch(result.error ?? '', /今日已标记完成/, 'must NOT collapse to idempotent message')
-  assert.equal(n, 2)
-  ;(globalThis as { __test_stickyFindByIdFn?: unknown }).__test_stickyFindByIdFn = undefined
-  ;(globalThis as { __test_stickyCompleteReturnsNull?: boolean }).__test_stickyCompleteReturnsNull = undefined
-})
-
-await test('completeSticky: TOCTOU recheck (c) sticky done by concurrent writer → ok:false "该便签今日已标记完成"', async () => {
+// W2-C③：sticky status 砍到 todo/done 两值。TOCTOU recheck 路径收敛到 2 种：
+// (a) sticky 已删 → 「便签不存在」
+// (b) sticky 已是 done → 「今日已标记完成」（与下方 (c) 测试合并，
+//     原 (b)「became cancelled」分支删除）
+await test('completeSticky: TOCTOU recheck (b) sticky done by concurrent writer → ok:false "该便签今日已标记完成"', async () => {
   resetAll()
   const id = 'sticky-toctou-idempotent-xxxxxxxxxxxxxxx'
   // 首查：todo；二次查：done（另一并发 complete 把它置 done）

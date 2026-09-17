@@ -106,7 +106,7 @@ export interface BackfillSummary {
  * ========================================================================== */
 
 /** sticky 整体状态（取代原 TaskStatus） */
-export type StickyStatus = 'todo' | 'in_progress' | 'done' | 'cancelled'
+export type StickyStatus = 'todo' | 'done'
 
 /** sticky 主题色：缺省时按 priority 派生 4 色；用户可选 8 色覆盖 */
 export type StickyColor =
