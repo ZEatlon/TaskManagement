@@ -123,7 +123,7 @@ export const conversationsApi = {
           limitOrOpts,
         ),
   get: (id: string) => invoke<string, AiConversation | null>(IPC_CHANNELS.AI_GET_CONVERSATION, id),
-  create: (input: { provider: string; model: string; title?: string | null; folderId?: string | null; titleIsAuto?: boolean | null }) =>
+  create: (input: { provider: string; model: string; title?: string | null; folderId?: string | null }) =>
     invoke<typeof input, AiConversation>(IPC_CHANNELS.AI_CREATE_CONVERSATION, input),
   appendMessage: (id: string, message: AiMessage) =>
     invoke<{ id: string; message: AiMessage }, { ok: true }>(IPC_CHANNELS.AI_APPEND_MESSAGE, { id, message }),

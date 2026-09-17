@@ -451,11 +451,11 @@ export const useAiStore = create<AiState>((set, get) => {
         const conv = await conversationsApi.create({
           provider,
           model,
+          // W2-C②：占位标题直接写「新对话 · datetime」静态串，无 flag、
+          // 不再被首轮对话结束后的 AI 异步改写；用户改名后保持不变。
           title: `${placeholder} · ${new Date().toLocaleString(language)}`,
           // 当选中具体 folder 时，新对话默认归入该 folder；选中「全部」或「未分类」则保持 null
           folderId: typeof activeFolderId === 'string' ? activeFolderId : null,
-          // 占位 flag：title_updated 事件据此判定是否覆盖，不用 prefix-match 字面量
-          titleIsAuto: true,
         })
         set((s) => ({
           conversations: [conv, ...s.conversations],
@@ -1040,27 +1040,9 @@ export const useAiStore = create<AiState>((set, get) => {
           })
           break
         }
-        case 'title_updated': {
-          // 自动生成标题：主进程 stream.ts 末尾异步触发，把新标题推过来。
-          // 改 conversations 列表中对应项的 title + 把当前对话的 title 同步更新。
-          // 二次校验：只在 titleIsAuto===true（系统占位）时才覆盖；用户已手动
-          // 改过（titleIsAuto===false）就跳过。详见 R-fix-i18n-conv-title-placeholder-
-          // flag + migrations/015-ai-conv-title-is-auto.sql。
-          const cid = e.conversationId
-          const newTitle = e.title
-          if (!cid || !newTitle) break
-          set((s) => {
-            const updatedList = s.conversations.map((c) => {
-              if (c.id !== cid) return c
-              // 占位 flag 才允许覆盖 + 覆盖后把 flag 置 false，避免下一次
-              // 流事件再次覆盖（极端情况下 stream 推两次 title_updated）
-              if (!c.titleIsAuto) return c
-              return { ...c, title: newTitle, titleIsAuto: false }
-            })
-            return { conversations: updatedList }
-          })
-          break
-        }
+        // W2-C②：title_updated case 已删除（autoTitle 下线，主进程不再 emit
+        // 此事件）。新对话标题在 newConversation 时由渲染端写静态占位串，
+        // 用户随时可手动改名 —— 不再被 AI 异步覆盖。
         default:
           break
       }

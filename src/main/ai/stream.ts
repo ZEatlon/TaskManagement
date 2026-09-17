@@ -29,7 +29,8 @@ import { conversationsRepo } from '../db/repositories/conversations'
 import { dbClient } from '../db/client'
 import log from '../log'
 import { IPC_CHANNELS } from '@shared/ipc/channels'
-import { scheduleAutoTitle } from './autoTitle'
+// W2-C②：AI 自动改标题已下线（autoTitle.ts 删除）。新对话占位标题
+// 由渲染端在 newConversation 时直接生成 `「新对话」YYYY-MM-DD` 静态串。
 import { SYSTEM_PROMPT } from './prompts'
 import { buildConfirmSummary } from './confirmSummary'
 import { localDayKeyOf } from '@shared/lib/dayKey'
@@ -316,8 +317,8 @@ export type StreamEvent =
     }
   // R8I-3：one-shot 已消费
   | { type: 'one_shot_consumed'; callId: string; toolCallId: string; toolName: string }
-  // 自动生成标题完成后通知渲染端（首轮对话结束后触发）
-  | { type: 'title_updated'; callId: string; conversationId: string; title: string }
+  // W2-C②：title_updated 事件已删除（autoTitle 下线）。新对话占位
+  // 标题由渲染端在 newConversation 时直接生成静态串。
 
 /**
  * 主动取消某次流
@@ -875,23 +876,8 @@ export async function runStream(
 
     emit({ type: 'done', callId: req.callId })
 
-    // 自动生成标题：首轮对话结束后异步触发，不阻塞主对话流。
-    // scheduleAutoTitle 内部自己查最新 conv + 判断 shouldAutoTitle（用户已手动改过
-    // 就跳过；网络 / LLM 失败 fallback 到首条 user 消息前 20 字）。
-    if (!signal.aborted) {
-      scheduleAutoTitle({
-        conversationId: req.conversationId,
-        signal,
-        onTitle: (cid, title) => {
-          emit({
-            type: 'title_updated',
-            callId: req.callId,
-            conversationId: cid,
-            title,
-          })
-        },
-      })
-    }
+    // W2-C②：自动改标题已下线 —— 不再触发 scheduleAutoTitle。新对话
+    // 占位标题在 newConversation 时由渲染端静态生成（`「新对话」YYYY-MM-DD`）。
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     log.error('[ai/stream] error', err)

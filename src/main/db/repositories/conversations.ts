@@ -71,9 +71,10 @@ export class ConversationsRepository {
   async create(input: Omit<AiConversation, 'createdAt' | 'updatedAt'> & { id?: string }): Promise<AiConversation> {
     const id = input.id ?? crypto.randomUUID()
     const now = new Date().toISOString()
+    // W2-C②：title_is_auto 列已通过 migration 019 删除，不再写入。
     await withPrepared(
-      `INSERT INTO ai_conversations (id, title, provider, model, messages_json, token_input, token_output, created_at, updated_at, folder_id, title_is_auto)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ai_conversations (id, title, provider, model, messages_json, token_input, token_output, created_at, updated_at, folder_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       (stmtId) =>
         dbClient.call('run', {
           stmtId,
@@ -88,7 +89,6 @@ export class ConversationsRepository {
             now,
             now,
             input.folderId ?? null,
-            input.titleIsAuto ? 1 : 0,
           ],
         }),
     )
@@ -103,9 +103,9 @@ export class ConversationsRepository {
     //
     // 当前修复：去掉 `.catch`，让 dbClient.call / withPrepared 的真实错误
     // 自然上浮到 IPC handler —— handle() 在 src/main/ipc/channels.ts 已经
-    // 包了 try/catch 并 log.error（落 boot-trace），autoTitle 的 scheduleAutoTitle
-    // 也已经在最外层 try/catch 中 log.warn。这样调用方能区分「对话不存在」
-    // （返回 null）和「读取失败」（抛错），不再把异常静默吞掉。
+    // 包了 try/catch 并 log.error（落 boot-trace）。这样调用方能区分「对话
+    // 不存在」（返回 null）和「读取失败」（抛错），不再把异常静默吞掉。
+    // W2-C②：autoTitle.scheduleAutoTitle 不再调用，注释同步精简。
     const row = await withPrepared('SELECT * FROM ai_conversations WHERE id = ?', (stmtId) =>
       dbClient.call('get', { stmtId, params: [id] }),
     )
@@ -297,12 +297,9 @@ export class ConversationsRepository {
   }
 
   async updateTitle(id: string, title: string): Promise<void> {
-    // R-fix-i18n-conv-title-placeholder-flag：updateTitle 同时把 title_is_auto 置 0
-    // —— 不管调用方是 AI 自动重命名（autoTitle.ts）还是用户手动改名
-    // （AI_UPDATE_TITLE handler），目的都是「结束占位状态」。下一次
-    // title_updated 事件读到 titleIsAuto=false 会直接跳过，避免重复覆盖。
+    // W2-C②：title_is_auto 列已删除（migration 019），不再 UPDATE 0 标记。
     await withPrepared(
-      'UPDATE ai_conversations SET title = ?, title_is_auto = 0, updated_at = ? WHERE id = ?',
+      'UPDATE ai_conversations SET title = ?, updated_at = ? WHERE id = ?',
       (stmtId) => dbClient.call('run', { stmtId, params: [title, new Date().toISOString(), id] }),
     )
   }
@@ -415,7 +412,6 @@ export class ConversationsRepository {
       createdAt: r.created_at as string,
       updatedAt: r.updated_at as string,
       folderId: (r.folder_id as string | null) ?? null,
-      titleIsAuto: ((r.title_is_auto as number | null | undefined) ?? 0) === 1,
     }
   }
 }

@@ -1,0 +1,14 @@
+-- W2-C②：移除 AI 对话自动改标题功能。
+--
+-- 背景：迁移 015 加了 title_is_auto 列，让 autoTitle.ts 在首轮对话
+-- 结束后异步调 LLM 生成 5-15 字标题，再 UPDATE 回去。失败回退到
+-- 首条 user 消息前 20 字。整条路径现在已经下线（autoTitle.ts 已删、
+-- stream.ts 不再调 scheduleAutoTitle、渲染端不再处理 title_updated
+-- 事件、新 conversation 用 `「新对话」YYYY-MM-DD` 静态占位）。
+-- 列不再被读写，留着是 schema 噪音 + 误导未来读代码的人。
+--
+-- 兼容性：SQLite 3.35+（2021-01）支持 ALTER TABLE ... DROP COLUMN，
+-- 这是 TaskPilot 当前 DB target 的基线。DROP COLUMN 不丢数据，只是
+-- 让该列不可访问；如果未来真有还原需求，可以从历史 backup 或
+-- W4 之前已 commit 的 migration 015 重建。
+ALTER TABLE ai_conversations DROP COLUMN title_is_auto;

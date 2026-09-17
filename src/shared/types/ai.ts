@@ -57,16 +57,9 @@ export interface AiConversation {
   updatedAt: string
   /** 文件夹 ID（null = 未分类；undefined = 字段未读取，与 null 语义一致） */
   folderId: string | null
-  /**
-   * 标题是否仍是系统占位（true = 等待 AI 在首轮对话结束后自动覆盖 / 等待
-   * 用户手动改名）。R-fix-i18n-conv-title-placeholder-flag：原版用
-   * `title.startsWith('新对话')` 判定占位，与中文字面量绑死。本字段是
-   * stable flag，AI 覆盖或用户改名后置 false，title_updated 事件 handler
-   * 据此判断是否覆盖。详见 migrations/015-ai-conv-title-is-auto.sql。
-   *
-   * 默认 false；新建对话由 newConversation 显式传 true。
-   */
-  titleIsAuto: boolean
+  // W2-C②：titleIsAuto 字段已删除 —— AI 自动改标题（autoTitle.ts +
+  // title_is_auto 列 + title_updated 事件）全部下线。新对话占位标题
+  // 在 newConversation 时直接生成 `「新对话」YYYY-MM-DD` 静态串。
 }
 
 /** AI 流事件载荷（preload / renderer / 主进程共用） */

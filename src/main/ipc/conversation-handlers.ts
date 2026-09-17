@@ -124,7 +124,6 @@ export function registerConversationHandlers(): void {
         model: string
         title?: string | null
         folderId?: string | null
-        titleIsAuto?: boolean | null
       },
     ) => {
       // R45-fix-conversation-provider-model-oversize (medium input-validation-
@@ -149,14 +148,8 @@ export function registerConversationHandlers(): void {
       if (input.title && Buffer.byteLength(input.title, 'utf8') > MAX_TITLE_BYTES) {
         throw new Error(`conversation: title exceeds ${MAX_TITLE_BYTES} bytes`)
       }
-      // R-fix-i18n-conv-title-placeholder-flag：渲染端 newConversation 在
-      // 生成『新对话 · datetime』占位时显式传 true，由 repo 写进
-      // title_is_auto 列；title_updated 事件 handler 据此判定是否覆盖，
-      // 不再 prefix-match 字面量。AI_UPDATE_TITLE 走 updateTitle 把它
-      // 置回 0。input.titleIsAuto 非布尔时回退到 false（占位 flag 不
-      // 是高敏感字段，宁缺勿滥，避免被攻渲染端误把它开到 true 后用
-      // 后续 LLM 重写覆盖用户已手动改的名字）。
-      const titleIsAuto = input.titleIsAuto === true
+      // W2-C②：title_is_auto 列已删除（migration 019）。渲染端 newConversation
+      // 直接生成 `「新对话」YYYY-MM-DD` 占位串写到 title 字段，不再有 flag。
       return conversationsRepo.create({
         id: randomUUID(),
         provider: input.provider,
@@ -166,7 +159,6 @@ export function registerConversationHandlers(): void {
         tokenInput: 0,
         tokenOutput: 0,
         folderId: input.folderId ?? null,
-        titleIsAuto,
       })
     },
   )
