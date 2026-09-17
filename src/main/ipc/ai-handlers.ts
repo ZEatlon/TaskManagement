@@ -18,7 +18,7 @@ import {
   isValidProviderId,
   type ProviderId,
 } from '../ai/router'
-import { runStream, abortStream, type StreamRequest, confirmToolCall } from '../ai/stream'
+import { runStream, abortStream, type StreamRequest, confirmToolCall, getActiveStreamWebContentsId } from '../ai/stream'
 import {
   createNoteConfirmed,
   setCurrentNoteId,
@@ -78,6 +78,24 @@ const STICKY_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 
 function isSafeStickyId(s: unknown): s is string {
   return typeof s === 'string' && STICKY_ID_PATTERN.test(s)
+}
+
+/**
+ * R-fix-pomodoro-mode-enum-bypass (HIGH ipc-input-validation)：AI
+ * context 里 mode 字段只校验 typeof string 就放行 → 任意字符串
+ * ('focus-evil' / '') 都会进 aiContextByWebContents；下游
+ * buildAiContextPrompt 三元分支全 false 落到"长休息"默认分支，
+ * LLM 看到的 phase 与渲染端 UI 完全不一致。与 stickyId / stickyNoteId
+ * 的 nanoid 正则校验对称补齐 enum 白名单。
+ */
+const VALID_POMODORO_MODES: ReadonlySet<string> = new Set([
+  'focus',
+  'shortBreak',
+  'longBreak',
+])
+
+function isValidPomodoroMode(s: unknown): s is 'focus' | 'shortBreak' | 'longBreak' {
+  return typeof s === 'string' && VALID_POMODORO_MODES.has(s)
 }
 
 /**
@@ -294,8 +312,31 @@ export function registerAiHandlers(): void {
       `[ipc] ai:stream callId=${req.callId} conv=${req.conversationId} msgs=${req.messages.length}`,
     )
     // 不 await：让流在主进程后台运行，事件通过 ai:chunk 推送
+    // R-fix-ai-stream-background-error-silent (MEDIUM async-race)：
+    // runStream 的外层 try/catch（stream.ts:884-892）通常会捕获错误
+    // 并 emit {type:'error',...}，但若错误在 catch handler / finally
+    // 块内抛出（例如 emit 时 webContents 已 gone / activeStreams 已
+    // 被外部清空），异常会逃逸到这里的 background .catch。原版只
+    // log 不通知渲染端，spinner 永远转、done 不发、用户看不到任何
+    // 错误。修复：捕获后尽力 emit 一个 error + done(persistError)
+    // 让渲染端能 break 出 active 流。
     runStream(win, req).catch((err) => {
       log.error('[ai:stream] background error', err)
+      try {
+        const msg = err instanceof Error ? err.message : String(err)
+        win?.webContents.send(IPC_CHANNELS.AI_CHUNK, {
+          type: 'error',
+          callId: req.callId,
+          message: `流启动失败：${msg}`,
+        })
+        win?.webContents.send(IPC_CHANNELS.AI_CHUNK, {
+          type: 'done',
+          callId: req.callId,
+          persistError: msg,
+        })
+      } catch (sendErr) {
+        log.warn('[ai:stream] background error notify failed', sendErr)
+      }
     })
     return { ok: true, callId: req.callId }
   })
@@ -403,7 +444,19 @@ export function registerAiHandlers(): void {
       // 打开」→ 触发 summarizeNote 返回该笔记正文。现要求调用方提供
       // webContentsId，且 noteId 必须已通过 note:opened / note:closed
       // 注册为该 webContents 的「已打开笔记」集合里。
-      setCurrentNoteId(noteId ?? null, e.sender.id)
+      // R-fix-set-current-note-id-silent-reject (MEDIUM silent-rejection)：
+      // 原 handler 签名是 string|null 但 IPC 跨信任边界可发 number/object/
+      // 空串/含 NUL 字符串；noteId ?? null 后 typeof !== 'string' 时
+      // setCurrentNoteId 内部 opened.has() 假阳性静默 return，但 handler
+      // 仍 ok:true，渲染端以为生效，summarizeNote 突然不给正文又查不到
+      // 错误日志。补 isUuid + null 守卫，与 NOTE_OPENED / NOTE_CLOSED 对齐。
+      if (noteId !== null && !isUuid(noteId)) {
+        log.warn(
+          `[ai-handlers] ${IPC_CHANNELS.AI_SET_CURRENT_NOTE_ID} refused: invalid noteId shape from wc=${e.sender.id}`,
+        )
+        return { ok: false, error: 'noteId must be UUID or null' } as const
+      }
+      setCurrentNoteId(noteId, e.sender.id)
       return { ok: true } as const
     },
   )
@@ -462,7 +515,7 @@ export function registerAiHandlers(): void {
    */
   handle<{ callId: string; toolCallId: string; approved: boolean }>(
     IPC_CHANNELS.AI_CONFIRM_TOOL,
-    async (_e, payload) => {
+    async (e, payload) => {
       if (
         !payload ||
         typeof payload.toolCallId !== 'string' ||
@@ -471,6 +524,22 @@ export function registerAiHandlers(): void {
         payload.toolCallId === ''
       ) {
         return { ok: false, error: 'invalid payload' } as const
+      }
+      // R-fix-confirm-tool-cross-window (MEDIUM sender-validation):
+        // 与 R32-03 的 abortStream 同模式 —— 只有发起该流的 webContents
+        // 才能确认/拒绝其副作用。callId 由主进程 randomUUID 生成不可猜，
+        // 但 toolCallId 由 LLM SDK 产出且可能跨会话复用；组合键让攻击
+        // 成本降到「必须在同 wc 上观察到 callId」一个量级，仍防跨窗口伪造。
+        const ownerWcId = getActiveStreamWebContentsId(payload.callId)
+      if (ownerWcId === null) {
+        return { ok: false, error: 'unknown callId' } as const
+      }
+      const senderId = e.sender?.id
+      if (typeof senderId !== 'number' || senderId !== ownerWcId) {
+        log.warn(
+          `[ipc] ai:confirm-tool sender mismatch: sender=${String(senderId)} owner=${ownerWcId} callId=${payload.callId}`,
+        )
+        return { ok: false, error: 'sender mismatch' } as const
       }
       const matched = confirmToolCall(
         payload.callId,
@@ -561,6 +630,14 @@ export function registerAiHandlers(): void {
         typeof payload.mode !== 'string'
       ) {
         return { ok: false, error: 'invalid payload' } as const
+      }
+      // R-fix-pomodoro-mode-enum-bypass：mode 必须是合法 enum，否则
+      // 落到 buildAiContextPrompt 默认分支会污染 LLM 的 phase 认知。
+      if (!isValidPomodoroMode(payload.mode)) {
+        log.warn(
+          `[ai-handlers] ${IPC_CHANNELS.AI_SET_CURRENT_POMODORO_CONTEXT} refused: invalid mode '${payload.mode}' from wc=${e.sender.id}`,
+        )
+        return { ok: false, error: 'invalid mode' } as const
       }
       // stickyNoteId 单独走白名单：null 放行（番茄钟没关联便签），
       // string 必须匹配 nanoid 风格正则。

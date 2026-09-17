@@ -124,12 +124,16 @@ export async function applyTagToNote(
   const needle = String(noteFilename ?? '').trim()
   if (!needle) return { ok: false, error: 'noteFilename 不能为空' }
 
-  const all = await notesRepo.findAll({ limit: NOTE_SCAN_LIMIT })
-  // 截断检测：findAll 走 SQL LIMIT ?，若返回行数 == NOTE_SCAN_LIMIT 说明
-  // 库内还有未扫描的笔记。判定后传给 LLM（matchKind='truncated' / 错误
-  // 消息里的"扫描了前 N 篇"），避免 LLM 据 ok:false 误以为「绝对不存在」
-  // 而漏贴在第 2001 行之后的笔记。
-  const scanIncomplete = all.length === NOTE_SCAN_LIMIT
+  // R-fix-applyTagToNote-truncation-detector (MEDIUM correctness)：
+  // 原版用 `all.length === NOTE_SCAN_LIMIT` 判定是否被截断，在用户笔记
+  // 数恰好 == 2000 时会把扫描标记为 truncated，但实际已经覆盖全库。
+  // 改为多取一行（NOTE_SCAN_LIMIT + 1）：若返回 NOTE_SCAN_LIMIT+1 行则
+  // 必有未扫描记录，把多取的一行 pop 掉；否则行数 ≤ NOTE_SCAN_LIMIT
+  // 就是真的覆盖了全库。代价是全库正好 NOTE_SCAN_LIMIT+1 条时多读一行，
+  // 收益是 truncation 判定从启发式变成 deterministic。
+  const allRaw = await notesRepo.findAll({ limit: NOTE_SCAN_LIMIT + 1 })
+  const scanIncomplete = allRaw.length > NOTE_SCAN_LIMIT
+  const all = scanIncomplete ? allRaw.slice(0, NOTE_SCAN_LIMIT) : allRaw
   const lower = needle.toLowerCase()
   let matches = all.filter((n) => n.filename.toLowerCase() === lower)
   let matchKind: 'exact' | 'prefix' | 'truncated' = 'exact'

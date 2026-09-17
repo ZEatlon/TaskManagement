@@ -344,6 +344,17 @@ export function abortStream(callId: string, webContentsId: number | null): boole
 }
 
 /**
+ * R-fix-confirm-tool-cross-window (MEDIUM sender-validation)：查询
+ * 某次流的发起者 webContents.id，供 AI_CONFIRM_TOOL handler 做 sender
+ * ownership 校验（与 abortStream 同思路：callId 对应 wc 才有权确认 /
+ * 拒绝其副作用工具）。无对应流或流已完成 → 返回 null。
+ */
+export function getActiveStreamWebContentsId(callId: string): number | null {
+  const entry = activeStreams.get(callId)
+  return entry ? entry.webContentsId : null
+}
+
+/**
  * 启动流式响应
  *
  * 设计：

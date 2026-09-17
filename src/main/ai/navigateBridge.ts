@@ -50,6 +50,11 @@ const NAVIGATE_ACK_TIMEOUT_MS = 1500
 interface PendingNavigate {
   resolve: (focusApplied: boolean | null) => void
   timer: ReturnType<typeof setTimeout>
+  /** R-fix-navigate-ack-cross-window-forgery (HIGH sender-validation)：
+   *  记录发起本次 navigate 的 webContents.id，回 ack 时校验 sender 与之
+   *  匹配。任意被劫持渲染端 / 跨窗口伪造 ack 都会被这里的 ownership
+   *  守卫拒绝，防止"清掉别人的 pending / 喂 LLM 假 focusApplied"。 */
+  ownerWcId: number
 }
 
 /** R33-fix：每个 navigate() 调用分配一个 callId，渲染端 ack 时带回，
@@ -68,7 +73,7 @@ function ensureAckHandlerRegistered(): void {
   ipcMain.handle(
     IPC_CHANNELS.AI_NAVIGATE_ACK,
     (
-      _event,
+      event,
       payload?: { callId?: unknown; focusApplied?: unknown },
     ) => {
       const callId =
@@ -78,6 +83,17 @@ function ensureAckHandlerRegistered(): void {
       if (!callId) return { ok: true as const }
       const pending = pendingNavigates.get(callId)
       if (!pending) return { ok: true as const }
+      // R-fix-navigate-ack-cross-window-forgery：拒绝非发起者 webContents
+      // 的 ack。被劫持渲染端可在另一窗口伪造 {callId, focusApplied} 试图
+      // 清掉别人的 pending 或注入假高亮结果。event.sender.id 是 IPC 边
+      // 界由 Electron 注入的可信值，不受渲染端 payload 操控。
+      const senderId = event.sender?.id
+      if (typeof senderId !== 'number' || senderId !== pending.ownerWcId) {
+        log.warn(
+          `[ai/navigateBridge] ack sender mismatch: sender=${String(senderId)} owner=${pending.ownerWcId} callId=${callId}; refusing`,
+        )
+        return { ok: false, error: 'sender mismatch' } as const
+      }
       clearTimeout(pending.timer)
       pendingNavigates.delete(callId)
       // focusApplied 仅在 navigate 时带了 focusStickyId 的路径下才会有值。
@@ -178,7 +194,7 @@ export async function navigateTo(
       // 以为高亮成功而告诉用户"已跳转到便签 X"）。
       resolve(sticky === null ? null : false)
     }, NAVIGATE_ACK_TIMEOUT_MS)
-    pendingNavigates.set(navCallId, { resolve, timer })
+    pendingNavigates.set(navCallId, { resolve, timer, ownerWcId: wcId })
   })
 
   try {

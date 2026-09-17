@@ -140,6 +140,12 @@ function maybeRewrite(specifier, parentURL) {
   // 测试用真实 better-sqlite3 文件 DB 验证 ROLLBACK / PRAGMA foreign_keys
   // 恢复 / schema_migrations 写入幂等。
   const isFromMigrate = parentNorm.endsWith('/src/main/db/migrate.ts')
+  // R-test-suite-worker-not-available (test-coverage)：src/main/db/client.ts
+  // 自身 import '../log'（无扩展名）。test-db-client.mts 直接 import 这个
+  // 模块，client.ts 的 parentURL 不在已有 context 里 → log stub + 扩展名
+  // fallback 都不命中 → ERR_MODULE_NOT_FOUND。新增 context 让 ../log 走
+  // testmock://log stub、其它相对路径走 .ts fallback。
+  const isFromDbClient = parentNorm.endsWith('/src/main/db/client.ts')
   // R-test-suite-completion-handlers (test-coverage)：src/main/ipc/completion-handlers.ts
   // 从 ./channels import handle()，从 ../db/repositories/completions import
   // completionsRepo + noteEventsRepo，从 ../db/repositories/stickyNotes import
@@ -183,6 +189,7 @@ function maybeRewrite(specifier, parentURL) {
     !isFromBackfill &&
     !isFromWithPrepared &&
     !isFromMigrate &&
+    !isFromDbClient &&
     !isFromCompletionHandlers &&
     !isFromDbHandlers &&
     !isFromRendererStore
@@ -896,6 +903,12 @@ export async function confirmToolCall(callId, toolCallId, approved) {
   calls.push({ callId, toolCallId, approved });
   const fn = globalThis.__test_confirmToolCallReturn;
   return typeof fn === 'function' ? fn(callId, toolCallId, approved) : { ok: false, error: 'mocked' };
+}
+export function getActiveStreamWebContentsId(callId) {
+  // 默认 no-op 返回 null —— 测试可在 globalThis.__test_getActiveStreamWebContentsIdReturn
+  // 里预设一个 (callId) => number | null 函数以注入具体返回值。
+  const fn = globalThis.__test_getActiveStreamWebContentsIdReturn;
+  return typeof fn === 'function' ? fn(callId) : null;
 }
 `,
         shortCircuit: true,
