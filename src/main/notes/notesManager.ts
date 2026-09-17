@@ -15,6 +15,8 @@ import { existsSync, constants as fsConstants } from 'node:fs'
 import { realpath as fsRealpath } from 'node:fs/promises'
 import log from '../log'
 import { notesRepo, PathCollisionError } from '../db/repositories/notes'
+import { noteTagsRepo } from '../db/repositories/noteTags'
+import { tagsRepo } from '../db/repositories/tags'
 import { notesWatcher, notesWatchDir } from './notesWatcher'
 import { conflictResolver, type ConflictResolution } from './conflictResolver'
 import {
@@ -187,6 +189,55 @@ class NotesManagerImpl {
   async getNotesDir(): Promise<string | null> {
     const lib = await getCurrentLibrary()
     return notesWatchDir(lib)
+  }
+
+  /**
+   * W1-D 双写辅助：把 frontmatter 的 tag 名 → tags 表 id → note_tags 关系表。
+   *   - tags 表里已存在同名 tag：复用其 id
+   *   - 不存在：自动创建（color/parentId 都 null —— Sidebar 后续手动整理）
+   *   - 空 / 空白字符串跳过
+   *
+   * 调用方：writeNote 在 notesRepo.upsertFromFile 之后调用一次。失败仅记日志
+   * 不抛 —— note_tags 是「关系索引」，漏写不会让 .md 文件损坏，只是查询时
+   * 该笔记的 tag 列表暂时不全，下次写或显式 IPC 重试会修复。
+   */
+  private async syncNoteTags(noteId: string, tagNames: readonly string[]): Promise<void> {
+    if (!noteId || tagNames.length === 0) {
+      // 解绑全部 —— 显式写空数组，让关系表与 frontmatter 严格对齐
+      if (noteId) await noteTagsRepo.writeForNote(noteId, [])
+      return
+    }
+    const ids: string[] = []
+    const seen = new Set<string>()
+    for (const raw of tagNames) {
+      const name = typeof raw === 'string' ? raw.trim() : ''
+      if (!name) continue
+      // 同名 tag 在 writeForNote 里会自动去重，但这里先去重一次，
+      // 避免重复 resolveByName 触发 IPC 抖动
+      if (seen.has(name.toLowerCase())) continue
+      seen.add(name.toLowerCase())
+      try {
+        const tag = await tagsRepo.findByNameInScope(name, null)
+        if (tag) {
+          ids.push(tag.id)
+        } else {
+          const created = await tagsRepo.create({
+            name,
+            parentId: null,
+            color: null,
+            order: 0,
+          })
+          ids.push(created.id)
+        }
+      } catch (err) {
+        log.warn(`[notes-manager] syncNoteTags: failed to resolve "${name}"`, err)
+      }
+    }
+    try {
+      await noteTagsRepo.writeForNote(noteId, ids)
+    } catch (err) {
+      log.warn(`[notes-manager] syncNoteTags: writeForNote failed for ${noteId}`, err)
+    }
   }
 
   /** 确保笔记目录存在 */
@@ -427,6 +478,9 @@ class NotesManagerImpl {
       const parsedNote = parseFrontmatter(fullText)
       const meta = await notesRepo.upsertFromFile(targetPath, fullText, parsedNote, stats)
       await notesRepo.updateMeta(meta.id, { folderId: input.folderId })
+      // W1-D 双写：把 frontmatter 的 tag 名同步到 note_tags 关系表。
+      // tags_json 保留（frontmatter 同步需要它），但读路径优先 note_tags。
+      await this.syncNoteTags(meta.id, parsedNote?.data?.tags ?? [])
     }
 
     // 读取并返回最新 Note

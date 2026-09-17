@@ -3,6 +3,8 @@
  */
 import { handle } from './channels'
 import { tagsRepo } from '../db/repositories/tags'
+import { noteTagsRepo } from '../db/repositories/noteTags'
+import { isUuid } from '@shared/lib/uuid'
 import type { Tag } from '@shared/types'
 
 // R25-Sec-3 修复 (medium input validation / DoS)：原 tag:create / tag:update
@@ -88,6 +90,43 @@ export function registerTagHandlers(): void {
         throw new Error('tag:find-by-name: parentId must be string or null')
       }
       return tagsRepo.findByNameInScope(name, parentId)
+    },
+  )
+
+  // W1-D: 笔记 ↔ tag 关系（单一真源 note_tags）
+  handle<{ noteId: string }, Array<{
+    noteId: string
+    tagId: string
+    name: string
+    color: string | null
+    parentId: string | null
+  }>>('tag:list-for-note', async (_e, args: { noteId: string }) => {
+    if (typeof args?.noteId !== 'string' || !args.noteId) {
+      throw new Error('tag:list-for-note: noteId must be non-empty string')
+    }
+    return noteTagsRepo.listForNote(args.noteId)
+  })
+
+  handle<{ noteId: string; tagIds: string[] }, { ok: true }>(
+    'tag:set-for-note',
+    async (_e, args: { noteId: string; tagIds: string[] }) => {
+      if (typeof args?.noteId !== 'string' || !args.noteId) {
+        throw new Error('tag:set-for-note: noteId must be non-empty string')
+      }
+      if (!Array.isArray(args.tagIds)) {
+        throw new Error('tag:set-for-note: tagIds must be array')
+      }
+      // 限长 + UUID 守门
+      if (args.tagIds.length > 256) {
+        throw new Error('tag:set-for-note: tagIds exceeds 256 entries')
+      }
+      for (const t of args.tagIds) {
+        if (typeof t !== 'string' || !isUuid(t)) {
+          throw new Error(`tag:set-for-note: invalid tagId ${JSON.stringify(t)} (must be UUID)`)
+        }
+      }
+      await noteTagsRepo.writeForNote(args.noteId, args.tagIds)
+      return { ok: true }
     },
   )
 }
