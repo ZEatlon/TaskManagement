@@ -1,0 +1,89 @@
+/* Clock 页面样式 —— 双栏 + 底部日历 */
+/* 加载顺序：在 pomodoro.css 之后，覆盖嵌入态的 .is-embedded 细节 */
+
+.clock-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+.clock-shell__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .clock-shell__top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.clock-shell__phase {
+  /* PomodoroTimerPanel 自带 is-embedded 卡片样式 */
+}
+
+.clock-shell__aside {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.clock-shell__strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: stretch;
+}
+
+@media (max-width: 768px) {
+  .clock-shell__strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.clock-shell__calendar {
+  /* PomodoroCalendarPanel 自带 is-embedded 卡片样式 */
+}
+
+/* ─── BreakSuggestion 卡片 ─── */
+
+.clock-break-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+}
+
+.clock-break-suggestion__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.clock-break-suggestion__body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text, #ddd);
+}
+
+.clock-break-suggestion__hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--color-text-tertiary, #666);
+  font-style: italic;
+}

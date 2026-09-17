@@ -8,6 +8,7 @@ import { RouterProvider } from '@tanstack/react-router'
 import { createAppRouter } from './router'
 import { installPomodoroListeners } from './stores/pomodoro'
 import { installAiListeners } from './stores/ai'
+import { installNotifyDiagnosticsListeners } from './stores/notify'
 import { useGitStore } from './stores/git'
 import {
   setAppRouter,
@@ -26,6 +27,7 @@ import './styles/ai.css'
 import './styles/notes.css'
 import './styles/today.css'
 import './styles/sticky-notes.css'
+import './styles/clock.css'
 /* dashboard.css 必须放在 pomodoro.css 之后 —— 让嵌入态 .is-embedded 覆盖
    pomodoro.css 里的玻璃感 backdrop-filter / box-shadow 等重样式。 */
 import './styles/dashboard.css'
@@ -69,6 +71,15 @@ const disposePomodoroListeners = safeInstall('pomodoro listeners', installPomodo
 // 安装 AI 流事件监听（主进程推送 -> store）
 const disposeAiListeners = safeInstall('ai listeners', installAiListeners)
 
+// 安装通知失败诊断监听（NOTIFY_PERSIST_FAILED / NOTIFY_TOAST_FAILED）。
+// 这两条通道历史上 main 进程有 emit 但渲染端 0 订阅者，用户漏看
+// 通知 / OS toast 弹失败时排查无门。订阅到 useNotifyDiagnosticsStore，
+// UI 可在支持 bundle / 调试面板导出最近一次失败 payload。
+const disposeNotifyDiagnosticsListeners = safeInstall(
+  'notify diagnostics listeners',
+  installNotifyDiagnosticsListeners,
+)
+
 // R33-fix：安装 AI navigate 事件监听（主进程 app:navigate -> router.navigate）。
 // 必须在 router 实例注入之后安装；不需要 React 树就绪，模块级监听即可。
 const disposeNavigateListener = safeInstall('navigate listener', installNavigateListener)
@@ -95,6 +106,7 @@ import.meta.hot?.dispose(() => {
   disposePomodoroListeners?.()
   disposeAiListeners?.()
   disposeNavigateListener?.()
+  disposeNotifyDiagnosticsListeners?.()
   useGitStore.getState().dispose()
 })
 

@@ -39,7 +39,7 @@ export function MiniPomodoro() {
   return (
     <button
       className="mini-pomodoro"
-      onClick={() => navigate({ to: '/' })}
+      onClick={() => navigate({ to: '/clock' })}
       title={`${modeLabel} ${formatMmSs(remainingSec)}`}
       // R14 修复 (medium)：title 仅鼠标可见；SR 用户需要 aria-label。
       // 加 running/paused 状态让 SR 用户能区分当前阶段。

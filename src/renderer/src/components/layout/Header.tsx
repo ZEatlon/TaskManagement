@@ -121,13 +121,13 @@ export function Header() {
         </span>
         <nav className="header-nav">
           <Link
-            to="/"
+            to="/clock"
             className="nav-link"
             activeProps={{ className: 'nav-link active' }}
             activeOptions={{ exact: true }}
-            aria-current={currentPath === '/' ? 'page' : undefined}
+            aria-current={currentPath === '/clock' ? 'page' : undefined}
           >
-            仪表盘
+            番茄
           </Link>
           <Link
             to="/today"

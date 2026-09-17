@@ -5,6 +5,7 @@
 import { createMemoryHistory, createRootRoute, createRoute, createRouter } from '@tanstack/react-router'
 import { RootRoute } from './routes/__root'
 import { DashboardRoute } from './routes/dashboard'
+import { ClockRoute } from './routes/clock'
 import { TodayRoute } from './routes/today'
 import { SettingsRoute } from './routes/settings'
 import { AiRoute } from './routes/ai'
@@ -18,6 +19,12 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
   component: DashboardRoute,
+})
+
+const clockRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/clock',
+  component: ClockRoute,
 })
 
 const todayRoute = createRoute({
@@ -46,6 +53,7 @@ const notesRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  clockRoute,
   todayRoute,
   settingsRoute,
   aiRoute,
