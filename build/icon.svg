@@ -1,28 +1,48 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  应用图标：便签纸叠（三层错位便签纸 + 圆角，扁平静态，无动效 / 无渐变光晕）
-  viewBox 256×256，便签本体四边圆角 8px；底-中-顶 三张纸分别有细微阴影线
-  表达「叠放」。暖黄主色 #F5C76A，符合「任务进度管理」语境下「便签 / 待办」的视觉习惯。
+  TaskPilot 应用图标 — 时钟面 + 完成对勾
+
+  视觉隐喻：
+    - 时钟外圈 = 番茄 / Clock 页面（新的入口）
+    - 时针 + 分针自然形成一个「✓」对勾的转角
+    - 4 个小时的点 = 时钟刻度（12/3/6/9）
+    - 主色 #F5C76A 暖黄延续旧图标调性
+
+  viewBox 1024×1024，所有形状居中对称。描边/线宽 80+ 在 16px
+  小尺寸下保留辨识度。背景透明，方便 macOS Dock / Windows 任务栏
+  渲染时不与系统色冲突。
 -->
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <!-- 顶层便签（旋转 -6°）-->
-  <g transform="translate(128 132) rotate(-6) translate(-128 -132)">
-    <rect x="56" y="40" width="144" height="180" rx="8" ry="8" fill="#F5C76A"/>
-    <!-- 折角小三角：右下角轻微内翻，暗示便签纸真实折角 -->
-    <path d="M 192 220 L 200 220 L 200 212 Z" fill="#E0B055"/>
-    <!-- 三条横线：暗示便签内容（不用具体文字）-->
-    <rect x="76" y="80" width="104" height="6" rx="3" fill="#FFFFFF" opacity="0.85"/>
-    <rect x="76" y="106" width="84" height="6" rx="3" fill="#FFFFFF" opacity="0.85"/>
-    <rect x="76" y="132" width="64" height="6" rx="3" fill="#FFFFFF" opacity="0.85"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS 风圆角方形底 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="200" ry="200" fill="#F5C76A"/>
+
+  <!-- 内圈白底（时钟面板） -->
+  <circle cx="512" cy="512" r="340" fill="#FFFFFF"/>
+
+  <!-- 时钟外圈（描边装饰，宽度 32，颜色比主色深一档） -->
+  <circle cx="512" cy="512" r="380" fill="none" stroke="#E0A848" stroke-width="24"/>
+
+  <!-- 4 个主时刻度（12/3/6/9，加粗圆点） -->
+  <g fill="#E0A848">
+    <circle cx="512" cy="160" r="22"/>
+    <circle cx="864" cy="512" r="22"/>
+    <circle cx="512" cy="864" r="22"/>
+    <circle cx="160" cy="512" r="22"/>
   </g>
 
-  <!-- 中层便签（旋转 +4°，偏左）-->
-  <g transform="translate(128 138) rotate(4) translate(-128 -138)">
-    <rect x="48" y="48" width="144" height="180" rx="8" ry="8" fill="#F2A93B"/>
+  <!--
+    时针 + 分针拼成「✓」对勾：
+      - 分针（对勾长边）：中心 → 右上
+      - 时针（对勾短边）：中心 → 左下
+      - 两条线汇于中心 + 中心实心点连起来就是一个对勾 ✓
+  -->
+  <g stroke="#2D2A24" stroke-width="80" stroke-linecap="round" fill="none">
+    <!-- 分针：对勾长边 -->
+    <line x1="512" y1="512" x2="772" y2="312"/>
+    <!-- 时针：对勾短边 -->
+    <line x1="512" y1="512" x2="312" y2="672"/>
   </g>
 
-  <!-- 底层便签（旋转 -2°，最深）-->
-  <g transform="translate(128 144) rotate(-2) translate(-128 -144)">
-    <rect x="40" y="56" width="144" height="180" rx="8" ry="8" fill="#E48F2A"/>
-  </g>
+  <!-- 中心实心圆点（针轴） -->
+  <circle cx="512" cy="512" r="44" fill="#F5C76A" stroke="#2D2A24" stroke-width="20"/>
 </svg>
