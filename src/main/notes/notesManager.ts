@@ -16,6 +16,7 @@ import { realpath as fsRealpath } from 'node:fs/promises'
 import log from '../log'
 import { notesRepo, PathCollisionError } from '../db/repositories/notes'
 import { noteTagsRepo } from '../db/repositories/noteTags'
+import { noteRevisionsRepo } from '../db/repositories/noteRevisions'
 import { tagsRepo } from '../db/repositories/tags'
 import { notesWatcher, notesWatchDir } from './notesWatcher'
 import { conflictResolver, type ConflictResolution } from './conflictResolver'
@@ -461,6 +462,27 @@ class NotesManagerImpl {
     // 期间触发的 add/change 已经在 schedule() 入口被认作自写。如果 write 失
     // 败抛错，我们让 TTL 自然过期（2s 即可），不污染后续真实外部事件。
     notesWatcher.skipNextEvents(targetPath)
+
+    // W2-A④：版本历史 —— 写入新正文前，把当前 DB 行的旧正文快照一行。
+    // 关键：snapshot 必须在 writeFile 之前读出来；targetPath === input.path 时，
+    // readFile 拿到的是旧版（即将被覆盖）。新建 path 走不到这里。
+    if (input.path) {
+      const prevMeta = await notesRepo.findByPath(input.path)
+      if (prevMeta) {
+        try {
+          const prevContent = await readFile(targetPath, 'utf-8').catch(() => '')
+          const prevParsed = parseFrontmatter(prevContent)
+          await noteRevisionsRepo.append(
+            prevMeta.id,
+            prevContent,
+            JSON.stringify(prevParsed?.data ?? {}),
+          )
+        } catch (err) {
+          log.warn('[writeNote] failed to snapshot revision for', input.path, err)
+        }
+      }
+    }
+
     // R17：writeFileNoFollow 内置 O_NOFOLLOW + O_EXCL/O_TRUNC，原子开 fd，
     // 防止「isRealPathInside 通过 → 攻击者 symlink 换靶 → writeFile 跟随」
     // 的 TOCTOU 窗口。
@@ -523,6 +545,73 @@ class NotesManagerImpl {
     await notesRepo.deleteByPath(path)
     conflictResolver.onDelete(path)
     return removedFile
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // W2-A④：回收站 + 版本历史
+  // ───────────────────────────────────────────────────────────────────
+
+  /**
+   * 移到回收站（仅置 deleted_at，软删除）。
+   * 磁盘文件保留；用户可在回收站 UI 里还原 / 永久删除。
+   */
+  async trashNote(path: string): Promise<NoteMeta | null> {
+    return notesRepo.trashByPath(path)
+  }
+
+  /** 从回收站还原。 */
+  async restoreNote(path: string): Promise<NoteMeta | null> {
+    return notesRepo.restoreByPath(path)
+  }
+
+  /**
+   * 永久删除（清磁盘 + 删 DB row + 删 revisions）。
+   * ON DELETE CASCADE 在 DB 层带走 note_revisions / note_tags。
+   */
+  async purgeNote(path: string): Promise<boolean> {
+    const dir = await this.getNotesDir()
+    if (!dir || !(await isRealPathInside(dir, path))) {
+      log.warn(`[notes-manager] purgeNote: rejected path outside notes dir: ${path}`)
+      return false
+    }
+    try {
+      if (existsSync(path)) {
+        notesWatcher.skipNextEvents(path)
+        await unlink(path)
+      }
+    } catch (err) {
+      log.warn(`[notes-manager] purgeNote: failed to remove file ${path}`, err)
+    }
+    return notesRepo.deleteByPath(path)
+  }
+
+  /** 列回收站里的笔记。 */
+  async listTrash(limit = 200): Promise<NoteMeta[]> {
+    return notesRepo.findAll({ trashed: true, limit, orderBy: 'mtime DESC' })
+  }
+
+  /** 读某条 note 的历史快照列表（按 created_at DESC）。 */
+  async listRevisions(noteId: string): Promise<Array<{
+    id: number
+    noteId: string
+    createdAt: string
+    length: number
+    source: 'auto' | 'manual'
+  }>> {
+    return noteRevisionsRepo.listByNote(noteId)
+  }
+
+  /** 读单条 revision 全文。 */
+  async readRevision(revisionId: number): Promise<{
+    id: number
+    noteId: string
+    createdAt: string
+    length: number
+    source: 'auto' | 'manual'
+    content: string
+    frontmatter: string
+  } | null> {
+    return noteRevisionsRepo.findById(revisionId)
   }
 
   /**

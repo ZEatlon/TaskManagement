@@ -218,6 +218,9 @@ export class NotesRepository {
   async findAll(opts: {
     archived?: boolean
     starred?: boolean
+    /** W2-A④：trashed=true → 列出回收站（deleted_at IS NOT NULL），
+     * 默认 false → 只列未删除（deleted_at IS NULL）。 */
+    trashed?: boolean
     limit?: number
     orderBy?: string
   } = {}): Promise<NoteMeta[]> {
@@ -230,6 +233,12 @@ export class NotesRepository {
     if (typeof opts.starred === 'boolean') {
       where.push('starred = ?')
       params.push(opts.starred ? 1 : 0)
+    }
+    // W2-A④：默认隐藏回收站；显式 trashed=true 才列
+    if (opts.trashed === true) {
+      where.push('deleted_at IS NOT NULL')
+    } else {
+      where.push('deleted_at IS NULL')
     }
     const orderBy = ALLOWED_ORDER_BY.has(opts.orderBy ?? '') ? (opts.orderBy as string) : 'mtime DESC'
     // R5S-5：opts.limit 非数字（NaN / 字符串）会被拼成 "LIMIT NaN"，prepare 时直接抛错。
@@ -682,6 +691,35 @@ export class NotesRepository {
     const stmtId = await notesPrepare('DELETE FROM notes WHERE path = ?')
     const info = (await dbClient.call('run', { stmtId, params: [path] })) as { changes: number }
     return info.changes > 0
+  }
+
+  /**
+   * W2-A④：软删除（移到回收站）。仅置 deleted_at，不删磁盘文件。
+   * 真正的物理删除走 purgeByPath / purgeById。
+   */
+  async trashByPath(path: string): Promise<NoteMeta | null> {
+    const now = new Date().toISOString()
+    const stmtId = await notesPrepare(
+      'UPDATE notes SET deleted_at = ?, updated_at = ? WHERE path = ? AND deleted_at IS NULL',
+    )
+    const info = (await dbClient.call('run', { stmtId, params: [now, now, path] })) as { changes: number }
+    if (info.changes === 0) return null
+    const findStmtId = await notesPrepare('SELECT * FROM notes WHERE path = ?')
+    const row = (await dbClient.call('get', { stmtId: findStmtId, params: [path] })) as NoteRow | undefined
+    return row ? rowToMeta(row) : null
+  }
+
+  /** W2-A④：从回收站还原（清 deleted_at）。 */
+  async restoreByPath(path: string): Promise<NoteMeta | null> {
+    const now = new Date().toISOString()
+    const stmtId = await notesPrepare(
+      'UPDATE notes SET deleted_at = NULL, purged_at = NULL, updated_at = ? WHERE path = ? AND deleted_at IS NOT NULL',
+    )
+    const info = (await dbClient.call('run', { stmtId, params: [now, path] })) as { changes: number }
+    if (info.changes === 0) return null
+    const findStmtId = await notesPrepare('SELECT * FROM notes WHERE path = ?')
+    const row = (await dbClient.call('get', { stmtId: findStmtId, params: [path] })) as NoteRow | undefined
+    return row ? rowToMeta(row) : null
   }
 
   /**
