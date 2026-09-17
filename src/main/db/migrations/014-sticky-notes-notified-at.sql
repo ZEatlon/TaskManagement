@@ -21,3 +21,23 @@ ALTER TABLE sticky_notes ADD COLUMN notified_at TEXT;
 CREATE INDEX IF NOT EXISTS idx_sticky_notes_due_pending
   ON sticky_notes(due_at)
   WHERE notified_at IS NULL;
+
+-- R-fix-migration-014-notification-flood (HIGH correctness)：
+-- ADD COLUMN 默认 NULL。已存在的 sticky_notes 行（含 archived=0 且
+-- due_at <= now 的过期便签）现在 notified_at = NULL → notifier.ts
+-- fetchDueRows 的 WHERE notified_at IS NULL 全命中 → 升级后 30s 内
+-- 一次性向用户弹 N 条系统通知，N = 历史所有「未归档 + 已到期」便签。
+-- 已派发语义本应是「这一会话里真正弹过通知」，升级从 0.8.x 跳到本版
+-- 的用户显然不期望收到批量旧通知。
+--
+-- 修复：对所有 due_at NOT NULL 的现有 sticky 反向回填 notified_at
+-- = '1970-01-01T00:00:00.000Z' 作为「迁移前已存在、未真正派发过」
+-- 的 sentinel。notifier 的 WHERE notified_at IS NULL 过滤会把这些行
+-- 跳过；用户主动编辑（清 notified_at / 重设 due_at）后仍可正常触发
+-- 新提醒。'1970-01-01' 远早于任何真实派发时间，UI 上读 notified_at
+-- 时能通过 "1970-01-01" 直接识别这是 sentinel（与 stickyNotes.ts
+-- 里的 `displayNotifiedAt` 行为互不干扰）。
+UPDATE sticky_notes
+SET notified_at = '1970-01-01T00:00:00.000Z'
+WHERE due_at IS NOT NULL
+  AND notified_at IS NULL;

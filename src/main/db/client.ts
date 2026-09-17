@@ -4,7 +4,7 @@
  * 通过 stdio JSON-RPC 与 sidecar worker 通信。
  * 所有 SQL 操作都经由此处转发。
  */
-import { spawn, ChildProcess } from 'node:child_process'
+import { spawn, ChildProcess, type SpawnOptions } from 'node:child_process'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync } from 'node:fs'
 import { resolve as pathResolve } from 'node:path'
@@ -19,8 +19,41 @@ export interface WorkerNotification {
   (method: string, params: unknown): void
 }
 
+/**
+ * 单测可注入的 spawn 替身（默认 = node:child_process.spawn）。
+ * 让 DbClient 不用 monkey-patch 整个 child_process 模块。
+ */
+export type DbClientSpawnFn = (
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => ChildProcess
+
+/** DbClient 构造选项（生产环境用默认即可，单测可覆盖 spawn / wait 超时） */
+export interface DbClientOptions {
+  /** 测试可注入自定义 spawn 函数（默认 = node:child_process.spawn） */
+  spawnFn?: DbClientSpawnFn
+  /** 测试可缩短 waitForWorker 超时（默认 30s） */
+  waitForWorkerTimeoutMs?: number
+}
+
 export class DbClient {
+  /**
+   * @param options.spawnFn 单测可注入 fake spawn（默认 = node:child_process.spawn）
+   * @param options.waitForWorkerTimeoutMs 单测可缩短 waitForWorker 超时
+   */
+  constructor(options: DbClientOptions = {}) {
+    this.spawnFn = options.spawnFn ?? spawn
+    this.waitForWorkerTimeoutMs = options.waitForWorkerTimeoutMs ?? 30_000
+  }
+
   private worker: ChildProcess | null = null
+  // 静态字段：测试可覆盖，但所有实例共享同一 spawnFn（与原模块行为一致）。
+  // 通过 constructor 注入实例级 spawnFn，单测里每条用例 new 一个 client 各自
+  // 持有自己的 fake spawn —— 互不污染。
+  private readonly spawnFn: DbClientSpawnFn
+  /** waitForWorker 的超时上限（ms）。默认 30s，涵盖 1s+4s+16s=21s 的 respawn backoff */
+  private readonly waitForWorkerTimeoutMs: number
   private pending = new Map<number, PendingRequest>()
   private nextId = 1
   private ready = false
@@ -128,7 +161,7 @@ export class DbClient {
     const nodePath = this.resolveNodePath()
     log.info(`[db-client] spawning node worker: ${nodePath} ${workerPath}`)
 
-    this.worker = spawn(nodePath, [workerPath], {
+    this.worker = this.spawnFn(nodePath, [workerPath], {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -168,16 +201,14 @@ export class DbClient {
       // R16 修复 (low)：worker 死前可能写出半截 JSON（缺尾部 \n），buffer 留着
       // 会与下一轮新 worker 的 ready 行粘连。exit handler 清 buffer。
       this.buffer = ''
-      // R15 修复 (high)：自动 respawn。stop() 调用或初始 start 阶段不重连。
-      // R16 修复 (critical)：只有「worker 曾成功 ready 过」才计入 respawnAttempts；
-      // 如果 worker 在 ready 前就死（ABI / 路径错），直接放弃 respawn 循环，
-      // 让 caller 拿到错误退出。否则 start() reject 后没人 await.then 回调里
-      // 增加 attempts，scheduleRespawn() 会无限循环每秒重 spawn 同款崩的 worker。
+      // R-fix-worker-not-available (critical correctness)：原 dyingBeforeReady
+      // 分支直接放弃 respawn —— ABI 不匹配 / native panic / 旧进程还在持锁
+      // 等场景下，worker 永远起不来；后续 IPC call() 立即 reject「Worker not
+      // available」，整个 app 第一次交互（设置库目录）就崩。改为统一调度
+      // respawn，靠 MAX_RESPAWN=3 + 指数退避（1s+4s+16s=21s）防无限循环；
+      // 实在救不回来时 waitForWorker() 的 30s 上限也会兜住，给 caller 一个
+      // 明确的「respawn exhausted」错误而不是无限转圈。
       if (!this.shuttingDown) {
-        if (dyingBeforeReady) {
-          log.error('[db-client] worker died during startup; not scheduling respawn')
-          return
-        }
         this.scheduleRespawn()
       }
     })
@@ -264,9 +295,21 @@ export class DbClient {
     this.ready = false
   }
 
-  /** 调用 worker 方法 */
-  call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    return new Promise((resolve, reject) => {
+  /**
+   * 调用 worker 方法。
+   *
+   * R-fix-worker-not-available (critical correctness)：原版 worker 为 null
+   * 时直接 reject「Worker not available」，导致 IPC handler（lib:set-current
+   * 等）拿到永久性错误、用户连「设置库目录」都过不去。新版在发送请求前先
+   * await waitForWorker()：worker 正在 respawn（处于 1s/4s/16s backoff 窗口）
+   * 就等，deadline=30s（涵盖 21s 总 backoff）；shutdown / respawn-exhausted /
+   * timeout 时给出明确错误。
+   */
+  async call<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    await this.waitForWorker()
+    return new Promise<T>((resolve, reject) => {
+      // 双重检查：waitForWorker 返回到此处之间可能 worker 又死了
+      // （例如 respawn 调度后立刻又崩）。
       if (!this.worker || !this.worker.stdin?.writable) {
         reject(new Error('Worker not available'))
         return
@@ -281,6 +324,41 @@ export class DbClient {
         }
       })
     })
+  }
+
+  /**
+   * 等待 worker 进入「可写」状态。
+   *
+   * 行为矩阵：
+   *   - worker 已 alive + stdin.writable → 立即返回
+   *   - worker null 但 respawnAttempts < MAX_RESPAWN → 轮询等待（每次 50ms）
+   *   - shutdown=true → throw 'db worker is shutting down'
+   *   - respawnAttempts >= MAX_RESPAWN → throw 'respawn exhausted'
+   *   - 超过 waitForWorkerTimeoutMs → throw 'unavailable after Nms'
+   *
+   * 不主动调 start() —— start 由 initDatabase / exit handler / scheduleRespawn
+   * 触发；这里只被动等。若 respawn 没被调度（如 dyingBeforeReady 旧路径残留
+   * 状态），MAX_RESPAWN 兜底也不会让 call() 永久挂起。
+   */
+  private async waitForWorker(): Promise<void> {
+    const deadline = Date.now() + this.waitForWorkerTimeoutMs
+    while (true) {
+      if (this.worker && this.worker.stdin?.writable) return
+      if (this.shuttingDown) {
+        throw new Error('db worker is shutting down')
+      }
+      if (this.respawnAttempts >= DbClient.MAX_RESPAWN) {
+        throw new Error(
+          `db worker unavailable: respawn exhausted (${this.respawnAttempts} attempts); please restart the app`,
+        )
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `db worker unavailable after ${this.waitForWorkerTimeoutMs}ms (respawnAttempts=${this.respawnAttempts})`,
+        )
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
   }
 
   /** 通知 worker（不期待响应） */
