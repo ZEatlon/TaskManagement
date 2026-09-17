@@ -17,7 +17,7 @@
  * 无需修改路由层。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Download } from '@renderer/lib/icon'
+import { Download, History } from '@renderer/lib/icon'
 import { useNotesStore } from '../../stores/notes'
 import { TipTapEditor, type EditorContentSource } from '../editor/TipTapEditor'
 import { NotePreview } from './NotePreview'
@@ -26,6 +26,7 @@ import { useAutosave } from '../../lib/useAutosave'
 import { aiApi, notesApi } from '../../lib/ipc'
 import { TagChipSelector } from './TagChipSelector'
 import { InlineAIButton } from '../ai/InlineAIButton'
+import { HistoryDrawer } from './HistoryDrawer'
 import { useAiStore } from '../../stores/ai'
 import { mdastToHtml, wrapPrintableHtml } from '../../notes/mdastToHtml'
 import { announce } from '../common/AriaAnnouncer'
@@ -89,6 +90,8 @@ export function NoteEditor({ path, onSaved }: Props) {
   // PDF 导出状态：'idle' / 'exporting' / 'error'
   const [exportState, setExportState] = useState<'idle' | 'exporting' | 'error'>('idle')
   const [exportError, setExportError] = useState<string | null>(null)
+  // W2-A④：版本历史 drawer 开关
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   /**
    * 导出当前笔记为 PDF：把 markdown 渲染成自包含 HTML（含内联样式），
@@ -459,6 +462,18 @@ export function NoteEditor({ path, onSaved }: Props) {
           <button className="btn primary" onClick={() => doSave()} disabled={!dirty}>
             保存
           </button>
+          {/* W2-A④：版本历史 —— 列出当前 note 的自动 / 手动 snapshot。
+              只在有 currentNote 时启用（没选中笔记时按 IPC 会失败）。 */}
+          <button
+            className="btn ghost"
+            onClick={() => setHistoryOpen(true)}
+            disabled={!currentNote}
+            title="查看与还原这条笔记的历史版本"
+            aria-label="查看历史版本"
+          >
+            <History size={14} aria-hidden />
+            历史
+          </button>
           <button
             className="btn ghost"
             onClick={() => void handleExportPdf()}
@@ -535,6 +550,16 @@ export function NoteEditor({ path, onSaved }: Props) {
           </>
         )}
       </div>
+
+      {/* W2-A④：版本历史 drawer —— 渲染在编辑器之外，fixed 定位铺满。
+          还原某 revision 后让父组件（/notes 路由）感知 save → 触发 TipTap 重 mount。 */}
+      <HistoryDrawer
+        open={historyOpen}
+        noteId={currentNote?.id ?? null}
+        noteTitle={currentNote?.title}
+        onClose={() => setHistoryOpen(false)}
+        onRestored={onSaved}
+      />
     </div>
   )
 }

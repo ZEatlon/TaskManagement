@@ -30,6 +30,7 @@ import { useTreeExpansionStore, useTreeExpanded } from '../../../stores/treeExpa
 import { FolderRow } from './FolderRow'
 import { FolderWithNotes } from './FolderWithNotes'
 import { UserFolderRow } from './UserFolderRow'
+import { TrashNode } from './TrashNode'
 import { useNotesByFolder, useWindowDragEndClear } from './hooks'
 import { EMPTY_NOTES, FOLDER_PALETTE } from './types'
 import type {
@@ -43,6 +44,10 @@ export function NoteFoldersSidebar({
   onDropToFolder,
   onOpenNote,
   onDeleteNote,
+  trashActive,
+  onOpenTrash,
+  onPurgeAllTrash,
+  trashRefreshKey,
 }: NoteFoldersSidebarProps) {
   const folders = useNotesStore((s) => s.folders)
   const fetchFolders = useNotesStore((s) => s.fetchFolders)
@@ -243,6 +248,17 @@ export function NoteFoldersSidebar({
             />
           )
         })}
+
+        {/* W2-A④：回收站 —— 系统节点，不支持 drop / rename / delete。
+            在所有用户文件夹之后，作为 sidebar 底部固定行。 */}
+        {onOpenTrash && onPurgeAllTrash && (
+          <TrashNode
+            active={Boolean(trashActive)}
+            onOpen={onOpenTrash}
+            onPurgeAll={onPurgeAllTrash}
+            refreshKey={trashRefreshKey ?? 0}
+          />
+        )}
       </div>
 
       <ConfirmDialog

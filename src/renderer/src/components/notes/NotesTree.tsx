@@ -17,8 +17,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNotesStore, type FolderSelection, type NotesFilter } from '../../stores/notes'
 import type { NoteMeta } from '@shared/types'
+import { notesApi } from '../../lib/ipc'
 import { ConfirmDialog } from '../common/ConfirmDialog'
 import { NoteFoldersSidebar } from './NoteFoldersSidebar'
+import { TrashListView } from './TrashListView'
 
 interface Props {
   onSelect?: (note: NoteMeta) => void
@@ -46,6 +48,12 @@ export function NotesTree({ onSelect }: Props) {
   // R7F-2：搜索 debounce —— 用户每按一个字母都直接 search() → note:search IPC，
   // 5 个字符就是 5 次 roundtrip。改为 250ms 静默期后再触发，Enter 立即触发。
   const searchDebounceRef = useRef<number | null>(null)
+  // W2-A④：回收站视图状态。trashRefreshKey 自增让 TrashNode 重新拉计数 + 让 TrashListView 重 mount。
+  const [trashOpen, setTrashOpen] = useState(false)
+  const [trashRefreshKey, setTrashRefreshKey] = useState(0)
+  const trashRefresh = useCallback(() => {
+    setTrashRefreshKey((k) => k + 1)
+  }, [])
 
   useEffect(() => {
     void fetch()
@@ -137,6 +145,32 @@ export function NotesTree({ onSelect }: Props) {
     setPendingDelete({ path: n.path, title: n.title })
   }, [])
 
+  // W2-A④：trash 节点点击 → 切到回收站视图。
+  const handleOpenTrash = useCallback(() => {
+    setTrashOpen(true)
+  }, [])
+
+  // W2-A④：清空回收站（用户已在 TrashNode 二次确认）。一次拉一次清；失败
+  // 的逐条跳过（继续清剩下的），最后回弹一条 notify —— 但 UI 层只自增
+  // refreshKey 让 TrashNode 重新拉计数。
+  const handlePurgeAllTrash = useCallback(async () => {
+    const list = await notesApi.listTrash()
+    let purged = 0
+    for (const n of list) {
+      try {
+        const ok = await notesApi.purge(n.path)
+        if (ok) purged++
+      } catch {
+        // 跳过失败项继续
+      }
+    }
+    void purged
+    trashRefresh()
+  }, [trashRefresh])
+
+  // 切回正常视图 —— 点击当前激活的 tab 即可（setFilter('all')）。
+  // 当 trash 视图打开时禁用搜索框 + 隐藏 filter tabs。
+
   return (
     <div className="notes-tree">
       <div className="tree-header">
@@ -148,11 +182,13 @@ export function NotesTree({ onSelect }: Props) {
           value={searchQuery}
           onChange={(e) => handleSearch(e.target.value)}
           onKeyDown={handleSearchKeyDown}
+          disabled={trashOpen}
         />
         <button
           className="btn primary create-btn"
           onClick={handleCreate}
           title="新建笔记"
+          disabled={trashOpen}
         >
           + 新建
         </button>
@@ -234,27 +270,61 @@ export function NotesTree({ onSelect }: Props) {
           注意：必须包一层 wrapper div 而不是直接给 NoteFoldersSidebar 加 role，因为
           不修改子组件 API；filter 切换时 NoteFoldersSidebar 内部会按 active filter
           重新渲染列表，wrapper 仅承担 aria 关联，零行为变更。 */}
-      <div
-        id="notes-filter-panel"
-        role="tabpanel"
-        aria-labelledby={
-          filter === 'all'
-            ? 'notes-filter-tab-all'
-            : filter === 'starred'
-              ? 'notes-filter-tab-starred'
-              : 'notes-filter-tab-archived'
-        }
-        tabIndex={0}
-      >
-        {/* 文件夹 + 文件列表合并（NoteFoldersSidebar 已实现 2 级 tree） */}
-        <NoteFoldersSidebar
-          activeFolderId={activeFolderId}
-          onSelectFolder={setActiveFolder}
-          onDropToFolder={handleDropToFolder}
-          onOpenNote={handleOpenNote}
-          onDeleteNote={handleDeleteNote}
-        />
-      </div>
+      {trashOpen ? (
+        <div
+          id="notes-trash-panel"
+          role="region"
+          aria-labelledby="trash-view-title"
+          tabIndex={0}
+          className="notes-trash-panel"
+        >
+          <header className="trash-view-header">
+            <h4 id="trash-view-title" className="trash-view-title">
+              回收站
+            </h4>
+            <button
+              type="button"
+              className="btn small ghost"
+              onClick={() => setTrashOpen(false)}
+              aria-label="返回笔记列表"
+            >
+              返回笔记
+            </button>
+          </header>
+          {/* refreshKey 变化 → TrashListView 重 mount → 重新拉 listTrash */}
+          <TrashListView
+            key={trashRefreshKey}
+            onChanged={trashRefresh}
+            onPreview={handleOpenNote}
+          />
+        </div>
+      ) : (
+        <div
+          id="notes-filter-panel"
+          role="tabpanel"
+          aria-labelledby={
+            filter === 'all'
+              ? 'notes-filter-tab-all'
+              : filter === 'starred'
+                ? 'notes-filter-tab-starred'
+                : 'notes-filter-tab-archived'
+          }
+          tabIndex={0}
+        >
+          {/* 文件夹 + 文件列表合并（NoteFoldersSidebar 已实现 2 级 tree） */}
+          <NoteFoldersSidebar
+            activeFolderId={activeFolderId}
+            onSelectFolder={setActiveFolder}
+            onDropToFolder={handleDropToFolder}
+            onOpenNote={handleOpenNote}
+            onDeleteNote={handleDeleteNote}
+            trashActive={false}
+            onOpenTrash={handleOpenTrash}
+            onPurgeAllTrash={handlePurgeAllTrash}
+            trashRefreshKey={trashRefreshKey}
+          />
+        </div>
+      )}
 
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -20,6 +20,7 @@ import type { IconProps } from '@tabler/icons-react'
 import {
   IconCheck,
   IconChevronRight,
+  IconClock,
   IconDatabaseImport,
   IconDownload,
   IconEye,
@@ -29,6 +30,7 @@ import {
   IconFolderOpen,
   IconFolderPlus,
   IconGripVertical,
+  IconHistory,
   IconLoader,
   IconMinus,
   IconNotebook,
@@ -37,10 +39,12 @@ import {
   IconPlayerPlay,
   IconPlayerSkipForward,
   IconPlus,
+  IconRotate,
   IconSettings,
   IconSparkles,
   IconSquare,
   IconTag,
+  IconTrash,
   IconVolume,
   IconVolumeOff,
   IconX,
@@ -85,6 +89,11 @@ export const FolderInput = IconFolderOpen
 // `HardDriveDownload`：lucide 是「下载/导入到本机」，用于 library 导入入口。
 // `IconDatabaseImport` 直接表达「把外部库导入到本地数据库」语义。
 export const HardDriveDownload = IconDatabaseImport
+// W2-A④：回收站 + 版本历史 icon。
+export const Trash = IconTrash
+export const History = IconHistory
+export const RotateCcw = IconRotate
+export const Clock = IconClock
 
 // ─── Spinner：自带 animate-spin 的加载图标 ───
 

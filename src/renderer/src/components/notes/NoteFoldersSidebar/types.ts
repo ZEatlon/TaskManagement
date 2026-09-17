@@ -13,6 +13,10 @@ export const FOLDER_PALETTE: NoteFolderColor[] = [
  * 始终返回同一引用，避免破坏下游 React.memo comparator 的 `prev.children === next.children`。 */
 export const EMPTY_NOTES: NoteMeta[] = []
 
+/** W2-A④：Trash 节点的初始 count（首次挂载到 listTrash 返回前的占位）。
+ *  使用 -1 区分「未知」与「已知为 0」，避免闪烁的 0→N 抖动让徽标误以为已变化。 */
+export const EMPTY_TRASH_COUNT = -1
+
 /** NoteFoldersSidebar 顶层 Props */
 export interface NoteFoldersSidebarProps {
   /** 用于在拖拽时把笔记移到目标文件夹（folderId = null = 未分类；undefined = 全部，不处理） */
@@ -25,6 +29,15 @@ export interface NoteFoldersSidebarProps {
   onOpenNote?: (note: NoteMeta) => void
   /** 文件夹展开预览里的笔记行删除按钮 */
   onDeleteNote?: (note: NoteMeta) => void
+  // ── W2-A④：回收站 ──
+  /** 当前是否在「回收站」视图（高亮 trash 节点）。 */
+  trashActive?: boolean
+  /** 点击 trash 节点：切到回收站视图。 */
+  onOpenTrash?: () => void
+  /** 永久清空回收站（purge-all 一次性删除所有 trashed 笔记）。 */
+  onPurgeAllTrash?: () => Promise<void>
+  /** trash 操作后递增，让 TrashNode 重新拉取数量。 */
+  trashRefreshKey?: number
 }
 
 /** ConfirmDialog 状态机：等待用户确认删除的 folder */
