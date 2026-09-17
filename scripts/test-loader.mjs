@@ -146,6 +146,13 @@ function maybeRewrite(specifier, parentURL) {
   // fallback 都不命中 → ERR_MODULE_NOT_FOUND。新增 context 让 ../log 走
   // testmock://log stub、其它相对路径走 .ts fallback。
   const isFromDbClient = parentNorm.endsWith('/src/main/db/client.ts')
+  // R-test-suite-assistant-daemon (test-coverage)：src/main/ai/assistantDaemon.ts
+  // 用 `'./assistantRules'` / `'./assistantPrefs'` / `'../ipc/emit'` / `'../log'`
+  // 无扩展名 import。pomodoroService 在 W2-B 后模块级 import assistantDaemon，
+  // test-pomodoro.mts 通过 pomodoroService 间接触发 assistantDaemon 加载 →
+  // 默认 resolver 找不到无扩展名 specifier → ERR_MODULE_NOT_FOUND。新增
+  // context 把这些相对 import 改写成 .ts 后交给默认 resolver。
+  const isFromAssistantDaemon = parentNorm.endsWith('/src/main/ai/assistantDaemon.ts')
   // R-test-suite-completion-handlers (test-coverage)：src/main/ipc/completion-handlers.ts
   // 从 ./channels import handle()，从 ../db/repositories/completions import
   // completionsRepo + noteEventsRepo，从 ../db/repositories/stickyNotes import
@@ -190,6 +197,7 @@ function maybeRewrite(specifier, parentURL) {
     !isFromWithPrepared &&
     !isFromMigrate &&
     !isFromDbClient &&
+    !isFromAssistantDaemon &&
     !isFromCompletionHandlers &&
     !isFromDbHandlers &&
     !isFromRendererStore
@@ -261,6 +269,27 @@ function maybeRewrite(specifier, parentURL) {
       return { url: 'testmock://cached-stmt', shortCircuit: true, format: 'module' }
   }
 
+  // ===== 仅 assistantDaemon：相对无扩展名 import 加 .ts 后交给默认 resolver =====
+  // assistantDaemon.ts 用 `'./assistantRules'` / `'./assistantPrefs'` /
+  // `'../ipc/emit'` / `'../log'`（无扩展名）。test-pomodoro.mts 通过
+  // pomodoroService 间接触发其加载，默认 resolver 找不到无扩展名 specifier。
+  // 把 specifier 改写成 .ts 路径（不加 shortCircuit），让 defaultResolve +
+  // --experimental-transform-types 处理真实 .ts 文件。
+  if (isFromAssistantDaemon) {
+    // 解析成 ../log/assistantRules/assistantPrefs/ipc/emit 任一相对路径；
+    // 是这些路径且无扩展名 → 补 .ts
+    const tsRel = rel + '.ts'
+    if (
+      rel === 'src/main/ai/assistantRules' ||
+      rel === 'src/main/ai/assistantPrefs' ||
+      rel === 'src/main/ipc/emit' ||
+      rel === 'src/main/log'
+    ) {
+      const tsAbs = path.resolve(PROJECT_ROOT, tsRel)
+      return { url: pathToFileURL(tsAbs).href }
+    }
+  }
+
   // ===== 仅 pomodoro =====
   if (isFromPomodoro) {
     if (rel === 'src/main/db/withPrepared')
@@ -275,6 +304,13 @@ function maybeRewrite(specifier, parentURL) {
       return { url: 'testmock://notifications', shortCircuit: true, format: 'module' }
     if (rel === 'src/main/pomodoro/audio')
       return { url: 'testmock://audio', shortCircuit: true, format: 'module' }
+    // W2-B：pomodoroService 在 phase-complete 后调 assistantDaemon。
+    // assistantDaemon 本身又会拉 assistantRules/assistantPrefs/ipc-emit/
+    // log 一串真依赖（部分已在 isFromAssistantDaemon 上下文兜住 .ts 扩展名，
+    // 但 emit 真要 stub 化才不会在测试里推 IPC 事件）。给 pomodoro 测试
+    // 一个最小 no-op 单例，onPomodoroPhaseComplete / handleEvent 直接静默。
+    if (rel === 'src/main/ai/assistantDaemon')
+      return { url: 'testmock://assistant-daemon', shortCircuit: true, format: 'module' }
   }
 
   // ===== 仅 pomodoroBridge =====
@@ -767,6 +803,27 @@ export default { settingsRepo };
         source: `
 export const timerEngine = globalThis.__test_timerEngine;
 export default { timerEngine };
+`,
+        shortCircuit: true,
+      }
+    case 'testmock://assistant-daemon':
+      // W2-B：pomodoroService 在 phase-complete 后调 assistantDaemon。
+      // 测试里让 daemon 完全 no-op，避免拉 assistantRules/assistantPrefs/
+      // ipc-emit 一串真依赖，也不会真的向渲染端推 ASSISTANT_HINT。
+      // 测试如需观察 daemon 调用，可通过 globalThis.__test_assistantDaemon
+      // 预设一个替代对象（暴露 onPomodoroPhaseComplete / handleEvent /
+      // refreshPrefs / start / stop 五方法）。
+      return {
+        format: 'module',
+        source: `
+const _default = {
+  onPomodoroPhaseComplete() {},
+  handleEvent() { return Promise.resolve({ action: 'ignore' }); },
+  refreshPrefs() { return Promise.resolve(); },
+  async start() {},
+  stop() {},
+};
+export const assistantDaemon = globalThis.__test_assistantDaemon ?? _default;
 `,
         shortCircuit: true,
       }
