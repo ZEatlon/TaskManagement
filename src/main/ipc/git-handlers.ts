@@ -330,9 +330,17 @@ export function registerGitHandlers(): void {
       _e,
       args: { url: string; remote?: string; confirmHostChange?: boolean },
     ): Promise<{ ok: true }> => {
+      // R-fix-git-remote-set-null-args (LOW input-validation-asymmetry)：
+      // 原版直接 args.remote ?? 'origin'。IPC 跨信任边界可发 null，被攻
+      // 渲染端触发 args === null 时 `args.remote` 抛 TypeError，错误信息
+      // 模糊、stack 污染主进程日志。同文件 GIT_COMMIT 已用 args?.message
+      // optional chaining 规避；这里同样兜底 + 显式拒绝，错误信息更清晰。
+      if (!args || typeof args !== 'object') {
+        throw new Error('git:remote-set: args must be object')
+      }
       const dir = await requireLibraryPath()
       const remoteName = args.remote ?? 'origin'
-      const { url, host } = await validateRemoteUrl(args?.url)
+      const { url, host } = await validateRemoteUrl(args.url)
 
       const existing = await getRemote(dir, remoteName)
       const existingHost = hostOf(existing?.url)
@@ -392,6 +400,75 @@ export function registerGitHandlers(): void {
   handle(IPC_CHANNELS.GIT_STATE, async (): Promise<GitSyncState & { running: boolean }> => {
     return { ...getSyncState(), running: isAutoSyncStarted() }
   })
+
+  /**
+   * R-fix-git-tab-broken (critical correctness)：GitTab 的自动推送
+   * 配置（gitAutoPushEnabled / gitPushIntervalMinutes）必须通过专用
+   * 通道持久化。背景：
+   *   - 这两个字段存储在 app.settings（不是 app.git 子文档）；
+   *   - 走 setting:set({key:'gitAutoPushEnabled', ...}) 顶层 key
+   *     → assertPrivilegedFieldsNotTouched 命中 TOP_LEVEL_KEY_TO_DOC 拒；
+   *   - 走 setting:set({key:'app.settings', value:{...gitAutoPushEnabled}})
+   *     → assertPrivilegedFieldsNotTouched 命中 PRIVILEGED_FIELDS_BY_DOC.settings 拒；
+   *   - 走 setting:set({key:'app.git', value:{...}}) → 拒（app.git 三字段都是 privileged）。
+   * 本通道是唯一允许持久化这两个字段的入口：
+   *   1. 显式接收 {enabled, intervalMinutes}，不接收其它字段（防御
+   *      privilege-escalation：被劫持渲染端不能借此写库目录 / 远端 URL 等）；
+   *   2. intervalMinutes 钳到 [1, 59]（与 autoSync 内部的 cron minute
+   *      字段合法值范围一致；超出范围静默 clamp 而不是抛错，避免 UI
+   *      输入 1440 这类大数时被 catch 后误导用户）；
+   *   3. 持久化到 app.settings（merge 到现有 row，保留其它字段）；
+   *   4. 持久化后调 restartAutoSync() —— 已开启自动推送但间隔变更需要
+   *      重启 cron tick；关闭时不重启，避免把已启动的同步器又拉起来。
+   */
+  handle(
+    IPC_CHANNELS.GIT_SET_CONFIG,
+    async (
+      _e,
+      args: { enabled?: unknown; intervalMinutes?: unknown },
+    ): Promise<{ ok: true; enabled: boolean; intervalMinutes: number }> => {
+      if (!args || typeof args !== 'object') {
+        throw new Error('git:set-config: args must be object')
+      }
+      // 类型校验：只接受 boolean / number，其它全部抛错（fail-fast，避免
+      // 后续 settingsRepo.set 把 undefined / null 误写入 SQLite）。
+      let enabled: boolean | undefined
+      if (args.enabled !== undefined) {
+        if (typeof args.enabled !== 'boolean') {
+          throw new Error('git:set-config: enabled must be boolean')
+        }
+        enabled = args.enabled
+      }
+      let intervalMinutes: number | undefined
+      if (args.intervalMinutes !== undefined) {
+        if (typeof args.intervalMinutes !== 'number' || !Number.isFinite(args.intervalMinutes)) {
+          throw new Error('git:set-config: intervalMinutes must be number')
+        }
+        intervalMinutes = Math.min(59, Math.max(1, Math.floor(args.intervalMinutes)))
+      }
+
+      const all = await settingsRepo.getAll()
+      const current = (all[SETTINGS_KEY] as Record<string, unknown> | undefined) ?? {}
+      const merged: Record<string, unknown> = { ...current }
+      if (enabled !== undefined) merged.gitAutoPushEnabled = enabled
+      if (intervalMinutes !== undefined) merged.gitPushIntervalMinutes = intervalMinutes
+      await settingsRepo.set(SETTINGS_KEY, merged)
+
+      // 关闭时不重启（避免已停的 sync 被拉起）；开启 / 间隔变更 → restart
+      // 让 cron tick 立即按新配置生效。
+      if (enabled === false) {
+        stopAutoSync()
+      } else if (enabled === true || intervalMinutes !== undefined) {
+        await restartAutoSync()
+      }
+
+      return {
+        ok: true,
+        enabled: Boolean(merged.gitAutoPushEnabled),
+        intervalMinutes: Number(merged.gitPushIntervalMinutes),
+      }
+    },
+  )
 
   // 便捷组合：自动同步一次（commit + push），等价于 sync-now 但语义清晰
   // R11 修复 (critical #3)：原版直接调 commitAndPush，绕过 autoSync 的 syncInFlight

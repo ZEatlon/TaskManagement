@@ -290,6 +290,20 @@ export function registerSettingHandlers(): void {
     if (typeof key !== 'string' || key.length === 0) {
       throw new Error('setting:delete requires a key')
     }
+    // R-fix-aitab-app-ai-migration (LOW migration-completeness)：
+    // 早期版本把 AI 配置存在 'app.ai' 子文档（{provider, model}）；新版本
+    // 迁到 AppSettings.aiProvider/aiOpenaiModel/aiAnthropicModel/aiMinimaxModel
+    // 顶层字段，AITab.tsx:137 在迁移成功后调 settingsApi.delete('app.ai')
+    // 清掉旧 key。该 key 内容确认只含 {provider, model}，没有任何特权字段
+    // （apiKey/openaiApiKey/anthropicApiKey/minimaxApiKey 都已迁到 keychain
+    // 之外的独立通道）。把它单独加白名单，避免 R28-Sec-6 拒收所有 app.*
+    // doc 删除导致的孤儿数据：下次启动 AITab 会再次触发迁移，再次调用
+    // delete 失败，再次忽略……死循环没害处但永远清不干净。
+    const LEGACY_DELETABLE_APP_KEYS = new Set(['app.ai'])
+    if (LEGACY_DELETABLE_APP_KEYS.has(key)) {
+      await settingsRepo.delete(key)
+      return { ok: true }
+    }
     // R28-Sec-6 修复 (high security)：原版 setting:delete 只校验非空字
     // 符串就删。被劫持渲染端（XSS / 恶意依赖）可调 setting:delete('app.settings')
     // 一键抹掉 libraryPath / gitRemote / apiKey 等信任锚；或

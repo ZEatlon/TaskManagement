@@ -51,6 +51,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   async update(patch) {
+    // R-fix-privileged-update (high correctness)：libraryPath 在主进程
+    // PRIVILEGED_FIELDS_BY_DOC.settings 里被列为信任锚字段，setting:set
+    // 会拒收；走 setting:set('app.settings', { ..., libraryPath }) 等于
+    // 借用通用通道绕过 lib:set-current 的 validateDirectory 校验。
+    // update() 必须 fail-fast 显式拒绝，避免调用方被静默丢弃字段后库路径
+    // 与本地 state 长期不一致。
+    if ('libraryPath' in patch) {
+      throw new Error(
+        "settings.update refused: 'libraryPath' is privileged; use settings.setLibraryPath()",
+      )
+    }
     const before = get()
     const next = { ...before, ...patch }
     set(patch)
@@ -80,17 +91,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   async setLibraryPath(path) {
+    // R-fix-setlibrarypath-channel (critical correctness)：原版调用
+    // settingsApi.set('app.settings', persistable)，而 persistable 含
+    // libraryPath 字段 → 主进程 assertPrivilegedFieldsNotTouched 抛
+    // "field 'libraryPath' in 'app.settings' is privileged; use the
+    // dedicated IPC handler"，FirstRunWizard / LibrarySwitcherModal
+    // 全部初始化路径报「初始化失败」。
+    //
+    // 修复：完全交给专用通道 libraryApi.setCurrent()。主进程
+    // lib:set-current 已经做了 validateDirectory + 持久化（merge 到
+    // 现有 row 的其它字段），不重复走 setting:set。
     const before = get()
     set({ libraryPath: path })
     try {
-      // X3-fix：之前 setLibraryPath 构造的 persistable 漏掉了 AI 相关字段
-      // （aiProvider / aiEnabled / 各 provider 的 model + baseUrl），
-      // 一旦切换 library 就会把这些配置悄悄清空。改为：只剥离方法/loaded，
-      // 保留全部 AppSettings 字段（包括 AI），再覆盖 libraryPath。
-      const next = { ...get(), libraryPath: path }
-      const { loaded, load, update, setLibraryPath: sl, checkLibraryReady, ...persistable } = next
-      void loaded; void load; void update; void sl; void checkLibraryReady
-      await settingsApi.set('app.settings', persistable)
+      if (path) {
+        // null 仅用于"清除库路径"，库切换组件不会传 null；这里保留 if 分支
+        // 给未来需要"重置 libraryPath"的场景使用。
+        await libraryApi.setCurrent(path)
+      }
     } catch (err) {
       console.error('[settings] setLibraryPath save failed', err)
       // R6S-5：回滚 libraryPath 字段。
