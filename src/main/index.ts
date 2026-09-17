@@ -20,6 +20,7 @@ import { initTray, destroyTray } from './notifications/tray'
 import { isFirstRun } from './lib/libraryManager'
 import { notesManager } from './notes/notesManager'
 import { startPomodoroService, stopPomodoroService } from './pomodoro/pomodoroService'
+import { initUpdater, setMainWindow } from './updater'
 import { grantAttachmentPrivileges, registerAttachmentProtocol } from './attachments/protocol'
 import { startNotifier, stopNotifier } from './sticky-notes'
 trace('index.ts:all-imports-done')
@@ -81,7 +82,7 @@ if (!gotTheLock) {
 
     registerIpcHandlers()
     trace('index.ts:registerIpcHandlers-done')
-    createMainWindow()
+    const mainWindow = createMainWindow()
     trace('index.ts:createMainWindow-done')
 
     // 历史回填：把已有任务完成记录补到 completions / note_events 表
@@ -122,6 +123,22 @@ if (!gotTheLock) {
       startPomodoroService()
     } catch (err) {
       log.warn('[boot] pomodoro service start failed', err)
+    }
+
+    // W2-B：启动 AI 助手 daemon —— 必须在 registerIpcHandlers 之后、pomodoro
+    // service 之后（daemon 监听 pomodoro 事件）。start 异步加载偏好，不阻塞启动。
+    try {
+      void import('./ai/assistantDaemon').then((m) => m.assistantDaemon.start())
+    } catch (err) {
+      log.warn('[boot] assistant daemon start failed', err)
+    }
+
+    // 初始化自动更新（dev 模式自动 disable；启动 5s 后后台检查一次）
+    try {
+      setMainWindow(mainWindow)
+      initUpdater()
+    } catch (err) {
+      log.warn('[boot] updater init failed', err)
     }
 
     // 启动便签提醒派发服务（30s 扫描 + 系统通知 + IPC 推送）

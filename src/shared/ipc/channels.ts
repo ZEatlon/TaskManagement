@@ -73,6 +73,9 @@ export const IPC_CHANNELS = {
   TAG_UPDATE: 'tag:update',
   TAG_DELETE: 'tag:delete',
   TAG_FIND_BY_NAME: 'tag:find-by-name',
+  // W1-D：笔记 ↔ 标签关系（单一真源 note_tags 表）
+  TAG_LIST_FOR_NOTE: 'tag:list-for-note',
+  TAG_SET_FOR_NOTE: 'tag:set-for-note',
 
   // 设置（key/value 存储）
   SETTING_GET: 'setting:get',
@@ -108,11 +111,28 @@ export const IPC_CHANNELS = {
    * 入参 { html, defaultFilename }，出参 { savedPath } | null（用户取消）。
    */
   NOTE_EXPORT_PDF: 'note:export-pdf',
+  // W2-A④：回收站（soft delete + restore + 永久删除）
+  NOTE_TRASH: 'note:trash',
+  NOTE_RESTORE: 'note:restore',
+  NOTE_PURGE: 'note:purge',
+  NOTE_LIST_TRASH: 'note:list-trash',
+  // W2-A④：版本历史
+  NOTE_LIST_REVISIONS: 'note:list-revisions',
+  NOTE_READ_REVISION: 'note:read-revision',
+  NOTE_RESTORE_REVISION: 'note:restore-revision',
   /**
    * 一次性清理历史版本自动写入的 mock 数据（笔记 + sticky + pomodoros）。
    * 出参 { deletedNotes, deletedStickies, deletedPomodoros }。
    */
   MOCK_CLEANUP: 'mock:cleanup',
+
+  // W2-B：混合型 AI 助手 daemon（偏好 + 主动拉起对话 + 推送 hint/chat）
+  ASSISTANT_PREFS_GET: 'assistant:prefs-get',
+  ASSISTANT_PREFS_SET: 'assistant:prefs-set',
+  ASSISTANT_CHAT_OPEN: 'assistant:chat-open',
+  // 主进程主动推送到渲染进程的事件
+  ASSISTANT_HINT: 'assistant:hint',
+  ASSISTANT_CHAT: 'assistant:chat',
   // 主进程主动推送到渲染进程的笔记事件
   NOTE_FS_EVENT: 'note:fs-event',
 
@@ -235,6 +255,19 @@ export const IPC_CHANNELS = {
   GIT_AUTO_RESTART: 'git:auto-restart',
   GIT_STATE: 'git:state',
   GIT_AUTO_COMMIT_PUSH: 'git:auto-commit-push',
+  /**
+   * R-fix-git-tab-broken (critical correctness)：GitTab 原版把
+   * gitAutoPushEnabled / gitPushIntervalMinutes / remoteUrl 塞进
+   * setting:set({key:'app.git', value:{...}}) 走通用通道 —— 三者都是
+   * app.git 的 privileged 字段，主进程 assertPrivilegedFieldsNotTouched
+   * 直接拒（"field 'X' in 'app.git' is privileged"），设置 UI 静默失效。
+   * remoteUrl 走已有的 git:remote-set；自动推送配置需要专用通道，因为：
+   *   - 这两个字段实际存储在 app.settings（不是 app.git）
+   *   - setting:set 顶层 key 'gitAutoPushEnabled' 也会被拒（TOP_LEVEL_KEY_TO_DOC 命中）
+   *   - 设置 app.settings 含 gitAutoPushEnabled 同样被拒（PRIVILEGED_FIELDS_BY_DOC.settings 命中）
+   * 新通道只持久化这两个字段到 app.settings，调用方可以安全地批量写入。
+   */
+  GIT_SET_CONFIG: 'git:set-config',
   // 主进程主动推送到渲染进程的事件
   GIT_STATE_CHANGED: 'git:state-changed',
   GIT_SYNC_START: 'git:sync-start',
@@ -331,6 +364,21 @@ export const IPC_CHANNELS = {
   ATTACHMENT_UPLOAD: 'attachment:upload',
   ATTACHMENT_DELETE: 'attachment:delete',
   ATTACHMENT_EXISTS: 'attachment:exists',
+
+  // 自动更新（electron-updater）
+  /**
+   * 主进程 → 渲染端：状态变化推送（订阅一次，状态流式更新）
+   * payload: UpdaterState
+   */
+  UPDATER_STATUS: 'updater:status',
+  /** 渲染端 → 主进程：主动检查更新（无参） */
+  UPDATER_CHECK: 'updater:check',
+  /** 渲染端 → 主进程：开始下载已发现的更新（无参） */
+  UPDATER_DOWNLOAD: 'updater:download',
+  /** 渲染端 → 主进程：退出并安装新版本（无参） */
+  UPDATER_INSTALL: 'updater:install',
+  /** 渲染端 → 主进程：取当前状态（无参；返回 UpdaterState） */
+  UPDATER_GET_STATE: 'updater:get-state',
 } as const
 
 export type IpcChannelName = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS]

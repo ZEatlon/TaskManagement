@@ -6,6 +6,7 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
 import { IPC_CHANNELS, type PingResponse } from '@shared/ipc/channels'
 import type { AiStreamEvent } from '@shared/types/ai'
+import type { UpdaterState } from '@shared/types/updater'
 
 /**
  * R28-Sec-1 修复 (high security)：原版 `invoke` 完全不校验 channel 名称，
@@ -255,6 +256,77 @@ const api = {
       const handler = (e: IpcRendererEvent, payload: boolean) => cb(e, payload)
       ipcRenderer.on(IPC_CHANNELS.WINDOW_ON_MAXIMIZE_CHANGED, handler)
       return () => ipcRenderer.removeListener(IPC_CHANNELS.WINDOW_ON_MAXIMIZE_CHANGED, handler)
+    },
+  },
+
+  /** W2-B：AI 助手 daemon */
+  assistant: {
+    /** 读偏好（主进程返回 DEFAULT）。 */
+    getPrefs: (): Promise<{
+      enabled: boolean
+      workHours: { startHour: number; endHour: number }
+      frequencyCapPerHour: number
+      mutedCategories: string[]
+      customHints: Record<string, string>
+    }> => ipcRenderer.invoke(IPC_CHANNELS.ASSISTANT_PREFS_GET),
+    /** 写偏好。 */
+    setPrefs: (prefs: {
+      enabled: boolean
+      workHours: { startHour: number; endHour: number }
+      frequencyCapPerHour: number
+      mutedCategories: string[]
+      customHints: Record<string, string>
+    }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.ASSISTANT_PREFS_SET, prefs),
+    /** 主动拉起对话（绕过决策）。 */
+    openChat: (question: string): Promise<{ id: string; prompt: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.ASSISTANT_CHAT_OPEN, { question }),
+    /** 监听主进程推送的 hint（短通知）。 */
+    onHint: (
+      cb: (
+        event: IpcRendererEvent,
+        payload: { id: string; category: string; text: string; atIso: string },
+      ) => void,
+    ): (() => void) => {
+      const handler = (
+        e: IpcRendererEvent,
+        payload: { id: string; category: string; text: string; atIso: string },
+      ) => cb(e, payload)
+      ipcRenderer.on(IPC_CHANNELS.ASSISTANT_HINT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.ASSISTANT_HINT, handler)
+    },
+    /** 监听主进程推送的 chat 邀请（要求用户反思/决策）。 */
+    onChat: (
+      cb: (
+        event: IpcRendererEvent,
+        payload: { id: string; category: string; prompt: string; atIso: string },
+      ) => void,
+    ): (() => void) => {
+      const handler = (
+        e: IpcRendererEvent,
+        payload: { id: string; category: string; prompt: string; atIso: string },
+      ) => cb(e, payload)
+      ipcRenderer.on(IPC_CHANNELS.ASSISTANT_CHAT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.ASSISTANT_CHAT, handler)
+    },
+  },
+
+  /**
+   * 自动更新（electron-updater）
+   * 渲染端订阅 onStatus 接收 status 流；通过 check / download / install 触发动作。
+   */
+  updater: {
+    getState: (): Promise<UpdaterState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.UPDATER_GET_STATE),
+    check: (): Promise<UpdaterState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.UPDATER_CHECK),
+    download: (): Promise<UpdaterState> =>
+      ipcRenderer.invoke(IPC_CHANNELS.UPDATER_DOWNLOAD),
+    install: (): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.UPDATER_INSTALL),
+    onStatus: (cb: (event: IpcRendererEvent, state: UpdaterState) => void): (() => void) => {
+      const handler = (e: IpcRendererEvent, payload: UpdaterState) => cb(e, payload)
+      ipcRenderer.on(IPC_CHANNELS.UPDATER_STATUS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.UPDATER_STATUS, handler)
     },
   },
 } as const

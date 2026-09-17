@@ -15,6 +15,7 @@ import {
   installNavigateListener,
 } from './lib/navigateBridge'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
+import { AINotificationHost } from './components/ai/AINotificationHost'
 import { AriaAnnouncerMount } from './components/common/AriaAnnouncer'
 import './styles/index.css'
 import './styles/tasks.css'
@@ -124,6 +125,10 @@ ReactDOM.createRoot(rootEl).render(
       {/* R8A-5/R8A-6：全局 aria-live 公告器，屏幕阅读器用户也能感知到
           后台状态变化（"已创建便签"、"已删除笔记"等）。 */}
       <AriaAnnouncerMount />
+      {/* W2-B：AI 助手 daemon 的 hint toast 容器 + chat 触发跳转。
+          挂在 RouterProvider 之外、ErrorBoundary 之内的「旁路」位置，
+          toast 不受路由切换影响、抛错也不会让整个 UI 空白。 */}
+      <AINotificationHost />
     </ErrorBoundary>
   </React.StrictMode>,
 )

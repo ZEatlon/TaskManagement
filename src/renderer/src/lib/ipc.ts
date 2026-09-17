@@ -65,14 +65,49 @@ export const securityApi = {
   isAvailable: () => invoke<undefined, boolean>(IPC_CHANNELS.SECURITY_IS_AVAILABLE),
   set: (key: 'openai.apiKey' | 'anthropic.apiKey' | 'minimax.apiKey' | 'git.token', value: string) =>
     invoke<{ key: typeof key; value: string }, { ok: true }>(IPC_CHANNELS.SECURITY_SET, { key, value }),
-  // R5S-6：安全 IPC 只返回 `{ present: true; length: number } | null`，
-  // 不解密明文。renderer 之前声明成 `string | null` 与主进程契约不符，
-  // 一旦有调用方误调 `.startsWith()` 等 string 操作就会运行时崩溃。
+  // R-fix-security-get-contract-drift (LOW contract-drift)：与 main 进程
+  // security-handlers.ts:59 对齐 —— handler 只返回 `{ present: true } | null`，
+  // 不返回 length。R11 修复 (low #5) 已经把 length 字段从 IPC payload 中
+  // 删掉以避免「密文长度 → 间接区分 provider」的信息泄漏；renderer 侧
+  // 类型与 preload api.d.ts 没同步收紧是文档漂移，让「支持 bundle 读 length」
+  // 的潜在需求一旦引入就会 undefined-crash。同步把类型收紧。
   get: (key: 'openai.apiKey' | 'anthropic.apiKey' | 'minimax.apiKey' | 'git.token') =>
-    invoke<typeof key, { present: true; length: number } | null>(IPC_CHANNELS.SECURITY_GET, key),
+    invoke<typeof key, { present: true } | null>(IPC_CHANNELS.SECURITY_GET, key),
   delete: (key: 'openai.apiKey' | 'anthropic.apiKey' | 'minimax.apiKey' | 'git.token') =>
     invoke<typeof key, { ok: true }>(IPC_CHANNELS.SECURITY_DELETE, key),
   listKeys: () => invoke<undefined, string[]>(IPC_CHANNELS.SECURITY_LIST_KEYS),
+}
+
+// ===== W2-B：AI 助手 daemon =====
+// 与 main/ai/assistantRules.ts 类型对齐 —— 注释「source of truth」。
+interface AssistantPrefs {
+  enabled: boolean
+  workHours: { startHour: number; endHour: number }
+  frequencyCapPerHour: number
+  mutedCategories: AssistantCategory[]
+  customHints: Partial<Record<AssistantCategory, string>>
+}
+type AssistantCategory =
+  | 'focus-streak'
+  | 'sedentary-reminder'
+  | 'motivational-quote'
+  | 'sticky-overdue'
+  | 'pomodoro-reflection'
+  | 'long-edit-nudge'
+
+export const assistantApi = {
+  /** 读偏好（无值返回 DEFAULT）。 */
+  getPrefs: () =>
+    invoke<undefined, AssistantPrefs>(IPC_CHANNELS.ASSISTANT_PREFS_GET, undefined),
+  /** 写偏好（主进程 coerce 后回写并通知 daemon）。 */
+  setPrefs: (prefs: AssistantPrefs) =>
+    invoke<AssistantPrefs, AssistantPrefs>(IPC_CHANNELS.ASSISTANT_PREFS_SET, prefs),
+  /** 渲染端主动拉起对话 —— 走 daemon.handleEvent 走完整决策链路。 */
+  openChat: (question: string) =>
+    invoke<{ question: string }, { id: string; prompt: string }>(
+      IPC_CHANNELS.ASSISTANT_CHAT_OPEN,
+      { question },
+    ),
 }
 
 // ===== AI 对话 =====
@@ -321,6 +356,17 @@ export const gitApi = {
       IPC_CHANNELS.GIT_REMOTE_SET,
       { url, remote, confirmHostChange },
     ),
+  /**
+   * R-fix-git-tab-broken (critical correctness)：持久化自动推送配置
+   * （gitAutoPushEnabled / gitPushIntervalMinutes）到 app.settings。
+   * 走 setting:set 通用通道会被主进程拒收（详见 git-handlers.ts 中
+   * GIT_SET_CONFIG 注释）。调用方传入 undefined 字段表示「保持原值」。
+   */
+  setConfig: (cfg: { enabled?: boolean; intervalMinutes?: number }) =>
+    invoke<
+      { enabled?: boolean; intervalMinutes?: number },
+      { ok: true; enabled: boolean; intervalMinutes: number }
+    >(IPC_CHANNELS.GIT_SET_CONFIG, cfg),
   syncNow: () =>
     invoke<undefined, { ok: boolean; error?: string; sha?: string | null }>(IPC_CHANNELS.GIT_SYNC_NOW),
   autoStart: () => invoke<undefined, { ok: true }>(IPC_CHANNELS.GIT_AUTO_START),
@@ -619,6 +665,52 @@ export const notesApi = {
       { html: string; defaultFilename?: string },
       { savedPath: string } | null
     >(IPC_CHANNELS.NOTE_EXPORT_PDF, { html, defaultFilename }),
+
+  // ─── W2-A④：回收站（软删除 + 还原 + 永久删除）───
+  /** 软删除（移到回收站，磁盘文件保留）。 */
+  trash: (path: string) =>
+    invoke<string, NoteMeta | null>(IPC_CHANNELS.NOTE_TRASH, path),
+  /** 从回收站还原（清 deleted_at）。 */
+  restore: (path: string) =>
+    invoke<string, NoteMeta | null>(IPC_CHANNELS.NOTE_RESTORE, path),
+  /** 永久删除（清磁盘 + DB row + revisions）。 */
+  purge: (path: string) =>
+    invoke<string, boolean>(IPC_CHANNELS.NOTE_PURGE, path),
+  /** 列回收站里的笔记（deleted_at IS NOT NULL）。 */
+  listTrash: () =>
+    invoke<undefined, NoteMeta[]>(IPC_CHANNELS.NOTE_LIST_TRASH, undefined),
+
+  // ─── W2-A④：版本历史（每条笔记最多 50 个 snapshot）───
+  listRevisions: (noteId: string) =>
+    invoke<
+      { noteId: string },
+      Array<{
+        id: number
+        noteId: string
+        createdAt: string
+        length: number
+        source: 'auto' | 'manual'
+      }>
+    >(IPC_CHANNELS.NOTE_LIST_REVISIONS, { noteId }),
+  readRevision: (revisionId: number) =>
+    invoke<
+      { revisionId: number },
+      {
+        id: number
+        noteId: string
+        createdAt: string
+        length: number
+        source: 'auto' | 'manual'
+        content: string
+        frontmatter: string
+      } | null
+    >(IPC_CHANNELS.NOTE_READ_REVISION, { revisionId }),
+  /** 还原某条 revision 为当前正文（同时把当前正文 snapshot 进 history）。 */
+  restoreRevision: (revisionId: number) =>
+    invoke<{ revisionId: number }, Note | null>(
+      IPC_CHANNELS.NOTE_RESTORE_REVISION,
+      { revisionId },
+    ),
 }
 
 // ===== Mock 数据清理（一次性：移除历史版本自动写入的 mock 数据）=====

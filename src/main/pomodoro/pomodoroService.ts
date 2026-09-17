@@ -58,6 +58,7 @@ import { withPrepared } from '../db/withPrepared'
 import { stickyNotesRepo } from '../db/repositories/stickyNotes'
 import { settingsRepo } from '../db/repositories/settings'
 import { timerEngine } from './timerEngine'
+import { assistantDaemon } from '../ai/assistantDaemon'
 import {
   notifyFocusComplete,
   notifyBreakComplete,
@@ -224,6 +225,17 @@ export function startPomodoroService(): void {
   timerEngine.onPhaseComplete = (finished, next, prevMode) => {
     const gen = pomodoroGeneration
     void handlePhaseComplete(finished, next, prevMode, gen)
+    // W2-B：通知 AI 助手 daemon —— daemon 自行决策是否触发 hint/chat。
+    // 这条路径必须在 handlePhaseComplete 之后挂，确保不抢占 service 的
+    // 通知 + DB 写入；service 失败/抛错不影响 daemon。
+    try {
+      assistantDaemon.onPomodoroPhaseComplete({
+        mode: finished.mode,
+        cycleIndex: next.cycleIndex,
+      })
+    } catch (err) {
+      log.warn('[pomodoro] assistant daemon hook failed:', err)
+    }
   }
   // 异步加载配置（不阻塞启动 —— 入口在 start()/handlePhaseComplete 等处
   // 显式 await ensureConfigLoaded() 兜底，保证首启第一次 start 拿到持久值）

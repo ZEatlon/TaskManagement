@@ -20,6 +20,7 @@ import { registerGitHandlers } from './git-handlers'
 import { registerLibraryHandlers } from './library-handlers'
 import { registerNotifyHandlers } from './notify-handlers'
 import { registerAiHandlers } from './ai-handlers'
+import { registerAssistantHandlers } from './assistant-handlers'
 import { registerPomodoroHandlers } from './pomodoro-handlers'
 import { registerNoteHandlers } from './notes'
 import { registerAttachmentHandlers } from './attachment-handlers'
@@ -87,6 +88,7 @@ export function registerIpcHandlers(): void {
   registerNotifyHandlers()
   registerGitHandlers()
   registerAiHandlers()
+  registerAssistantHandlers()
   registerPomodoroHandlers()
   registerNoteHandlers()
   registerAttachmentHandlers()

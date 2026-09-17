@@ -15,7 +15,9 @@ import { AppearanceTab } from '../components/settings/tabs/AppearanceTab'
 import { NotificationsTab } from '../components/settings/tabs/NotificationsTab'
 import { EditorTab } from '../components/settings/tabs/EditorTab'
 import { AITab } from '../components/settings/tabs/AITab'
+import { AssistantTab } from '../components/settings/tabs/AssistantTab'
 import { GitTab } from '../components/settings/tabs/GitTab'
+import { UpdatesTab } from '../components/settings/tabs/UpdatesTab'
 import { AboutTab } from '../components/settings/tabs/AboutTab'
 
 /** 取当前 hash 对应的 tab id，找不到则回退到第一个 */
@@ -34,7 +36,9 @@ const TAB_RENDERERS: Record<string, ComponentType> = {
   notifications: NotificationsTab,
   editor: EditorTab,
   ai: AITab,
+  assistant: AssistantTab,
   git: GitTab,
+  updates: UpdatesTab,
   about: AboutTab,
 }
 

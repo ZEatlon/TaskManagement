@@ -24,10 +24,13 @@ export interface SettingsSidebarProps {
 }
 
 /**
- * 默认的 8 个 tab 配置（导出供设置页使用）
+ * 默认的 9 个 tab 配置（导出供设置页使用）
  *
  * Round 6：删除「快捷键」tab —— dashboard 顶部栏已承载常用快捷入口，
  * 设置入口也可从顶部导航直达，没必要再开一层自定义 UI。
+ *
+ * W2-B：新增「AI 助手」tab —— 助手 daemon 的偏好设置（之前与「AI」混在
+ * 一个 tab 里，UI 拥挤；拆开让用户能找到助手类别开关）。
  */
 export const SETTINGS_TABS: SettingsTabItem[] = [
   { id: 'general', label: '常规', icon: '⚙' },
@@ -36,7 +39,9 @@ export const SETTINGS_TABS: SettingsTabItem[] = [
   { id: 'notifications', label: '通知', icon: '🔔' },
   { id: 'editor', label: '编辑器', icon: '📝' },
   { id: 'ai', label: 'AI', icon: '🤖' },
+  { id: 'assistant', label: 'AI 助手', icon: '✨' },
   { id: 'git', label: 'Git', icon: '🌿' },
+  { id: 'updates', label: '更新', icon: '🔄' },
   { id: 'about', label: '关于', icon: 'ℹ' },
 ]
 

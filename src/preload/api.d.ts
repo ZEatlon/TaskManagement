@@ -5,6 +5,7 @@
 import type { IpcRendererEvent } from 'electron'
 import type { PingResponse } from '@shared/ipc/channels'
 import type { AiStreamEvent } from '@shared/types/ai'
+import type { UpdaterState } from '@shared/types/updater'
 
 export interface TaskPilotNotifyApi {
   show: (req: {
@@ -45,6 +46,8 @@ export interface TaskPilotApi {
   readonly attachments: TaskPilotAttachmentApi
   readonly ai: TaskPilotAiApi
   readonly window: TaskPilotWindowApi
+  readonly updater: TaskPilotUpdaterApi
+  readonly assistant: TaskPilotAssistantApi
 }
 
 export interface TaskPilotAttachmentApi {
@@ -170,6 +173,54 @@ export interface TaskPilotWindowApi {
   /** 主进程主动推送：maximize / unmaximize 状态变化 */
   onMaximizeChanged: (
     cb: (event: IpcRendererEvent, isMaximized: boolean) => void,
+  ) => () => void
+}
+
+/** 自动更新（electron-updater） */
+export interface TaskPilotUpdaterApi {
+  getState: () => Promise<UpdaterState>
+  check: () => Promise<UpdaterState>
+  download: () => Promise<UpdaterState>
+  install: () => Promise<void>
+  /** 订阅主进程推送的 UpdaterState 变化，返回解绑函数 */
+  onStatus: (
+    cb: (event: IpcRendererEvent, state: UpdaterState) => void,
+  ) => () => void
+}
+
+/** W2-B：AI 助手 daemon（混合型：hint toast + chat 邀请） */
+export interface TaskPilotAssistantApi {
+  /** 读偏好（无值时主进程返回 DEFAULT）。 */
+  getPrefs: () => Promise<{
+    enabled: boolean
+    workHours: { startHour: number; endHour: number }
+    frequencyCapPerHour: number
+    mutedCategories: string[]
+    customHints: Record<string, string>
+  }>
+  /** 写偏好（主进程 coerce 后回写）。 */
+  setPrefs: (prefs: {
+    enabled: boolean
+    workHours: { startHour: number; endHour: number }
+    frequencyCapPerHour: number
+    mutedCategories: string[]
+    customHints: Record<string, string>
+  }) => Promise<unknown>
+  /** 主动拉起对话（绕过 daemon 决策）。 */
+  openChat: (question: string) => Promise<{ id: string; prompt: string }>
+  /** 监听主进程推送的 hint（短通知）。 */
+  onHint: (
+    cb: (
+      event: IpcRendererEvent,
+      payload: { id: string; category: string; text: string; atIso: string },
+    ) => void,
+  ) => () => void
+  /** 监听主进程推送的 chat 邀请。 */
+  onChat: (
+    cb: (
+      event: IpcRendererEvent,
+      payload: { id: string; category: string; prompt: string; atIso: string },
+    ) => void,
   ) => () => void
 }
 
