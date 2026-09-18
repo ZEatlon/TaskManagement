@@ -56,9 +56,15 @@ function makeDbClientFromDb(db: Database.Database) {
           // 一层确保失败时整段回滚（真实 db-worker 在 better-sqlite3 端也是
           // 同款语义：单事务由 prepared BEGIN/COMMIT 控制）。
           if (/^\s*BEGIN\b/i.test(sql)) {
+            // 1) 剥掉外层 wrapInTransaction 加的 BEGIN
+            // 2) 全局剥掉所有 COMMIT（含 migration body 自带 + wrapInTransaction
+            //    外层）：让 mock 的 db.transaction wrapper 单独拥有 tx 控制权。
+            //    否则 body 自带的 COMMIT 会先于 wrapper 提交，后面的
+            //    schema_migrations INSERT 跑到没 tx 的上下文，再后面的 wrapper
+            //    COMMIT 报 "no transaction is active"。
             const inner = sql
               .replace(/^\s*BEGIN\s*;?\s*/i, '')
-              .replace(/\s*COMMIT\s*;?\s*$/i, '')
+              .replace(/\s*COMMIT\s*;?\s*/gi, '')
               .trim()
             // 拆成单条语句（去掉末尾分号 + 空语句）
             const stmts = inner
@@ -402,6 +408,181 @@ await test('getCurrentVersion: 还没跑 migration → 返回 0', async () => {
     // 时返回 0。这里依赖 dbClient.call('prepare', ...) 在 better-sqlite3
     // 上对不存在的表报错 → 被 catch 吞掉 → return 0
     assert.equal(await migrate.getCurrentVersion(), 0)
+  } finally {
+    env.cleanup()
+  }
+})
+
+// =====================================================================
+// Test 8: stripOuterTransaction 纯函数 —— R-fix-migration-nested-transaction
+// 防线单测。覆盖 5 种边界：
+//   1) 没 BEGIN → 原样透传
+//   2) BEGIN 后有空行 / 注释 → 剥掉 BEGIN，保留正文
+//   3) 大小写不敏感（Begin / begin / BEGIN 都剥）
+//   4) SAVEPOINT 不是外层 BEGIN → 不剥
+//   5) BEGIN; 后接 PRAGMA foreign_keys = ON; 等语句 → 全部保留
+// =====================================================================
+
+await test('stripOuterTransaction: 没 BEGIN → 原样透传', () => {
+  assert.equal(
+    migrate.stripOuterTransaction('CREATE TABLE a (id INTEGER);'),
+    'CREATE TABLE a (id INTEGER);',
+  )
+  assert.equal(
+    migrate.stripOuterTransaction(''),
+    '',
+  )
+})
+
+await test('stripOuterTransaction: 标准 BEGIN; 起头 → 剥掉 BEGIN 与尾部 COMMIT', () => {
+  const input = 'BEGIN;\nCREATE TABLE a (id INTEGER);\nCOMMIT;'
+  // 剥掉 BEGIN 行（+ 紧跟空行）+ 最后一个 COMMIT 行（+ 之前空行）
+  const expected = 'CREATE TABLE a (id INTEGER);'
+  assert.equal(migrate.stripOuterTransaction(input), expected)
+})
+
+await test('stripOuterTransaction: 顶部注释 + 空行 + BEGIN → 剥掉 BEGIN 段，保留注释', () => {
+  const input = `-- Migration 017 — note_tags backfill\n-- line 2\n\nPRAGMA foreign_keys = ON;\n\nBEGIN;\nINSERT INTO foo VALUES (1);\nCOMMIT;`
+  const result = migrate.stripOuterTransaction(input)
+  // 注释 + PRAGMA 都在；只剩 BEGIN 被剥
+  assert.ok(result.startsWith('-- Migration 017'), 'top comment preserved')
+  assert.match(result, /PRAGMA foreign_keys = ON/, 'PRAGMA preserved')
+  assert.match(result, /INSERT INTO foo/, 'body preserved')
+  assert.ok(!/^BEGIN\s*;?\s*/i.test(result.trim()), 'leading BEGIN must be stripped')
+})
+
+await test('stripOuterTransaction: 大小写不敏感', () => {
+  assert.equal(
+    migrate.stripOuterTransaction('begin;\nSELECT 1;'),
+    'SELECT 1;',
+  )
+  assert.equal(
+    migrate.stripOuterTransaction('Begin;\nSELECT 1;'),
+    'SELECT 1;',
+  )
+  assert.equal(
+    migrate.stripOuterTransaction('BeGiN ;\nSELECT 1;'),
+    'SELECT 1;',
+  )
+})
+
+await test('stripOuterTransaction: SAVEPOINT 不是外层 BEGIN → 不剥', () => {
+  const input = 'SAVEPOINT sp1;\nINSERT INTO foo VALUES (1);\nRELEASE sp1;'
+  // SAVEPOINT 不是 BEGIN，正则不匹配 → 原样透传
+  assert.equal(migrate.stripOuterTransaction(input), input)
+})
+
+await test('stripOuterTransaction: BEGIN 但没有 COMMIT（migration 写法不规范）→ 剥掉 BEGIN，保留 body', () => {
+  const input = 'BEGIN;\nINSERT INTO foo VALUES (1);'
+  // 没有尾部 COMMIT 可剥；剥 BEGIN 行即可
+  assert.equal(migrate.stripOuterTransaction(input), 'INSERT INTO foo VALUES (1);')
+})
+
+await test('stripOuterTransaction: 多行注释 + 多空行 + BEGIN + body + COMMIT + 尾部空行 → 干净剥掉', () => {
+  const input = '\n\n-- comment\n\n  \nBEGIN;\n\nINSERT INTO foo VALUES (1);\n\nCOMMIT;\n\n'
+  // BEGIN 行前的空白保留；BEGIN 行被剥；尾 COMMIT + 之前空行被剥；
+  // COMMIT 之后的尾部空行保留
+  assert.equal(
+    migrate.stripOuterTransaction(input),
+    '\n\n-- comment\n\n  \nINSERT INTO foo VALUES (1);\n\n',
+  )
+})
+
+await test('stripOuterTransaction: PRAGMA 在 BEGIN 之前（真实 017 形态）→ 剥掉 BEGIN 行 + 尾部 COMMIT，保留 PRAGMA + INSERT', () => {
+  // 真实 017-note-tags-backfill.sql 顶端：10+ 行 `--` 注释 + PRAGMA + 空行 + BEGIN
+  const real017 = `-- Migration 017 — note_tags 反向回填
+--
+-- 目标：把现有 notes.tags_json 里的 tag 名称解析出来...
+--
+-- 设计要点：
+--   1. 同一 note 可能多次出现同 tag 名（写错了）—— 用 DISTINCT 去重
+--   2. tag 名找不到时 —— 自动创建（这是隐式 tag 机制）
+--   3. 已存在 (note_id, tag_id) 行 INSERT OR IGNORE —— 重跑幂等
+
+PRAGMA foreign_keys = ON;
+
+BEGIN;
+
+INSERT OR IGNORE INTO tags (id, name, color, parent_id, order_num, created_at, updated_at)
+SELECT
+  lower(hex(randomblob(4))) AS id,
+  t.tag_name AS name,
+  NULL AS color,
+  NULL AS parent_id,
+  0 AS order_num,
+  'now' AS created_at,
+  'now' AS updated_at
+FROM (SELECT DISTINCT json_each.value AS tag_name FROM notes) t
+WHERE NOT EXISTS (SELECT 1 FROM tags WHERE tags.name = t.tag_name);
+
+COMMIT;
+`
+  const result = migrate.stripOuterTransaction(real017)
+  // PRAGMA 行必须保留
+  assert.match(result, /PRAGMA foreign_keys = ON/, 'PRAGMA must be preserved')
+  // INSERT body 必须保留
+  assert.match(result, /INSERT OR IGNORE INTO tags/, 'INSERT body must be preserved')
+  // 顶部注释必须保留
+  assert.match(result, /^-- Migration 017/m, 'top comment must be preserved')
+  // BEGIN 行必须被剥
+  assert.ok(!/^begin\s*;?\s*$/im.test(result), 'leading BEGIN line must be stripped')
+  // 尾部 COMMIT 行必须被剥（与外层 wrapInTransaction 重复会触发 "cannot
+  // commit - no transaction is active"）
+  assert.ok(!/^commit\s*;?\s*$/im.test(result), 'trailing COMMIT line must be stripped')
+})
+
+// =====================================================================
+// Test 9: migration 017 嵌套事务场景 —— m.sql 自身包了 BEGIN/COMMIT，
+// 跑完整 runMigrations 必须不抛 "cannot start a transaction within a
+// transaction"。这是 R-fix-migration-nested-transaction 的核心防线。
+// =====================================================================
+
+await test('runMigrations: migration 自带 BEGIN/COMMIT（如 017）→ 不嵌套，schema_migrations 正常写入', async () => {
+  const env = makeTestEnv()
+  try {
+    ;(globalThis as { __test_dbClient?: ReturnType<typeof makeDbClientFromDb> }).__test_dbClient = env.client
+    // 1. 建前置表（notes + tags），模拟「之前已经跑过 016」
+    await env.client.call('exec', {
+      sql: 'CREATE TABLE notes (id TEXT PRIMARY KEY, tags_json TEXT NOT NULL DEFAULT "[]")',
+    })
+    await env.client.call('exec', {
+      sql: 'CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT, parent_id TEXT, order_num INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)',
+    })
+    // 2. 插入一条带 tag 的 note（json_each 能解析的 JSON 数组）
+    await env.client.call('exec', {
+      sql: `INSERT INTO notes (id, tags_json) VALUES ('n1', '["foo"]')`,
+    })
+
+    // 3. 构造 migration 017 的精简版（保留「自带 BEGIN;...COMMIT;」结构）
+    //    不写 INSERT OR IGNORE 之类的复杂语句，简化测试。完整 SQL 在
+    //    src/main/db/migrations/017-note-tags-backfill.sql 真实存在。
+    const migration017 = `
+      -- 注：模拟真实 017 的「顶部注释 + PRAGMA + 自带 BEGIN/COMMIT」形态
+      PRAGMA foreign_keys = ON;
+
+      BEGIN;
+
+      INSERT OR IGNORE INTO tags (id, name, color, parent_id, order_num, created_at, updated_at)
+      VALUES ('t-foo', 'foo', NULL, NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+
+      COMMIT;
+    `
+
+    // 4. 跑 runMigrations：必须不抛 "cannot start a transaction within a transaction"
+    await migrate.runMigrations({
+      modules: {
+        './migrations/017-note-tags-backfill.sql': migration017,
+      },
+    })
+
+    // 5. 关键防线 1：schema_migrations 写入了
+    assert.deepEqual(appliedVersions(env.db), [17])
+    // 6. 关键防线 2：tag 被插进去了（说明 BEGIN; 段被剥 + 内容真的执行了）
+    const tagRow = env.db.prepare('SELECT name FROM tags WHERE id = ?').get('t-foo') as
+      | { name: string }
+      | undefined
+    assert.ok(tagRow, 'tag must be inserted by migration body')
+    assert.equal(tagRow?.name, 'foo')
   } finally {
     env.cleanup()
   }
