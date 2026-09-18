@@ -1,4 +1,4 @@
-/* Clock 页面样式 —— 双栏 + 底部日历 */
+/* Clock 页面样式 —— 多任务类型 + 右侧 AI 提示 + 提醒列表 + 底部日历 */
 /* 加载顺序：在 pomodoro.css 之后，覆盖嵌入态的 .is-embedded 细节 */
 
 .clock-shell {
@@ -24,7 +24,9 @@
 }
 
 .clock-shell__phase {
-  /* PomodoroTimerPanel 自带 is-embedded 卡片样式 */
+  /* PomodoroTimerPanel / CountdownPanel / FocusBlockPanel / CountUpPanel
+     都自带嵌入式卡片样式；这里只占位让 grid 子项稳定 */
+  min-width: 0;
 }
 
 .clock-shell__aside {
@@ -32,6 +34,9 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+  position: sticky;
+  top: 16px;
+  /* asideSlot / 后续 phase 4 把 AiHintCard + ReminderList 放进来 */
 }
 
 .clock-shell__strip {
@@ -51,8 +56,171 @@
   /* PomodoroCalendarPanel 自带 is-embedded 卡片样式 */
 }
 
-/* ─── BreakSuggestion 卡片 ─── */
+/* ─── 任务类型 Tabs（Phase 4 填充） ─── */
+.clock-task-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.clock-task-tabs__tab {
+  padding: 6px 14px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.clock-task-tabs__tab:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+.clock-task-tabs__tab.is-active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--text-primary);
+}
+.clock-task-tabs__add {
+  margin-left: auto;
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.clock-task-tabs__add:hover {
+  background: var(--bg-overlay);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
 
+/* ─── 活动计时面板通用（Phase 4 填充 4 个具体面板） ─── */
+.clock-active-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 20px;
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl, 18px);
+  box-shadow:
+    0 8px 32px color-mix(in srgb, var(--accent-purple) 8%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+/* ─── AI 提示卡（Phase 3 替换 BreakSuggestion） ─── */
+.clock-ai-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-purple) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-purple) 30%, var(--border));
+}
+.clock-ai-hint__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.clock-ai-hint__body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+.clock-ai-hint__action {
+  align-self: flex-start;
+  font-size: 11px;
+  color: var(--accent);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.clock-ai-hint__action:hover {
+  text-decoration: underline;
+}
+.clock-ai-hint__dismiss {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+/* ─── 提醒列表（Phase 4 填充） ─── */
+.clock-reminder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-overlay);
+  border: 1px solid var(--border);
+}
+.clock-reminder-list__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.clock-reminder-list__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.clock-reminder-list__item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  font-size: 12px;
+}
+.clock-reminder-list__time {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.clock-reminder-list__title {
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clock-reminder-list__badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-fg, #fff);
+}
+.clock-reminder-list__empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  text-align: center;
+}
+
+/* ─── 旧 BreakSuggestion 样式保留引用（已替换为 AiHintCard，phase 3 删） ─── */
 .clock-break-suggestion {
   display: flex;
   flex-direction: column;

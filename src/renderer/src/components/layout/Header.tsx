@@ -127,7 +127,7 @@ export function Header() {
             activeOptions={{ exact: true }}
             aria-current={currentPath === '/clock' ? 'page' : undefined}
           >
-            番茄
+            时钟
           </Link>
           <Link
             to="/today"

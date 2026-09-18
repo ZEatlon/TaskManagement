@@ -19,11 +19,11 @@ interface RouteMeta {
 }
 
 const ROUTE_META: Record<string, RouteMeta> = {
-  // W3-A：删除 Dashboard，/ 直接落地 Clock 页（番茄钟为新首页）。
-  '/': { label: '番茄', icon: '⏱' },
+  // W3-A：删除 Dashboard，/ 直接落地 Clock 页。
+  // Clock 页改名为"时钟"（Pomodoro 仅作为其中一种任务类型）。
+  '/': { label: '时钟', icon: '⏱' },
   '/today': { label: '今日', icon: '☀' },
   '/notes': { label: '笔记', icon: '✎' },
-  '/pomodoro': { label: '番茄钟', icon: '⏱' },
   '/settings': { label: '设置', icon: '⚙' },
   '/ai': { label: 'AI 助手', icon: '✦' },
 }
