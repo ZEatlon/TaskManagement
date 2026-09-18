@@ -395,8 +395,8 @@ export function buildHeatmapLastNDays(
  * ['Sun','Mon',…,'Sat']）。
  *
  * 保持向后兼容：第三个参数可选，未传时回退原版中文 7 项 —— 历史 callers
- * 与单元测试不必改一行代码；新 caller（Heatmap / HeatmapWidget /
- * FocusCalendar）从 getCalendarMessages 取字典传入。
+ * 与单元测试不必改一行代码；新 caller（Heatmap / FocusCalendar）
+ * 从 getCalendarMessages 取字典传入。
  */
 export function weekdayLabel(
   weekdayIndex: number,

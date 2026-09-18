@@ -51,7 +51,7 @@ export function StatusBar() {
   // App 到 00:30 后仍把「昨天」当今天 → 状态栏显示「今日便签 N」用的是昨天的
   // 数字，跨日便签统计错位。改用 useTodayKey（lib/useDayRollover）订阅
   // 模块级共享轮询 + visibilitychange，与 FocusCalendar.today / TodaySummary /
-  // HeatmapWidget / StickyNotesWidget / dashboard.tsx 共享同一份实现。
+  // Heatmap / StickyNotesWidget 共享同一份实现。
   const todayKey = useTodayKey()
   const todayStickies = useMemo(
     () => byDate[todayKey] ?? [],

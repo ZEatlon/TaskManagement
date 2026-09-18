@@ -245,7 +245,7 @@ const navigateTool: RunnableTool = {
   // 日期通过独立的 `date` 字段（`/today` 时生效）传入，execute 内部再拼回
   // `?date=YYYY-MM-DD` 形式给 navigateBridge，保持 navigateTo() 契约不变。
   description:
-    '切换应用路由。`route` 字段只接受枚举值之一：`/`（dashboard）、' +
+    '切换应用路由。`route` 字段只接受枚举值之一：`/`（clock / 番茄钟首页）、' +
     '`/today`、`/notes`、`/ai`、`/settings`。**严禁**传 `/today?date=...` ' +
     '之类的复合字符串 —— schema 校验阶段会拒。若要跳到具体日期，把 `date` ' +
     '作为独立字段传入（仅在 `route="/today"` 时生效，其它 route 下被忽略）。' +
@@ -264,7 +264,7 @@ const navigateTool: RunnableTool = {
         type: 'string',
         enum: ALLOWED_ROUTES,
         description:
-          '目标路由；只接受枚举值之一："/"（dashboard）、"/today"（带可选 date 参数）、"/notes"、"/ai"、"/settings"。其它任何字符串都会在 schema 校验阶段被拒。',
+          '目标路由；只接受枚举值之一："/"（clock / 番茄钟首页）、"/today"（带可选 date 参数）、"/notes"、"/ai"、"/settings"。其它任何字符串都会在 schema 校验阶段被拒。',
       },
       date: {
         type: 'string',

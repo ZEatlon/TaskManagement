@@ -43,7 +43,7 @@ interface StickyRow {
   description?: string | null
   date: string
   priority: 'p0' | 'p1' | 'p2' | 'p3'
-  status: 'todo' | 'in_progress' | 'done' | 'cancelled'
+  status: 'todo' | 'done'
   scheduledAt?: string | null
   dueAt?: string | null
   completedAt?: string | null

@@ -1,5 +1,5 @@
 /**
- * 番茄钟计时面板（Dashboard 嵌入版 · v4）
+ * 番茄钟计时面板（Clock 嵌入版 · v4）
  *
  * 布局重构（用户需求 v3 + v4）：
  *   - 时钟表**侧边放置**（左侧），不再垂直居顶
@@ -28,7 +28,7 @@ import { InlineAIButton } from '../ai/InlineAIButton'
 import { announce } from '../common/AriaAnnouncer'
 
 // Props 曾经有过 `embedded?: boolean` 等字段；当前仓库内所有 caller
-// 都不传任何 prop（dashboard.tsx / PomodoroPanel 全部走嵌入默认态），
+// 都不传任何 prop（clock / PomodoroPanel 全部走嵌入默认态），
 // 因此 Props 当前为空。R32-Corr-1 (low dead-code) 把 size/stroke 硬编码
 // 为唯一的真值 160/8，移除了三元的 "非嵌入" 死分支。
 // 若将来需要全屏独立面板（如未来独立的 /focus 路由），再补 prop 字段，
@@ -106,7 +106,7 @@ export function PomodoroTimerPanel(_props: Props = {}) {
 
   /*
    * AI 上下文同步 —— 把番茄钟的运行状态 / 模式 / 关联便签 id 推到 useAiStore
-   * + 主进程。当用户从 Dashboard 进入 AI 对话，stream.ts 会读主进程的 context
+   * + 主进程。当用户从 Clock 页进入 AI 对话，stream.ts 会读主进程的 context
    * map，把这些字段注入 system prompt，让 AI 回答能引用"本节番茄钟的状态"。
    *
    * 不订阅每秒 tick：只订阅稳定字段（mode、running、stickyNoteId）。
@@ -116,8 +116,8 @@ export function PomodoroTimerPanel(_props: Props = {}) {
    *     渲染端订阅 control.stickyNoteId 拿到真实值（之前硬编码 null 导致
    *     main/ai/tools/context.ts 第 336-339 行的 stickySuffix 分支永远走空）。
    *
-   * pomodoro 面板常驻 Dashboard（不卸载），所以不需要清理 effect；用户
-   * 切到非 Dashboard 路由时，PomodoroTimerPanel 整体卸载（见下方卸载 effect）。
+   * pomodoro 面板常驻 Clock 页（不卸载），所以不需要清理 effect；用户
+   * 切到非 Clock 路由时，PomodoroTimerPanel 整体卸载（见下方卸载 effect）。
    */
   const setContext = useAiStore((s) => s.setContext)
   useEffect(() => {
@@ -136,7 +136,7 @@ export function PomodoroTimerPanel(_props: Props = {}) {
   }, [setContext, modeV, runningV, stickyNoteIdV])
 
   /*
-   * 卸载清理 —— 用户离开 /dashboard 或 /today 路由后，PomodoroTimerPanel
+   * 卸载清理 —— 用户离开 /clock 或 /today 路由后，PomodoroTimerPanel
    * 整体卸载。
    *
    * 1) AI 上下文：若不在 unmount 时主动清，主进程的 aiContextByWebContents
@@ -148,7 +148,7 @@ export function PomodoroTimerPanel(_props: Props = {}) {
    *    aiApi.setCurrentNoteId(null)）。
    *
    * 2) focusMode：PomodoroTimerPanel 卸载时若 store.focusMode 仍为 true，
-   *    下次回到 /dashboard 会立刻渲染 <FocusModeOverlay> 把整屏盖住。
+   *    下次回到 /clock 会立刻渲染 <FocusModeOverlay> 把整屏盖住。
    *    番茄钟计时状态由主进程独立维护，卸载时无需停止；只清"全屏遮罩"位。
    *    （焦点计时和遮罩显示是两件事：计时可能在跑，遮罩却不该跨路由残留。）
    */

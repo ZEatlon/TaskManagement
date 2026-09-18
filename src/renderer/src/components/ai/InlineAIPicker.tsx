@@ -145,7 +145,7 @@ export function InlineAIPicker({
   // 的占位订阅，但它有两个 bug：
   //   1) s.context 是 AI 流式请求时的 UI 上下文快照（sticky/note/pomodoro），
   //      不是「是否启用了 AI」的信号。真正的启用信号是 s.providers.length > 0
-  //      （见 components/dashboard/AIInsightCard.tsx:124）。
+  //      （AI 助手路由下的 provider 列表，详见 useAiStore.providers）。
   //   2) 即便修了语义，订阅整个 context Map 会让 N 张便签卡的 InlineAIPicker
   //      在任何调用方更新 context 时都重渲染一次，但值又被 void 丢掉了。
   // 当前组件没有「禁用按钮」需求，先彻底移除；以后真要做 disable 时再加

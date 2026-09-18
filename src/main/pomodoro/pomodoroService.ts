@@ -267,7 +267,7 @@ export function stopPomodoroService(): void {
 /** R-fix-pomodoro-config-start-race (medium correctness)：startPomodoroService()
  *  内部 fire-and-forget 调 ensureConfigLoaded()，但 pomodoroService.start()
  *  立刻读 timerEngine.config 来决定白噪音 / 专注模式。冷启动后用户在 < 50ms
- *  内点 Start（很可能 —— PomodoroPanel 在 Dashboard 渲染早于 load 完成），
+ *  内点 Start（很可能 —— PomodoroPanel 在 Clock 页渲染早于 load 完成），
  *  timerEngine.config 还是 DEFAULT —— 用户听到静音、通知文案是 5 分钟短休。
  *
  *  修法：把首次 loadConfig 的 promise 缓存到 configLoadPromise，所有需要

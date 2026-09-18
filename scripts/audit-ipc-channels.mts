@@ -44,6 +44,10 @@ const PUSH_ONLY_EVENTS = new Set<string>([
   'git:sync-end',
   'git:sync-error',
   'updater:status',
+  // assistantDaemon.ts:88,96 主动推送 hint / chat 事件给 AINotificationHost
+  // （preload/index.ts:294,308 已挂 ipcRenderer.on 监听）。
+  'assistant:hint',
+  'assistant:chat',
 ])
 
 // ───────── Step 1: 解析 IPC_CHANNELS ─────────

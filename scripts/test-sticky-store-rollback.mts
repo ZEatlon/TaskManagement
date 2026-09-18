@@ -48,7 +48,7 @@ interface StickyNote {
   title: string
   date: string
   priority: 'p0' | 'p1' | 'p2' | 'p3'
-  status: 'todo' | 'in_progress' | 'done' | 'cancelled'
+  status: 'todo' | 'done'
   description: string | null
   scheduledAt: string | null
   dueAt: string | null
@@ -228,7 +228,7 @@ await test('update: stickyNotesApi.update 返回 null（CAS 冲突）→ 乐观 
   const freshFromServer = {
     ...original,
     title: 'ServerUpdated',
-    status: 'in_progress',
+    status: 'done',
     updatedAt: '2026-01-02T00:00:00Z',
   }
   setMock('update', null)
@@ -252,7 +252,7 @@ await test('update: stickyNotesApi.update 返回 null（CAS 冲突）→ 乐观 
     'ServerUpdated',
     'CAS conflict must rollback optimistic patch + adopt fresh server row',
   )
-  assert.equal(finalNote?.status, 'in_progress', 'fresh row status must win over optimistic')
+  assert.equal(finalNote?.status, 'done', 'fresh row status must win over optimistic')
   assert.match(state.error ?? '', /保存冲突/, 'error field must indicate CAS conflict')
 
   // 验证 IPC 调用序列：update → null → get(id)

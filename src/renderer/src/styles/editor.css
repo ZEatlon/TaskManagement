@@ -844,8 +844,7 @@
    （`.editor-toolbar-btn`、`.math-block .math-toolbar`、`.mermaid-block
    .mermaid-toolbar`、`.editor-output summary::before`、`.editor-page-note-item`
    的 transition）。用 wildcard 覆盖所有 transition / animation 与未来新增，
-   与 sticky-notes.css / dashboard.css / notes.css / index.css / library.css
-   对齐。 */
+   与 sticky-notes.css / notes.css / index.css / library.css 对齐。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

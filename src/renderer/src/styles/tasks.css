@@ -313,8 +313,8 @@
 /* btn.primary 与 btn.ghost 已在 index.css 中定义为全局变体 */
 
 /* ====== 任务编辑器 ====== */
-/* 用 height:100% 而不是 calc(100vh - …)：父容器 .dashboard-layout 是
-   align-items:stretch 的 grid + flex:1 的容器，可直接传 100% 高度。
+/* 用 height:100% 而不是 calc(100vh - …)：父容器（align-items:stretch 的
+   grid + flex:1 的容器）可直接传 100% 高度。
    不再依赖视口高度，避免底部 StatusBar 让面板高度溢出。 */
 .task-editor {
   width: 400px;

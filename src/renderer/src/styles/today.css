@@ -276,7 +276,7 @@
    出现时的 grid 重排过渡。对前庭功能障碍 / 偏头痛用户而言，这些动画会诱
    发眩晕。prefers-reduced-motion: reduce 的 OS / 用户偏好下应一律关闭。
    修复：把 today.css 的全部 animation / transition 在该媒体查询下置 0.01ms
-   或 none（保留状态过渡的语义但消除视觉运动），与 dashboard.css 的 R31
+   或 none（保留状态过渡的语义但消除视觉运动），与其他 stylesheet 的 R31
    修复块对齐。 */
 @media (prefers-reduced-motion: reduce) {
   .today-detail-panel,

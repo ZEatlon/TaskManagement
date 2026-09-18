@@ -39,8 +39,7 @@
    修复：把这两个动画类在 reduce 模式下停掉，与其他 stylesheet 对齐。
    R33-CSS-audit 续：换用 wildcard `*, *::before, *::after` 覆盖文件中
    所有 transition / animation（包括审查发现的 2 个 violations + 任何
-   未来新增的），与 sticky-notes.css / dashboard.css / notes.css / index.css
-   对齐。 */
+   未来新增的），与 sticky-notes.css / notes.css / index.css 对齐。 */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

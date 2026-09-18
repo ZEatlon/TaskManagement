@@ -1,21 +1,26 @@
 /**
  * 热力图状态（Zustand）
  *
- * 缓存每日完成数（任务完成 + 笔记事件 + 番茄专注，可选叠加）。
- * 提供 fetch(start, end) / fetchNoteEvents() / fetchPomodoros() 方法拉取区间数据并合并到本地缓存。
+ * 缓存每日任务完成数（YYYY-MM-DD → count），并提供 fetch(start, end) 拉取区间。
  *
- * 默认缓存键为任务完成数；可叠加笔记事件 / 番茄专注。
+ * 注意：之前的 noteData / pomodoroData / fetchNoteEvents / fetchPomodoros /
+ * selectMergedData 已删除。理由：
+ *   - W3-A 重建后的 Heatmap.tsx 不再使用这些字段 —— note 活跃度改为直接
+ *     走 `window.api.invoke('note-event:daily', ...)`（带 200ms debounce +
+ *     子集检测），绕开 store 中转。pomodoro 数据源已下线（热力图目前只
+ *     显示「任务完成」+「笔记活跃度」两层）。
+ *   - 旧版 store 切片 + fetchNoteEvents / fetchPomodoros 的设计意图
+ *     （W2-C④「齿轮里切数据源」）在 W3-A 重建后不再有调用方，留着会误导
+ *     后续读代码的人以为「pomodoro 数据源被某处用到只是我还没找到」。
+ *   - 旧 `selectMergedData` 已 @deprecated + 明确警告「禁止作为
+ *     useHeatmapStore selector」，与现在的零调用方一起删除更干净。
  */
 import { create } from 'zustand'
-import { completionsApi, noteEventsApi, pomodorosDailyApi } from '../lib/ipc'
+import { completionsApi } from '../lib/ipc'
 
 interface HeatmapState {
   /** YYYY-MM-DD → count（任务完成） */
   data: Record<string, number>
-  /** YYYY-MM-DD → count（笔记事件，可选） */
-  noteData: Record<string, number>
-  /** YYYY-MM-DD → count（番茄专注完成数 = floor(minutes / 25)，可选） */
-  pomodoroData: Record<string, number>
   /** 是否正在加载 */
   loading: boolean
   /** 错误信息 */
@@ -25,25 +30,16 @@ interface HeatmapState {
 
   /** 拉取任务完成数（覆盖式） */
   fetch: (start: string, end: string) => Promise<void>
-  /** 拉取笔记事件数（覆盖式） */
-  fetchNoteEvents: (start: string, end: string) => Promise<void>
-  /** 拉取番茄专注数（覆盖式） */
-  fetchPomodoros: (start: string, end: string) => Promise<void>
   /** 清空缓存 */
   reset: () => void
 }
 
-/** R6C-3 + R15 修复 (high)：每路 fetcher 独立 seq。共享 seq 会导致切换
- * 数据源（fetch→fetchPomodoros）时，旧 fetch 的响应被新 seq 判定为陈旧丢弃，
- * 热力图维持空数据直到下次用户动作。三路独立 seq 互不干扰。 */
+/** R6C-3 + R15 修复 (high)：seq 用于丢弃过期响应，避免切换数据源或快速
+ * scrub 时旧请求覆盖新数据。fetch 是单调用方，单 seq 足够。 */
 let completionsSeq = 0
-let noteEventsSeq = 0
-let pomodorosSeq = 0
 
 export const useHeatmapStore = create<HeatmapState>((set) => ({
   data: {},
-  noteData: {},
-  pomodoroData: {},
   loading: false,
   error: null,
   lastLoadedAt: null,
@@ -61,55 +57,7 @@ export const useHeatmapStore = create<HeatmapState>((set) => ({
     }
   },
 
-  async fetchNoteEvents(start, end) {
-    const seq = ++noteEventsSeq
-    try {
-      const noteData = await noteEventsApi.daily(start, end)
-      if (seq !== noteEventsSeq) return
-      set({ noteData })
-    } catch (err) {
-      if (seq !== noteEventsSeq) return
-      console.error('[heatmap] fetchNoteEvents failed', err)
-    }
-  },
-
-  async fetchPomodoros(start, end) {
-    const seq = ++pomodorosSeq
-    try {
-      const minutes = await pomodorosDailyApi.daily(start, end)
-      if (seq !== pomodorosSeq) return
-      // 主进程返回分钟数；折算成"完成的番茄数"（floor(minutes/25)，最少 1）以便复用现有 level 阈值
-      const pomodoroData: Record<string, number> = {}
-      for (const [date, m] of Object.entries(minutes)) {
-        pomodoroData[date] = Math.max(1, Math.floor(m / 25))
-      }
-      set({ pomodoroData })
-    } catch (err) {
-      if (seq !== pomodorosSeq) return
-      console.error('[heatmap] fetchPomodoros failed', err)
-    }
-  },
-
   reset() {
-    set({ data: {}, noteData: {}, pomodoroData: {}, loading: false, error: null, lastLoadedAt: null })
+    set({ data: {}, loading: false, error: null, lastLoadedAt: null })
   },
 }))
-
-/**
- * 派生选择器：把任务完成数、笔记事件数、番茄专注数合并
- *
- * R16 修复 (low)：@deprecated —— 每次调用返回全新对象，作为 Zustand selector
- * 会触发无限重渲染（默认 Object.is 永远 false）。当前唯一消费者
- *  HeatmapWidget 已在组件内通过 useMemo 自管合并。本导出保留仅为
- *  调试 / 单元测试用，但禁止再作为 useHeatmapStore(selectMergedData) 使用。
- */
-export function selectMergedData(state: HeatmapState): Record<string, number> {
-  const merged: Record<string, number> = { ...state.data }
-  for (const [date, n] of Object.entries(state.noteData)) {
-    merged[date] = (merged[date] ?? 0) + n
-  }
-  for (const [date, n] of Object.entries(state.pomodoroData)) {
-    merged[date] = (merged[date] ?? 0) + n
-  }
-  return merged
-}

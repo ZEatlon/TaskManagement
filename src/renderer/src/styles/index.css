@@ -218,10 +218,6 @@ body {
   padding-bottom: 8px;
 }
 
-[data-density='compact'] .dashboard-layout {
-  gap: 12px;
-}
-
 [data-theme='light'] {
   --bg-base: #ffffff;
   --bg-elevated: #f6f8fa;
@@ -1163,7 +1159,7 @@ code {
    reduce 的 OS / 用户偏好下应一律关闭动画 / 过渡（保留状态变化的语义，
    但消除视觉运动）。
    修复：在该媒体查询下把 index.css 的全部 animation / transition 设为
-   none / 0.01ms，与 dashboard.css / heatmap.css 的 R31 修复块对齐。
+   none / 0.01ms，与 heatmap.css 的 R31 修复块对齐。
    通用选择器 * 含子类精确覆盖，避免遗漏新增动画类。 */
 @media (prefers-reduced-motion: reduce) {
   *,

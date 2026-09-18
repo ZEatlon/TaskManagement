@@ -1,7 +1,7 @@
 /**
  * 日期工具函数（统一日期处理）
  *
- * 把原本散落在 `today.tsx` / `dashboard.tsx` / `tasks.ts` 里的日期逻辑集中。
+ * 把原本散落在 `today.tsx` / `tasks.ts` 里的日期逻辑集中。
  * 注意：所有方法都使用**本地时区**（不转换为 UTC），
  * 与 `dayKeyOf` 的 `YYYY-MM-DD` 字符串语义保持一致。
  *

@@ -313,7 +313,7 @@ export function getCalendarMessages(rawLocale: unknown): CalendarMessages {
 }
 
 /* ------------------------------------------------------------------ *
- * 热力图（Heatmap / HeatmapWidget）使用的固定文案
+ * 热力图（Heatmap）使用的固定文案
  *
  * 历史动机（high i18n-architecture）：
  *   原 Heatmap.tsx 已 import getCalendarMessages 取 weekdayShort，但其它
@@ -385,7 +385,7 @@ export interface HeatmapMessages {
    * 图例两端「少」「多」。这里集中暴露给 widget 调用方。
    */
   /**
-   * 图例 5 档量化描述（按 level-0..4）。与 HeatmapWidget.LEGEND_LABELS
+   * 图例 5 档量化描述（按 level-0..4）。与 HeatmapLegend 渲染时的
    * 形态完全一致 —— SR 用户听到「活动 1 至 3 次」即可判断色阶。
    */
   legendLabels: Record<0 | 1 | 2 | 3 | 4, string>

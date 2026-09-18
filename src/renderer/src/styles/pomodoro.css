@@ -136,8 +136,8 @@
   border-radius: var(--radius-md);
 }
 
-/* .pomodoro-secondary-controls —— 布局由嵌入态 dashboard.css 提供，
-   此处不再覆盖，避免与 dashboard.css 的 flex-wrap:nowrap + gap 冲突。 */
+/* .pomodoro-secondary-controls —— 嵌入式布局由当前文件 + 父容器 flex 决定，
+   此处不再覆盖，避免与 .pomodoro-side-v2 的 flex-wrap:nowrap + gap 冲突。 */
 
 .pomodoro-side-v2 {
   display: flex;

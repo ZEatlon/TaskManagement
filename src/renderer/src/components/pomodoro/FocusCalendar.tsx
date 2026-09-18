@@ -204,7 +204,7 @@ export function FocusCalendar({
   const monthLabel = messages.monthLabel(viewMonth.getFullYear(), viewMonth.getMonth() + 1)
   // R11 修复 (low #2)：跨午夜时 today 推进，cells 重算「今天」高亮与「本月便签」统计。
   // 改用 useDayRollover 订阅模块级共享轮询（与 StatusBar / TodaySummary /
-  // HeatmapWidget / StickyNotesWidget / dashboard.tsx 共享同一份实现）。
+  // Heatmap / StickyNotesWidget 共享同一份实现）。
   const [today, setToday] = useState<Date>(() => new Date())
   useDayRollover(() => setToday(new Date()))
 
